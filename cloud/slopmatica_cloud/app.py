@@ -570,7 +570,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     static_dir = PKG_DIR / "static"
     static_version = str(max(int(p.stat().st_mtime) for p in static_dir.iterdir()))
 
-    app = FastAPI(title="Slopmatica Cloud", docs_url=None, redoc_url=None, openapi_url=None)
+    from . import __version__
+    app = FastAPI(title="Slopmatica Cloud", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings = settings
     app.state.store = store
     app.add_middleware(RootPathMiddleware, root_path=base)
