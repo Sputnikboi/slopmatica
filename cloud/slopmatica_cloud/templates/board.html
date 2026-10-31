@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% from "_post_card.html" import post_card %}
+{% block title %}Board &middot; Slopmatica Cloud{% endblock %}
+{% block main %}
+<div class="board-head">
+  <h1 class="page-title">Schematics board</h1>
+  <nav class="tabs" aria-label="Board">
+    <a class="tab{{ ' on' if tab == 'public' else '' }}" href="{{ board_url('public') }}">Public</a>
+    {% if user %}
+    <a class="tab{{ ' on' if tab == 'shared' else '' }}" href="{{ board_url('shared') }}">Shared with me</a>
+    <a class="tab{{ ' on' if tab == 'mine' else '' }}" href="{{ board_url('mine') }}">My posts</a>
+    {% endif %}
+  </nav>
+</div>
+
+{% if tab != "public" and not user %}
+<section class="panel">
+  <p>Log in to see {{ "posts shared with you" if tab == "shared" else "your posts" }}: Slopmatica menu (<kbd>M</kbd>) &rarr; <strong>Cloud</strong> &rarr; <strong>Open website</strong>.</p>
+</section>
+{% else %}
+<section class="toolbar board-toolbar">
+  <form class="search-form" method="get" action="{{ base }}/board" role="search">
+    {% if tab != "public" %}<input type="hidden" name="tab" value="{{ tab }}">{% endif %}
+    <input type="hidden" name="sort" value="{{ sort }}">
+    <input type="search" name="q" value="{{ q }}" placeholder="Search titles, descriptions, authors" aria-label="Search the board" maxlength="100">
+    <button class="btn ghost" type="submit">Search</button>
+  </form>
+  <div class="seg" role="group" aria-label="Sort">
+    {% for s in sorts %}
+    <a class="{{ 'on' if s == sort else '' }}" href="{{ board_url(tab, s, q) }}"{% if s == sort %} aria-current="true"{% endif %}>{{ s|capitalize }}</a>
+    {% endfor %}
+  </div>
+</section>
+
+{% if q %}<p class="muted result-note">{{ total }} result{{ "" if total == 1 else "s" }} for &ldquo;{{ q }}&rdquo; &middot; <a href="{{ board_url(tab, sort) }}">clear</a></p>{% endif %}
+
+{% if posts %}
+<section class="grid">
+  {% for p in posts %}{{ post_card(p, base, show_visibility=(tab == "mine")) }}{% endfor %}
+</section>
+{% if pages > 1 %}
+<nav class="pager" aria-label="Pages">
+  {% if page > 1 %}<a class="btn ghost small" href="{{ board_url(tab, sort, q, page - 1) }}" rel="prev">&larr; Previous</a>{% else %}<span></span>{% endif %}
+  <span class="muted">Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a class="btn ghost small" href="{{ board_url(tab, sort, q, page + 1) }}" rel="next">Next &rarr;</a>{% else %}<span></span>{% endif %}
+</nav>
+{% endif %}
+{% elif q %}
+<p class="empty muted">Nothing matches.</p>
+{% elif page > 1 %}
+<p class="empty muted">There is no page {{ page }}. <a href="{{ board_url(tab, sort, q) }}">Back to the first page</a></p>
+{% elif tab == "public" %}
+<p class="empty muted">Nothing on the board yet.{% if user %} Post one of your schematics from <a href="{{ base }}/">your files</a> with <strong>Post to board&hellip;</strong>{% endif %}</p>
+{% elif tab == "shared" %}
+<p class="empty muted">Nobody has shared a private post with you yet.</p>
+{% else %}
+<p class="empty muted">You haven&rsquo;t posted anything yet. Use <strong>Post to board&hellip;</strong> on one of <a href="{{ base }}/">your files</a>.</p>
+{% endif %}
+{% endif %}
+{% endblock %}

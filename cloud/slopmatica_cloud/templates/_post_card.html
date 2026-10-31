@@ -1,0 +1,25 @@
+{% macro post_card(p, base, show_visibility=False) %}
+<a class="card post-card" href="{{ base }}/board/{{ p.id }}">
+  <div class="thumb">
+    {% if p.has_thumb %}
+    <img loading="lazy" src="{{ base }}/api/board/{{ p.id }}/thumbnail?v={{ p.updated }}" alt="">
+    {% else %}
+    <div class="ph" aria-hidden="true"></div>
+    {% endif %}
+  </div>
+  <div class="meta">
+    <h3 class="name" title="{{ p.title }}">{{ p.title }}</h3>
+    <div class="sub author">
+      <img class="head" src="https://mc-heads.net/avatar/{{ p.uuid }}/16" alt="" width="16" height="16">
+      <span>{{ p.author_name }}</span>
+    </div>
+    <div class="sub muted stats">
+      <span class="score{{ ' neg' if p.score < 0 else '' }}" title="{{ p.ups }} up, {{ p.downs }} down">&#9650; {{ p.score }}</span>
+      <span>.{{ p.format }}</span>
+      <span>{{ p.size|human_size }}</span>
+    </div>
+    <div class="sub muted"><time datetime="{{ p.created|iso_utc }}">{{ p.created|pretty_utc }}</time></div>
+    {% if show_visibility %}<div class="sub"><span class="badge vis-{{ p.visibility }}">{{ p.visibility|capitalize }}</span></div>{% endif %}
+  </div>
+</a>
+{% endmacro %}

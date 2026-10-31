@@ -6,7 +6,27 @@
   <div class="panel">
     <h2>Log in from the game</h2>
     <p>Open the Slopmatica menu (<kbd>M</kbd>) &rarr; <strong>Cloud</strong> &rarr; <strong>Open website</strong>.</p>
-    <p class="muted">There are no passwords: the game proves who you are through Mojang, and hands your browser a one-time login link.</p>
+    <p class="muted">There are no accounts to create: the game proves who you are through Mojang, and hands your browser a one-time login link.</p>
   </div>
+  <div class="panel">
+    <h2>Or log in with a password</h2>
+    <form class="login-form" id="login-form" method="post" action="{{ base }}/api/login" novalidate>
+      <label class="field">
+        <span class="label">Minecraft name</span>
+        <input type="text" name="name" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="16" required>
+      </label>
+      <label class="field">
+        <span class="label">Password</span>
+        <input type="password" name="password" autocomplete="current-password" maxlength="{{ max_password }}" required>
+      </label>
+      <p class="form-msg" role="status"></p>
+      <div class="form-actions"><button class="btn" type="submit">Log in</button></div>
+    </form>
+    <p class="muted small">No password yet? Set one first: open the website from the game (<strong>Cloud</strong> &rarr; <strong>Open website</strong>), then <strong>Account</strong> &rarr; <strong>Set password</strong>.</p>
+  </div>
+  <p>Looking for builds? <a href="{{ base }}/board">Browse the schematics board</a>, no login needed.</p>
 </section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ base }}/static/account.js?v={{ v }}"></script>
 {% endblock %}

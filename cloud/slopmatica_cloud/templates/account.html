@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Account &middot; Slopmatica Cloud{% endblock %}
+{% block main %}
+<section class="panel account-id">
+  <img class="head" src="https://mc-heads.net/avatar/{{ user.uuid }}/64" alt="" width="64" height="64">
+  <div>
+    <h1 class="page-title">{{ user.name }}</h1>
+    <p class="muted small"><code>{{ user.uuid }}</code>{% if user.is_admin %} &middot; admin{% endif %}</p>
+  </div>
+</section>
+
+<section class="panel usage">
+  <h2>Storage</h2>
+  <div class="usage-text">
+    {% if quota is none %}
+    <strong>{{ used|human_size }}</strong> used &middot; <span class="muted">Unlimited</span>
+    {% else %}
+    <strong>{{ used|human_size }}</strong> of {{ quota|human_size }}
+    {% endif %}
+  </div>
+  {% if quota is not none %}
+  <div class="bar{{ ' over' if over else '' }}"><div class="bar-fill" data-pct="{{ pct }}"></div></div>
+  {% endif %}
+  <p class="muted small note"><a href="{{ base }}/">{{ file_count }} file{{ "" if file_count == 1 else "s" }}</a>: {{ file_bytes|human_size }} &middot; <a href="{{ base }}/board?tab=mine">{{ post_count }} board post{{ "" if post_count == 1 else "s" }}</a>: {{ post_bytes|human_size }}</p>
+</section>
+
+<section class="panel">
+  <h2>Website password</h2>
+  {% if has_password %}
+  <p class="small">You can log in on the website with your Minecraft name and password. Set <time datetime="{{ password_set|iso_utc }}">{{ password_set|pretty_utc }}</time>.</p>
+  {% else %}
+  <p class="small">No password yet, so you log in through the game. Set one to log in here directly with your Minecraft name.</p>
+  {% endif %}
+  <form class="post-form pw-form" data-password-form="set" novalidate>
+    {% if has_password %}
+    <label class="field"><span class="label">Current password</span>
+      <input type="password" name="current" autocomplete="current-password" maxlength="{{ max_password }}" required></label>
+    {% endif %}
+    <input type="text" name="username" value="{{ user.name }}" autocomplete="username" hidden>
+    <label class="field"><span class="label">{{ "New password" if has_password else "Password" }} <span class="muted">({{ min_password }} to {{ max_password }} characters)</span></span>
+      <input type="password" name="new" autocomplete="new-password" minlength="{{ min_password }}" maxlength="{{ max_password }}" required></label>
+    <label class="field"><span class="label">Repeat it</span>
+      <input type="password" name="repeat" autocomplete="new-password" maxlength="{{ max_password }}" required></label>
+    <p class="form-msg" role="status"></p>
+    <div class="form-actions"><button type="submit" class="btn">{{ "Change password" if has_password else "Set password" }}</button></div>
+  </form>
+  {% if has_password %}
+  <details class="edit">
+    <summary>Remove the password</summary>
+    <form class="post-form pw-form" data-password-form="remove" novalidate>
+      <p class="small muted">You will log in through the game again.</p>
+      <label class="field"><span class="label">Current password</span>
+        <input type="password" name="current" autocomplete="current-password" maxlength="{{ max_password }}" required></label>
+      <p class="form-msg" role="status"></p>
+      <div class="form-actions"><button type="submit" class="btn ghost danger">Remove password</button></div>
+    </form>
+  </details>
+  {% endif %}
+  <p class="muted small note">Changing or removing the password logs out your other browsers.</p>
+</section>
+
+<section class="panel">
+  <h2>Browsers</h2>
+  <p class="small">Log out everywhere the website is open with this account, including here. Your game stays logged in.</p>
+  <div class="form-actions start"><button type="button" class="btn ghost danger" data-logout-all>Log out of all browsers</button></div>
+  <p class="form-msg small" data-logout-msg role="status"></p>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ base }}/static/account.js?v={{ v }}"></script>
+{% endblock %}

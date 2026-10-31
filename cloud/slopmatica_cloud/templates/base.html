@@ -11,12 +11,25 @@
 <body data-base="{{ base }}">
 <header class="topbar">
   <a class="brand" href="{{ base }}/"><img src="{{ base }}/static/icon.svg" alt="" width="24" height="24"> <span>Slopmatica Cloud</span></a>
-  {% block header %}{% endblock %}
+  <nav class="nav" aria-label="Main">
+    {% if user %}<a class="btn small ghost nav-files{{ ' on' if nav == 'files' else '' }}" href="{{ base }}/"{% if nav == "files" %} aria-current="page"{% endif %}>My files</a>{% endif %}
+    <a class="btn small nav-board{{ ' on' if nav == 'board' else '' }}" href="{{ base }}/board"{% if nav == "board" %} aria-current="page"{% endif %}><span class="long">Schematics board</span><span class="short">Board</span></a>
+  </nav>
+  {% if user %}
+  <div class="who">
+    <a class="who-link{{ ' on' if nav == 'account' else '' }}" href="{{ base }}/account" title="Account and password"{% if nav == "account" %} aria-current="page"{% endif %}>
+      <img class="head" src="https://mc-heads.net/avatar/{{ user.uuid }}/32" alt="Account" width="32" height="32">
+      <span class="who-name">{{ user.name }}</span>
+    </a>
+    <form method="post" action="{{ base }}/logout"><button class="btn ghost small" type="submit">Log out</button></form>
+  </div>
+  {% endif %}
 </header>
 <main class="wrap">
 {% block main %}{% endblock %}
 </main>
 <footer class="wrap foot">Slopmatica Cloud &middot; schematic sync for the Slopmatica mod</footer>
+<script src="{{ base }}/static/app.js?v={{ v }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

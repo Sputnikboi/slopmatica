@@ -1,0 +1,28 @@
+{% macro post_fields(visibilities, max_title, max_description, title="", description="", visibility="public", allowed_text="") %}
+<label class="field">
+  <span class="label">Title</span>
+  <input type="text" name="title" value="{{ title }}" maxlength="{{ max_title }}" required autocomplete="off">
+</label>
+<label class="field">
+  <span class="label">Description <span class="muted">(optional, plain text)</span></span>
+  <textarea name="description" rows="5" maxlength="{{ max_description }}">{{ description }}</textarea>
+</label>
+<fieldset class="field vis">
+  <legend class="label">Visibility</legend>
+  {% set help = {
+    "public": "Listed on the board. Anyone can view and download it.",
+    "unlisted": "Not listed or searchable. Anyone with the link can view and download it.",
+    "private": "Only you and the players you list below.",
+  } %}
+  {% for vis in visibilities %}
+  <label class="radio">
+    <input type="radio" name="visibility" value="{{ vis }}"{% if vis == visibility %} checked{% endif %}>
+    <span><strong>{{ vis|capitalize }}</strong> <span class="muted">{{ help[vis] }}</span></span>
+  </label>
+  {% endfor %}
+</fieldset>
+<label class="field" data-names{% if visibility != "private" %} hidden{% endif %}>
+  <span class="label">Players who can see it</span>
+  <textarea name="allowed" rows="2" placeholder="Minecraft usernames, separated by commas or spaces" spellcheck="false" autocomplete="off">{{ allowed_text }}</textarea>
+</label>
+{% endmacro %}

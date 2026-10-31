@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% from "_post_form.html" import post_fields %}
+{% block title %}{{ post.title }} &middot; Slopmatica Cloud{% endblock %}
+{% block main %}
+<article class="post" data-post-id="{{ post.id }}" data-post-filename="{{ post.filename }}"{% if own %} data-own{% endif %}>
+  <div class="post-thumb thumb">
+    {% if post.has_thumb %}
+    <img src="{{ base }}/api/board/{{ post.id }}/thumbnail?v={{ post.updated }}" alt="Preview of {{ post.title }}">
+    {% else %}
+    <div class="ph" aria-hidden="true"></div>
+    {% endif %}
+  </div>
+  <div class="post-info">
+    <h1 class="post-title">{{ post.title }}</h1>
+    {% if post.visibility != "public" %}<span class="badge vis-{{ post.visibility }}">{{ post.visibility|capitalize }}</span>{% endif %}
+    <div class="author">
+      <img class="head" src="https://mc-heads.net/avatar/{{ post.uuid }}/24" alt="" width="24" height="24">
+      <strong>{{ post.author_name }}</strong>
+      <span class="muted">&middot; <time datetime="{{ post.created|iso_utc }}">{{ post.created|pretty_utc }}</time></span>
+    </div>
+
+    <div class="vote" data-my-vote="{{ my_vote }}">
+      {% set can_vote = user and not own %}
+      <button type="button" class="vote-btn up{{ ' on' if my_vote == 1 else '' }}" data-post-act="vote" data-value="1" aria-label="Upvote" aria-pressed="{{ 'true' if my_vote == 1 else 'false' }}"{% if not can_vote %} disabled{% endif %}>&#9650;</button>
+      <span class="vote-score" data-score>{{ post.score }}</span>
+      <button type="button" class="vote-btn down{{ ' on' if my_vote == -1 else '' }}" data-post-act="vote" data-value="-1" aria-label="Downvote" aria-pressed="{{ 'true' if my_vote == -1 else 'false' }}"{% if not can_vote %} disabled{% endif %}>&#9660;</button>
+      <span class="muted vote-counts"><span data-ups>{{ post.ups }}</span> up &middot; <span data-downs>{{ post.downs }}</span> down</span>
+    </div>
+    {% if not user %}<p class="muted small">Log in from the game to vote.</p>{% elif own %}<p class="muted small">This is your post, so you can&rsquo;t vote on it.</p>{% endif %}
+
+    <dl class="facts">
+      <div><dt>Format</dt><dd>.{{ post.format }}</dd></div>
+      <div><dt>File size</dt><dd>{{ post.size|human_size }}</dd></div>
+      <div><dt>Size</dt><dd>{% if post.dims %}{{ post.dims[0] }} &times; {{ post.dims[1] }} &times; {{ post.dims[2] }}{% else %}<span class="muted">unknown</span>{% endif %}</dd></div>
+      <div><dt>Blocks</dt><dd>{% if post.block_count is not none %}{{ post.block_count|num }}{% else %}<span class="muted">unknown</span>{% endif %}</dd></div>
+    </dl>
+
+    <div class="post-actions">
+      <a class="btn" href="{{ base }}/api/board/{{ post.id }}/file" download="{{ post.filename }}">Download</a>
+      {% if exports %}
+      <select class="btn ghost export" data-post-export aria-label="Export as another format">
+        <option value="" selected>Export as&hellip;</option>
+        {% for x in exports %}<option value="{{ x[1:] }}">{{ x }}</option>{% endfor %}
+      </select>
+      {% endif %}
+      {% if user %}<button type="button" class="btn ghost" data-post-act="save">Add to my cloud</button>{% endif %}
+    </div>
+    <p class="form-msg small" data-save-msg role="status"></p>
+    {% if not user %}<p class="muted small">Log in from the game to add this to your cloud files.</p>{% endif %}
+  </div>
+</article>
+
+{% if post.description %}
+<section class="panel desc">{{ post.description }}</section>
+{% endif %}
+
+{% if own %}
+<section class="panel owner">
+  <h2>Manage your post</h2>
+  {% if post.visibility == "private" %}
+  <p class="small">Visible to you{% if allowed %} and {% for _, name in allowed %}<strong>{{ name }}</strong>{{ ", " if not loop.last else "" }}{% endfor %}{% else %} only{% endif %}.</p>
+  {% elif post.visibility == "unlisted" %}
+  <p class="small">Anyone with the link can see this post. It is not listed on the board.</p>
+  {% endif %}
+  <p class="muted small">Snapshot of <code>{{ post.source_path }}</code>, taken <time datetime="{{ post.updated|iso_utc }}">{{ post.updated|pretty_utc }}</time>.{% if not source_exists %} That file is no longer in your cloud files.{% endif %}</p>
+  <div class="owner-actions">
+    <button type="button" class="btn ghost" data-post-act="refresh"{% if not source_exists %} disabled{% endif %}>Update from my file</button>
+    <button type="button" class="btn ghost danger" data-post-act="delete">Delete post</button>
+  </div>
+  <p class="form-msg small" data-owner-msg role="status"></p>
+  <details class="edit">
+    <summary>Edit title, description and visibility</summary>
+    <form class="post-form" data-post-form="edit" novalidate>
+      {{ post_fields(visibilities, max_title, max_description, post.title, post.description, post.visibility, allowed|map(attribute=1)|join(", ")) }}
+      <p class="form-msg" role="status"></p>
+      <div class="form-actions"><button type="submit" class="btn">Save changes</button></div>
+    </form>
+  </details>
+</section>
+{% elif user and user.is_admin %}
+<section class="panel owner">
+  <h2>Moderation</h2>
+  {% if post.visibility == "private" %}<p class="small">Private, shared with {% for _, name in allowed %}<strong>{{ name }}</strong>{{ ", " if not loop.last else "" }}{% else %}nobody{% endfor %}.</p>{% endif %}
+  <div class="owner-actions"><button type="button" class="btn ghost danger" data-post-act="delete">Delete post</button></div>
+  <p class="form-msg small" data-owner-msg role="status"></p>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="{{ base }}/static/board.js?v={{ v }}"></script>
+{% endblock %}

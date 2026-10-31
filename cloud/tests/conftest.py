@@ -16,7 +16,8 @@ from slopmatica_cloud.app import Settings, create_app
 
 
 class FakeMojang:
-    """Minimal stand-in for sessionserver.mojang.com/session/minecraft/hasJoined."""
+    """Minimal stand-in for sessionserver.mojang.com/session/minecraft/hasJoined and
+    api.mojang.com/users/profiles/minecraft/<name>."""
 
     def __init__(self) -> None:
         self.accounts: dict[str, tuple[str, str]] = {}  # lower name -> (hex uuid, canonical name)
@@ -24,12 +25,15 @@ class FakeMojang:
         self.status_override: int | None = None
         self.calls: list[dict[str, str]] = []
         self.url = ""
+        self.profile_url = ""
+        self.profile_lookups: list[str] = []
 
     def reset(self) -> None:
         self.accounts.clear()
         self.joined.clear()
         self.status_override = None
         self.calls.clear()
+        self.profile_lookups.clear()
 
     def account(self, name: str) -> str:
         key = name.lower()
@@ -62,6 +66,21 @@ def _mojang_server():
                 self.send_response(fake.status_override)
                 self.end_headers()
                 return
+            if parsed.path.startswith("/users/profiles/minecraft/"):
+                name = urllib.parse.unquote(parsed.path.rsplit("/", 1)[1])
+                fake.profile_lookups.append(name)
+                hit = fake.accounts.get(name.lower())
+                if hit is None:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                body = json.dumps({"id": hit[0], "name": hit[1]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             key = (q.get("username", "").lower(), q.get("serverId", ""))
             if parsed.path.endswith("/hasJoined") and key in fake.joined and key[0] in fake.accounts:
                 uid, name = fake.accounts[key[0]]
@@ -77,6 +96,7 @@ def _mojang_server():
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     fake.url = f"http://127.0.0.1:{server.server_port}/session/minecraft/hasJoined"
+    fake.profile_url = f"http://127.0.0.1:{server.server_port}/users/profiles/minecraft"
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield fake
@@ -100,6 +120,7 @@ def make_client(data_dir, mojang):
         if settings is None:
             kw.setdefault("data_dir", data_dir)
             kw.setdefault("mojang_has_joined_url", mojang.url)
+            kw.setdefault("mojang_profile_url", mojang.profile_url)
             settings = Settings(**kw)
         return TestClient(create_app(settings))
 
