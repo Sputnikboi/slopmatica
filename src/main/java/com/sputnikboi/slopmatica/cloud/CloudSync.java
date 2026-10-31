@@ -66,9 +66,12 @@ public final class CloudSync {
     /** Declared after the statics the constructor uses (GSON), so they exist when it runs. */
     public static final CloudSync INSTANCE = new CloudSync();
 
+    /** The public Slopmatica Cloud; any other server can be entered on the Cloud screen. */
+    public static final String DEFAULT_URL = "https://homeserver.taila182df.ts.net/slopmatica";
+
     /** Stored settings and credentials. */
     public static final class Account {
-        public String url = "";
+        public String url = DEFAULT_URL;
         public @Nullable String token;
         public @Nullable String uuid;
         public @Nullable String name;
@@ -530,8 +533,8 @@ public final class CloudSync {
         try {
             Account a = GSON.fromJson(Files.readString(accountFile()), Account.class);
             if (a != null) {
-                if (a.url == null) {
-                    a.url = "";
+                if (a.url == null || a.url.isBlank()) {
+                    a.url = DEFAULT_URL;
                 }
                 return a;
             }
