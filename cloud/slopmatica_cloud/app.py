@@ -31,7 +31,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.background import BackgroundTask
 from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from . import convert
 
 log = logging.getLogger("slopmatica_cloud")
 
@@ -64,6 +67,8 @@ MAX_PATH_LEN = 300
 MAX_SEGMENT_LEN = 100
 MAX_DEPTH = 8  # segments, including the file name
 
+EXPORT_WAIT = 30  # seconds a request waits for a free conversion slot
+
 
 # --------------------------------------------------------------------------- settings
 
@@ -84,6 +89,8 @@ class Settings:
     mojang_timeout: float = 10.0
     max_upload_bytes: int = 256 * 1024 * 1024
     max_thumbnail_bytes: int = 2 * 1024 * 1024
+    max_export_volume: int = convert.DEFAULT_MAX_VOLUME  # blocks
+    export_slots: int = 2  # conversions running at once
 
     def __post_init__(self) -> None:
         self.data_dir = Path(self.data_dir).resolve()
@@ -791,6 +798,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers={"X-Sha256": row.sha256, "Cache-Control": "private, no-cache"},
         )
 
+    export_slots = threading.BoundedSemaphore(settings.export_slots)
+
+    @app.get("/api/export/{path:path}")
+    def export_file(path: str, request: Request) -> FileResponse:
+        # A sync endpoint, so FastAPI runs the (CPU-bound) conversion in its threadpool.
+        user = authenticate(request, mutating=False)
+        path = validate_path(path)
+        fmt = request.query_params.get("format", "").strip().lower().lstrip(".")
+        if fmt not in convert.FORMATS:
+            raise ApiError(400, "format must be one of " + ", ".join(convert.FORMATS))
+        _, disk = require_file(user, path)
+        name = path.rsplit("/", 1)[-1]
+        src_fmt = convert.format_of(name)
+        if fmt == src_fmt:
+            raise ApiError(400, f"the file is already .{fmt}")
+        if not export_slots.acquire(timeout=EXPORT_WAIT):
+            raise ApiError(503, "the server is busy converting other files, try again shortly")
+        fd, tmp_name = tempfile.mkstemp(dir=store.tmp, suffix=".export")
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                convert.convert_file(disk, fmt, f, settings.max_export_volume)
+        except FileNotFoundError:
+            tmp.unlink(missing_ok=True)
+            raise ApiError(404, "no such file")
+        except ValueError as e:  # ConversionError, NBTError: the file is not what its extension says
+            tmp.unlink(missing_ok=True)
+            raise ApiError(400, f"cannot convert {name}: {e}")
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        finally:
+            export_slots.release()
+        return FileResponse(
+            tmp,
+            media_type="application/octet-stream",
+            filename=name[: -len(src_fmt) - 1] + "." + fmt,  # type: ignore[arg-type]
+            headers={"Cache-Control": "private, no-cache"},
+            background=BackgroundTask(tmp.unlink, missing_ok=True),
+        )
+
     @app.delete("/api/files/{path:path}")
     def delete_file(path: str, request: Request) -> Response:
         user = authenticate(request, mutating=True)
@@ -852,7 +900,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for f in files:
             folder, _, name = f.path.rpartition("/")
             ext = next(e for e in SCHEMATIC_EXTENSIONS if name.lower().endswith(e))
-            entries.append({"f": f, "folder": folder, "name": name, "stem": name[: -len(ext)], "ext": ext})
+            entries.append({
+                "f": f, "folder": folder, "name": name, "stem": name[: -len(ext)], "ext": ext,
+                "exports": [e for e in SCHEMATIC_EXTENSIONS if e != ext],
+            })
         folders = sorted({e["folder"] for e in entries if e["folder"]}, key=str.lower)
         pct = 0.0 if not quota else min(100.0, used * 100.0 / quota)
         return render(

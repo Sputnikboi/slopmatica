@@ -67,7 +67,11 @@
       <div class="sub muted">{{ e.f.size|human_size }} &middot; <time datetime="{{ e.f.modified|iso_utc }}">{{ e.f.modified|pretty_utc }}</time></div>
     </div>
     <div class="actions">
-      <a class="btn small" href="{{ base }}/api/files/{{ e.f.path|qpath }}" download="{{ e.name }}">Download</a>
+      <a class="btn small dl" href="{{ base }}/api/files/{{ e.f.path|qpath }}" download="{{ e.name }}">Download</a>
+      <select class="btn small ghost export" data-export aria-label="Export {{ e.name }} as another format">
+        <option value="" selected>Export as&hellip;</option>
+        {% for x in e.exports %}<option value="{{ x[1:] }}">{{ x }}</option>{% endfor %}
+      </select>
       <button type="button" class="btn small ghost" data-act="rename">Rename</button>
       <button type="button" class="btn small ghost danger" data-act="delete">Delete</button>
     </div>

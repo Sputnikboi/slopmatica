@@ -104,6 +104,37 @@
     }
   });
 
+  // ---- export as another format (converted on the server)
+  document.addEventListener("change", async (ev) => {
+    const sel = ev.target.closest("select[data-export]");
+    if (!sel) return;
+    const fmt = sel.value;
+    sel.value = "";
+    if (!fmt) return;
+    const path = sel.closest(".card").dataset.path;
+    const label = sel.options[0];
+    const text = label.textContent;
+    sel.disabled = true;
+    label.textContent = "Converting\u2026";
+    try {
+      const r = await fetch(base + "/api/export/" + enc(path) + "?format=" + encodeURIComponent(fmt), { credentials: "same-origin" });
+      if (!r.ok) { alert("Export failed: " + (await errorText(r))); return; }
+      const url = URL.createObjectURL(await r.blob());
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = path.split("/").pop().replace(SCHEMATIC, "." + fmt);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (_) {
+      alert("Export failed: network error");
+    } finally {
+      sel.disabled = false;
+      label.textContent = text;
+    }
+  });
+
   // ---- uploads
   const drop = document.getElementById("drop");
   const input = document.getElementById("file-input");

@@ -92,7 +92,8 @@ input:focus, select:focus, .btn:focus-visible, .chip:focus-visible { outline: 2p
 .chip:hover { color: var(--text); border-color: var(--muted); }
 .chip.plain { cursor: default; border-style: dashed; }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 8px 12px 12px; margin-top: auto; }
-.actions a.btn { grid-column: 1 / -1; }
+.actions select.export { width: 100%; min-width: 0; padding-left: 4px; padding-right: 2px; background: var(--panel); text-align: center; text-align-last: center; }
+.actions select.export:disabled { cursor: progress; opacity: .7; }
 .empty { text-align: center; padding: 32px 0; }
 
 @media (max-width: 520px) {
@@ -100,7 +101,12 @@ input:focus, select:focus, .btn:focus-visible, .chip:focus-visible { outline: 2p
   .topbar:has(.who) .brand span { display: none; }
   .who-name { max-width: 45vw; }
   .hero h1 { font-size: 23px; }
+  /* two cards per row: Download and Export get a row each */
+  .actions .dl, .actions .export { grid-column: 1 / -1; }
 }
-@media (max-width: 360px) { .grid { grid-template-columns: 1fr; } }
+@media (max-width: 360px) {
+  .grid { grid-template-columns: 1fr; }
+  .actions .dl, .actions .export { grid-column: auto; }
+}
 
 .name .ext { font-weight: normal; font-size: 0.75em; opacity: 0.6; }
