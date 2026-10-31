@@ -162,5 +162,7 @@
   "slopmatica.options.easy_place_rotate.tooltip": "Easy Place briefly turns you to the facing a block needs, for that one click (angle placement, as Litematica does; most servers allow it). Off: you are never turned; blocks that need a facing are only placed when you look that way, and you are told which way.",
   "slopmatica.easy_place.face": "Easy Place: face %s to place this",
   "slopmatica.options.easy_place_angel": "Angel Placement",
-  "slopmatica.options.easy_place_angel.tooltip": "Easy Place can place blocks floating in mid-air, with nothing next to them, as Litematica does. Vanilla servers accept it; some anti-cheat plugins don't. Placing against a neighbour is still preferred when that gives the right block."
+  "slopmatica.options.easy_place_angel.tooltip": "Easy Place can place blocks floating in mid-air, with nothing next to them, as Litematica does. Vanilla servers accept it; some anti-cheat plugins don't. Placing against a neighbour is still preferred when that gives the right block.",
+  "slopmatica.cloud.password": "Set Website Password...",
+  "slopmatica.cloud.password.tooltip": "Opens your account page on the website, already logged in. Set a password there to log in on the website directly with your Minecraft name, without the game."
 }

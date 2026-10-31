@@ -8,6 +8,7 @@ import java.util.Locale;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.StringWidget;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.layouts.HeaderAndFooterLayout;
 import net.minecraft.client.gui.layouts.LinearLayout;
 import net.minecraft.client.gui.screens.Screen;
@@ -31,6 +32,7 @@ public class CloudScreen extends Screen {
     private StringWidget status;
     private Button loginButton;
     private Button websiteButton;
+    private Button passwordButton;
     private Button syncButton;
     private Button autosyncButton;
 
@@ -76,6 +78,8 @@ public class CloudScreen extends Screen {
             refresh();
         }).width((WIDTH - 6) / 2).build());
 
+        passwordButton = column.addChild(Button.builder(Component.translatable("slopmatica.cloud.password"), b -> cloud.openWebsite("/account"))
+            .width(WIDTH).tooltip(Tooltip.create(Component.translatable("slopmatica.cloud.password.tooltip"))).build());
         column.addChild(Button.builder(Component.translatable("slopmatica.cloud.folder"), b -> {
             try {
                 Files.createDirectories(CloudSync.cloudDir());
@@ -112,6 +116,7 @@ public class CloudScreen extends Screen {
         loginButton.setMessage(Component.translatable(in && !urlChanged ? "slopmatica.cloud.logout" : "slopmatica.cloud.login"));
         loginButton.active = !url.getValue().isBlank();
         websiteButton.active = in && !urlChanged;
+        passwordButton.active = in && !urlChanged;
         syncButton.active = in && !urlChanged && !cloud.syncing();
         autosyncButton.setMessage(Component.translatable(cloud.account().autosync ? "slopmatica.cloud.autosync_on" : "slopmatica.cloud.autosync_off"));
         layout.arrangeElements();

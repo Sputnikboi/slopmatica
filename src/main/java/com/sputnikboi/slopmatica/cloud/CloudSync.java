@@ -186,13 +186,23 @@ public final class CloudSync {
 
     /** Opens the website in the browser, already logged in (a one-time link). */
     public void openWebsite() {
+        openWebsite("/");
+    }
+
+    /**
+     * Opens a page of the website, already logged in. {@code /account} is where a website
+     * password is set, so the password is typed on the site and never in the game.
+     */
+    public void openWebsite(String page) {
         if (!loggedIn()) {
             status = "Log in first";
             return;
         }
         worker.execute(() -> {
             try {
-                String url = postJson("/api/weblogin", new JsonObject(), true).get("url").getAsString();
+                JsonObject body = new JsonObject();
+                body.addProperty("next", page);
+                String url = postJson("/api/weblogin", body, true).get("url").getAsString();
                 Minecraft.getInstance().execute(() -> Blaze3D.openUri(URI.create(url)));
             } catch (Exception e) {
                 status = "Could not open the website: " + message(e);
