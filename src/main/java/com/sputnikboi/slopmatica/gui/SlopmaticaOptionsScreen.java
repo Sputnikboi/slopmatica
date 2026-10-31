@@ -63,7 +63,10 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
         );
 
         list.addHeader(Component.translatable("slopmatica.options.view"));
-        list.addSmall(toggle("slopmatica.options.exit_view_when_hurt", c.exitViewWhenHurt, v -> c.exitViewWhenHurt = v, false));
+        list.addSmall(
+            toggle("slopmatica.options.view_collision", c.viewCollision, v -> c.viewCollision = v, false),
+            toggle("slopmatica.options.exit_view_when_hurt", c.exitViewWhenHurt, v -> c.exitViewWhenHurt = v, false)
+        );
 
         list.addHeader(Component.translatable("slopmatica.options.paste"));
         list.addSmall(new OptionInstance<>(

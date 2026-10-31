@@ -36,6 +36,8 @@ public final class SlopmaticaConfig {
     public boolean fadeOutlines = true;
     /** Survival/adventure: getting hurt drops you out of the placement view, back to your body. */
     public boolean exitViewWhenHurt = true;
+    /** The placement view's camera bumps into blocks instead of flying through them. */
+    public boolean viewCollision = true;
     /** What pasting into the world may overwrite. */
     public PlacementBuilder.Replace pasteReplace = PlacementBuilder.Replace.NONE;
     public int fadeStart = 24;

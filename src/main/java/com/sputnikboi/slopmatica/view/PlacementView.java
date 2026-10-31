@@ -21,6 +21,7 @@ import net.minecraft.util.Mth;
 import net.minecraft.util.Util;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -47,6 +48,8 @@ public final class PlacementView {
     private static final double REACH = 256;
     /** Shift is also "fly down"; don't sink while it is held to nudge 5 blocks at a time. */
     private static final long SHIFT_NUDGE_GRACE_MS = 600;
+    /** Half the size of the camera's collision box: enough that the near plane never shows a wall's inside. */
+    private static final double CAMERA_RADIUS = 0.25;
 
     private @Nullable Placement placement;
     private double x, y, z, xo, yo, zo;
@@ -330,9 +333,16 @@ public final class PlacementView {
         }
         double speed = (o.keySprint.isDown() ? SPRINT_SPEED : SPEED) / len;
         double sin = Mth.sin(yRot * Mth.DEG_TO_RAD), cos = Mth.cos(yRot * Mth.DEG_TO_RAD);
-        x += (-sin * forward + cos * strafe) * speed;
-        z += (cos * forward + sin * strafe) * speed;
-        y += up * speed;
+        Vec3 move = new Vec3((-sin * forward + cos * strafe) * speed, up * speed, (cos * forward + sin * strafe) * speed);
+        if (SlopmaticaConfig.get().viewCollision && mc.level != null) {
+            // A small box around the camera slides along blocks like the player does, so the view
+            // can't end up inside walls. Ghost blocks aren't solid, so the build itself is no obstacle.
+            AABB box = new AABB(x - CAMERA_RADIUS, y - CAMERA_RADIUS, z - CAMERA_RADIUS, x + CAMERA_RADIUS, y + CAMERA_RADIUS, z + CAMERA_RADIUS);
+            move = Entity.collideBoundingBox(CollisionContext.empty(), move, box, mc.level, List.of());
+        }
+        x += move.x;
+        y += move.y;
+        z += move.z;
     }
 
     private Vec3 look() {

@@ -131,5 +131,7 @@
   "slopmatica.cloud.hint": "Cloud schematics are kept in schematics/cloud/",
   "slopmatica.options.view": "Placement View",
   "slopmatica.options.exit_view_when_hurt": "Leave When Hurt",
-  "slopmatica.options.exit_view_when_hurt.tooltip": "In survival and adventure, taking damage closes the placement view so you can deal with whatever is hurting you. Creative is never affected."
+  "slopmatica.options.exit_view_when_hurt.tooltip": "In survival and adventure, taking damage closes the placement view so you can deal with whatever is hurting you. Creative is never affected.",
+  "slopmatica.options.view_collision": "Camera Collision",
+  "slopmatica.options.view_collision.tooltip": "The placement view's camera bumps into blocks like you do. Turn off to fly through walls (noclip). Ghost blocks never block it."
 }
