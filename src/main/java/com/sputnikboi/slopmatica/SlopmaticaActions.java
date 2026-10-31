@@ -77,15 +77,29 @@ public final class SlopmaticaActions {
     }
 
     public static void rotate(Placement p, Rotation by, Consumer<Component> feedback) {
-        p.setRotation(p.transform().rotation().getRotated(by));
+        keepingCenter(p, () -> p.setRotation(p.transform().rotation().getRotated(by)));
         PlacementManager.INSTANCE.changed();
         feedback.accept(prefix().append(p.name() + " rotated " + rotationLabel(p.transform().rotation())));
     }
 
     public static void setMirror(Placement p, Mirror mirror, Consumer<Component> feedback) {
-        p.setMirror(mirror);
+        keepingCenter(p, () -> p.setMirror(mirror));
         PlacementManager.INSTANCE.changed();
         feedback.accept(prefix().append(p.name() + " mirror " + mirrorLabel(mirror)));
+    }
+
+    /**
+     * Rotating or mirroring turns the placement about the block at the middle of its footprint,
+     * not its origin corner, so it stays where it is instead of swinging away. Pivoting on one
+     * fixed block (rather than recentring) means four quarter turns land exactly where they began.
+     */
+    private static void keepingCenter(Placement p, Runnable change) {
+        var b = p.schematic().bounds();
+        int cx = Math.floorDiv(b.minX() + b.maxX(), 2), cy = b.minY(), cz = Math.floorDiv(b.minZ() + b.maxZ(), 2);
+        BlockPos before = p.transform().toWorld(cx, cy, cz);
+        change.run();
+        BlockPos after = p.transform().toWorld(cx, cy, cz);
+        p.setOrigin(p.transform().origin().offset(before.subtract(after)));
     }
 
     /** None, then flip along X, then flip along Z. */

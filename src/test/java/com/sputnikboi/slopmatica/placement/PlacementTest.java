@@ -3,6 +3,7 @@ package com.sputnikboi.slopmatica.placement;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import com.sputnikboi.slopmatica.SlopmaticaActions;
 import com.sputnikboi.slopmatica.schematic.PackedIntArrayAccess;
 import com.sputnikboi.slopmatica.schematic.RawLitematic;
 import com.sputnikboi.slopmatica.schematic.Schematic;
@@ -31,6 +32,23 @@ class PlacementTest {
     static void bootstrap() {
         SharedConstants.tryDetectVersion();
         Bootstrap.bootStrap();
+    }
+
+    /** Rotating keeps the footprint's middle block in place, and four turns return exactly. */
+    @Test
+    void rotationPivotsOnTheMiddle() {
+        Placement p = new Placement(asymmetric(), "t", new BlockPos(100, 64, 200));
+        var b = p.schematic().bounds();
+        BlockPos middle = p.transform().toWorld(Math.floorDiv(b.minX() + b.maxX(), 2), b.minY(), Math.floorDiv(b.minZ() + b.maxZ(), 2));
+        SlopmaticaActions.rotate(p, Rotation.CLOCKWISE_90, msg -> { });
+        assertEquals(middle, p.transform().toWorld(Math.floorDiv(b.minX() + b.maxX(), 2), b.minY(), Math.floorDiv(b.minZ() + b.maxZ(), 2)));
+        for (int i = 0; i < 3; i++) {
+            SlopmaticaActions.rotate(p, Rotation.CLOCKWISE_90, msg -> { });
+        }
+        assertEquals(new BlockPos(100, 64, 200), p.transform().origin());
+        SlopmaticaActions.setMirror(p, Mirror.FRONT_BACK, msg -> { });
+        SlopmaticaActions.setMirror(p, Mirror.NONE, msg -> { });
+        assertEquals(new BlockPos(100, 64, 200), p.transform().origin());
     }
 
     /** An L of stone with an east-facing stair on the end: asymmetric under every transform. */

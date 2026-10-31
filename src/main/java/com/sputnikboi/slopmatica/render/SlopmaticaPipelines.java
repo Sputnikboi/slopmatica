@@ -8,9 +8,12 @@ import net.minecraft.resources.Identifier;
 
 final class SlopmaticaPipelines {
     /**
-     * Vanilla lines with a per-pixel distance fade. Up close every block gets an outline; at range
-     * thousands of one-pixel lines would merge into a solid sheet and hide the ghosts. The fade
-     * range is a per-draw uniform (see fading_lines.fsh) so the options screen can change it live.
+     * Vanilla lines with a world-space width and a per-pixel distance fade. Vanilla lines are a
+     * fixed number of pixels wide, so they look ever thicker next to blocks that shrink with
+     * distance; these thin out with their block instead. Up close every block gets an outline; at
+     * range thousands of lines would still merge into a solid sheet and hide the ghosts, hence the
+     * fade. Its range is a per-draw uniform (see fading_lines.fsh) so the options screen can
+     * change it live.
      */
     static final RenderPipeline FADING_LINES = RenderPipeline.builder(RenderPipelines.LINES_SNIPPET)
         .withLocation(id("pipeline/fading_lines"))

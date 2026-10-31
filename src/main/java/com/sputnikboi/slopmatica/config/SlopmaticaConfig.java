@@ -24,11 +24,13 @@ public final class SlopmaticaConfig {
 
     public float ghostOpacity = 0.65F;
     public boolean showGhosts = true;
+    /** Master switch for every outline, flipped by its hotkey; the per-status switches below stay as set. */
+    public boolean showOutlines = true;
     public boolean outlineMissing = true;
     public boolean outlineMatch = true;
     public boolean outlineVariant = true;
     public boolean outlineWrong = true;
-    /** Multiplier on vanilla's line width. */
+    /** Multiplier on {@code HologramRenderer.BASE_LINE_WIDTH}, half of vanilla's block outline. */
     public float outlineWidth = 1.0F;
     public boolean fadeOutlines = true;
     public int fadeStart = 24;
@@ -79,7 +81,7 @@ public final class SlopmaticaConfig {
 
     private SlopmaticaConfig sanitized() {
         ghostOpacity = Math.clamp(ghostOpacity, 0.05F, 1.0F);
-        outlineWidth = Math.clamp(outlineWidth, 0.5F, 4.0F);
+        outlineWidth = Math.clamp(outlineWidth, 0.01F, 4.0F);
         fadeStart = Math.clamp(fadeStart, 4, 256);
         fadeEnd = Math.clamp(fadeEnd, fadeStart + 4, 260);
         return this;

@@ -1,5 +1,6 @@
 package com.sputnikboi.slopmatica.gui;
 
+import com.sputnikboi.slopmatica.placement.Placement;
 import com.sputnikboi.slopmatica.placement.PlacementManager;
 import com.sputnikboi.slopmatica.render.HologramRenderer;
 import net.minecraft.client.gui.components.Button;
@@ -34,6 +35,12 @@ public class SlopmaticaMenuScreen extends Screen {
         int loaded = PlacementManager.INSTANCE.placements().size();
         column.addChild(Button.builder(Component.translatable("slopmatica.menu.placements", loaded), b -> minecraft.gui.setScreen(new PlacementsScreen(this)))
             .width(BUTTON_WIDTH).build());
+        Placement active = PlacementManager.INSTANCE.selected().orElse(null);
+        Button materials = column.addChild(Button.builder(
+            active == null ? Component.translatable("slopmatica.menu.materials.none") : Component.translatable("slopmatica.menu.materials"),
+            b -> minecraft.gui.setScreen(new MaterialListScreen(this, active))
+        ).width(BUTTON_WIDTH).build());
+        materials.active = active != null;
         column.addChild(Button.builder(Component.translatable("slopmatica.menu.options"), b -> minecraft.gui.setScreen(new SlopmaticaOptionsScreen(this)))
             .width(BUTTON_WIDTH).build());
         column.addChild(Button.builder(hologramLabel(), b -> {

@@ -32,13 +32,16 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
 
         list.addHeader(Component.translatable("slopmatica.options.outlines"));
         list.addSmall(
+            toggle("slopmatica.options.show_outlines", c.showOutlines, v -> c.showOutlines = v, false),
+            slider("slopmatica.options.outline_width", 1, 400, Math.round(c.outlineWidth * 100), "%", v -> c.outlineWidth = v / 100.0F, true)
+        );
+        list.addSmall(
             toggle("slopmatica.options.outline_missing", c.outlineMissing, v -> c.outlineMissing = v, true),
             toggle("slopmatica.options.outline_match", c.outlineMatch, v -> c.outlineMatch = v, true),
             toggle("slopmatica.options.outline_variant", c.outlineVariant, v -> c.outlineVariant = v, true),
             toggle("slopmatica.options.outline_wrong", c.outlineWrong, v -> c.outlineWrong = v, true)
         );
         list.addSmall(
-            slider("slopmatica.options.outline_width", 50, 400, Math.round(c.outlineWidth * 100), "%", v -> c.outlineWidth = v / 100.0F, true),
             toggle("slopmatica.options.fade_outlines", c.fadeOutlines, v -> c.fadeOutlines = v, false),
             slider("slopmatica.options.fade_start", 4, 128, c.fadeStart, " blocks", v -> {
                 c.fadeStart = v;

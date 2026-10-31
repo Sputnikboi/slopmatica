@@ -1,6 +1,9 @@
 package com.sputnikboi.slopmatica.dev;
 
+import com.sputnikboi.slopmatica.gui.MaterialListScreen;
 import com.sputnikboi.slopmatica.gui.PlacementsScreen;
+import com.sputnikboi.slopmatica.placement.PlacementManager;
+import com.sputnikboi.slopmatica.view.PlacementView;
 import com.sputnikboi.slopmatica.gui.SchematicBrowserScreen;
 import com.sputnikboi.slopmatica.gui.SlopmaticaMenuScreen;
 import com.sputnikboi.slopmatica.gui.SlopmaticaOptionsScreen;
@@ -10,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
 import net.minecraft.client.gui.screens.options.controls.KeyBindsScreen;
@@ -23,7 +27,9 @@ import org.slf4j.LoggerFactory;
  * One step per line, run once the player is in a world:
  * {@code wait <ticks>}, {@code /<command>} (client or server), {@code hud}, {@code shot <name>},
  * {@code screen <menu|browser|placements|options|keybinds|none>}, {@code type <text>},
- * {@code key <tab|down|enter>} (both go to the open screen), {@code quit}.
+ * {@code key <tab|down|enter>} (both go to the open screen), {@code press <mapping>} (one click of a
+ * key mapping, e.g. {@code key.slopmatica.placement_view} or {@code key.attack}), {@code down <mapping>}
+ * / {@code up <mapping>} (hold and release), {@code bind <mapping> <key.keyboard.o>}, {@code look <dx> <dy>} (mouse movement), {@code quit}.
  */
 public final class DevHarness {
     private static final Logger LOGGER = LoggerFactory.getLogger("Slopmatica/dev");
@@ -79,6 +85,7 @@ public final class DevHarness {
                     case "browser" -> new SchematicBrowserScreen(null);
                     case "placements" -> new PlacementsScreen(null);
                     case "options" -> new SlopmaticaOptionsScreen(null);
+                    case "materials" -> new MaterialListScreen(null, PlacementManager.INSTANCE.selected().orElseThrow());
                     case "keybinds" -> new KeyBindsScreen(null, mc.options);
                     default -> null;
                 });
@@ -93,6 +100,25 @@ public final class DevHarness {
                 };
                 boolean handled = mc.gui.screen().keyPressed(event);
                 LOGGER.info("dev key {} handled={} focus={}", step, handled, mc.gui.screen() == null ? null : mc.gui.screen().getFocused());
+            } else if (step.startsWith("press ")) {
+                KeyMapping mapping = KeyMapping.get(step.substring(6).trim());
+                KeyMapping.click(InputConstants.getKey(mapping.saveString()));
+            } else if (step.startsWith("bind ")) {
+                String[] parts = step.split(" ");
+                KeyMapping.get(parts[1]).setKey(InputConstants.getKey(parts[2]));
+                KeyMapping.resetMapping();
+            } else if (step.startsWith("down ") || step.startsWith("up ")) {
+                String[] parts = step.split(" ");
+                KeyMapping.get(parts[1]).setDown(parts[0].equals("down"));
+            } else if (step.startsWith("look ")) {
+                String[] parts = step.split(" ");
+                double dx = Double.parseDouble(parts[1]), dy = Double.parseDouble(parts[2]);
+                // What the mouse mixin does with real mouse movement.
+                if (PlacementView.INSTANCE.active()) {
+                    PlacementView.INSTANCE.turn(dx, dy);
+                } else {
+                    mc.player.turn(dx, dy);
+                }
             } else if (step.equals("quit")) {
                 mc.stop();
             } else {

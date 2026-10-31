@@ -6,7 +6,12 @@
     "ClientLevelMixin",
     "RenderSetupAccessor",
     "RenderTypeAccessor",
-    "TextureBindingAccessor"
+    "TextureBindingAccessor",
+    "view.CameraMixin",
+    "view.GameRendererMixin",
+    "view.KeyboardInputMixin",
+    "view.MinecraftMixin",
+    "view.MouseHandlerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -51,6 +51,8 @@ public final class HologramRenderer {
 
     private static final int MAX_SUBMITS_PER_FRAME = 8;
     private static final int MAX_UPLOADS_PER_FRAME = 24;
+    /** 100% outline thickness, relative to vanilla's block outline (at 6 blocks away). */
+    private static final float BASE_LINE_WIDTH = 0.5F;
     private static final Vector4f WHITE = new Vector4f(1.0F, 1.0F, 1.0F, 1.0F);
     private static final Vector3f NO_OFFSET = new Vector3f();
     private static final Matrix4f IDENTITY = new Matrix4f();
@@ -326,7 +328,7 @@ public final class HologramRenderer {
             SectionMeshBuilder.Input input = new SectionMeshBuilder.Input(
                 section.key, section.version, pos, transforms, WorldSnapshot.capture(level, pos), level,
                 mc.getModelManager().getBlockStateModelSet(), mc.getModelManager().getFluidStateModelSet(), mc.getBlockColors(),
-                mc.getWindow().getAppropriateLineWidth() * config.outlineWidth, outlined
+                mc.getWindow().getAppropriateLineWidth() * BASE_LINE_WIDTH * config.outlineWidth, outlined
             );
             section.building = true;
             inFlight.incrementAndGet();
@@ -388,10 +390,13 @@ public final class HologramRenderer {
         Matrix4f modelView = RenderSystem.getModelViewMatrixCopy();
         SlopmaticaConfig config = SlopmaticaConfig.get();
         Vector4f ghostColor = new Vector4f(1.0F, 1.0F, 1.0F, config.ghostOpacity);
-        // The fading line shader reads its fade range from TextureMat[3].xy (lines have no texture);
-        // an end at or before the start means "never fade".
+        // The line shader reads its settings from TextureMat[3] (lines have no texture): xy is the
+        // fade range, where an end at or before the start means "never fade"; z = 1 keeps lines
+        // solid when they shrink below a pixel. Wrong and variant outlines use both, so they stay
+        // findable from any distance.
         Matrix4f fadeRange = new Matrix4f().m30(config.fadeOutlines ? config.fadeStart : 0).m31(config.fadeOutlines ? config.fadeEnd : 0);
-        DynamicGpuData.Transform[] transforms = new DynamicGpuData.Transform[visible.size() * 2];
+        Matrix4f alertStyle = new Matrix4f().m32(1);
+        DynamicGpuData.Transform[] transforms = new DynamicGpuData.Transform[visible.size() * 3];
         for (int i = 0; i < visible.size(); i++) {
             long key = visible.get(i).key;
             float ox = (float) (SectionPos.sectionToBlockCoord(SectionPos.x(key)) - camera.x);
@@ -399,8 +404,10 @@ public final class HologramRenderer {
             float oz = (float) (SectionPos.sectionToBlockCoord(SectionPos.z(key)) - camera.z);
             // The block shader adds ModelOffset itself (and uses it for fog); the line shaders
             // ignore it, so outlines carry their offset in the model-view matrix instead.
-            transforms[i * 2] = new DynamicGpuData.Transform(modelView, ghostColor, new Vector3f(ox, oy, oz), IDENTITY);
-            transforms[i * 2 + 1] = new DynamicGpuData.Transform(new Matrix4f(modelView).translate(ox, oy, oz), WHITE, NO_OFFSET, fadeRange);
+            Matrix4f lineView = new Matrix4f(modelView).translate(ox, oy, oz);
+            transforms[i * 3] = new DynamicGpuData.Transform(modelView, ghostColor, new Vector3f(ox, oy, oz), IDENTITY);
+            transforms[i * 3 + 1] = new DynamicGpuData.Transform(lineView, WHITE, NO_OFFSET, fadeRange);
+            transforms[i * 3 + 2] = new DynamicGpuData.Transform(lineView, WHITE, NO_OFFSET, alertStyle);
         }
         GpuBufferSlice[] uniforms = RenderSystem.getDynamicUniforms().writeTransforms(transforms);
 
@@ -415,17 +422,16 @@ public final class HologramRenderer {
         )) {
             RenderSystem.bindDefaultUniforms(pass);
 
-            if (lineIndexBuffer != null) {
+            if (lineIndexBuffer != null && config.showOutlines) {
                 pass.setIndexBuffer(lineIndexBuffer, lineIndices.type());
                 pass.setPipeline(RenderSystem.getCompiledPipeline(SlopmaticaPipelines.FADING_LINES));
                 for (int i = 0; i < visible.size(); i++) {
-                    drawPart(pass, visible.get(i).mesh.lines, uniforms[i * 2 + 1]);
+                    drawPart(pass, visible.get(i).mesh.lines, uniforms[i * 3 + 1]);
                 }
                 // Wrong and variant blocks stay visible from any distance: those are the ones to find.
                 // Drawn last so they win the edges they share with a neighbour's blue or green box.
-                pass.setPipeline(RenderSystem.getCompiledPipeline(RenderPipelines.LINES));
                 for (int i = 0; i < visible.size(); i++) {
-                    drawPart(pass, visible.get(i).mesh.alerts, uniforms[i * 2 + 1]);
+                    drawPart(pass, visible.get(i).mesh.alerts, uniforms[i * 3 + 2]);
                 }
             }
 
@@ -439,7 +445,7 @@ public final class HologramRenderer {
                 pass.setUniform("Sampler2", mc.gameRenderer.lightmap(), RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
                 pass.setIndexBuffer(quadIndexBuffer, quadIndices.type());
                 for (int i = 0; i < visible.size(); i++) {
-                    drawPart(pass, visible.get(i).mesh.ghosts, uniforms[i * 2]);
+                    drawPart(pass, visible.get(i).mesh.ghosts, uniforms[i * 3]);
                 }
             }
         }
