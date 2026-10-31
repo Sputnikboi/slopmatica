@@ -1,6 +1,8 @@
 package com.sputnikboi.slopmatica.placement;
 
+import com.sputnikboi.slopmatica.schematic.EntityData;
 import com.sputnikboi.slopmatica.schematic.Schematic;
+import net.minecraft.world.phys.Vec3;
 import java.util.List;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Blocks;
@@ -177,6 +179,36 @@ public final class Placement {
                 }
             }
             return null;
+        }
+
+        /**
+         * The schematic's entities moved into the world: positions mirrored, rotated and offset
+         * like the blocks (a point at the near edge of a block lands at the near edge of that
+         * block's new place). Facing is not changed here; the entity does that itself.
+         */
+        public List<EntityData> worldEntities() {
+            List<EntityData> out = new java.util.ArrayList<>();
+            for (Schematic.Region region : regions) {
+                for (EntityData e : region.entities()) {
+                    double x = e.pos().x, z = e.pos().z;
+                    switch (mirror) {
+                        case LEFT_RIGHT -> z = 1 - z;
+                        case FRONT_BACK -> x = 1 - x;
+                        default -> { }
+                    }
+                    double rx, rz;
+                    switch (rotation) {
+                        case CLOCKWISE_90 -> { rx = 1 - z; rz = x; }
+                        case COUNTERCLOCKWISE_90 -> { rx = z; rz = 1 - x; }
+                        case CLOCKWISE_180 -> { rx = 1 - x; rz = 1 - z; }
+                        default -> { rx = x; rz = z; }
+                    }
+                    Vec3 pos = new Vec3(origin.getX() + rx, origin.getY() + e.pos().y, origin.getZ() + rz);
+                    BlockPos blockPos = toWorld(e.blockPos().getX(), e.blockPos().getY(), e.blockPos().getZ());
+                    out.add(new EntityData(pos, blockPos, e.nbt()));
+                }
+            }
+            return out;
         }
 
         /** World-space to schematic-space: the inverse of {@link #toWorld}. */

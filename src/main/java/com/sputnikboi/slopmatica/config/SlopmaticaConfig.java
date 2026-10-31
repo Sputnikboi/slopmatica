@@ -41,6 +41,8 @@ public final class SlopmaticaConfig {
     public boolean exitViewWhenHurt = true;
     /** The placement view's camera bumps into blocks instead of flying through them. */
     public boolean viewCollision = true;
+    /** Copy block entity data (chest contents, sign text) and entities (frames, armor stands), and paste them. */
+    public boolean includeNbt = true;
     /** The file format copies are saved in. */
     public SchematicFormats copyFormat = SchematicFormats.SLOPMATIC;
     /** What pasting into the world may overwrite. */

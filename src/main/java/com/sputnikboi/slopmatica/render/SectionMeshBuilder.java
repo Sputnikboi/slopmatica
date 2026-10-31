@@ -22,6 +22,7 @@ import net.minecraft.client.renderer.block.ModelBlockRenderer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.RenderShape;
@@ -68,8 +69,11 @@ final class SectionMeshBuilder {
     ) {
     }
 
-    /** A missing block whose looks come (partly) from a block-entity renderer, drawn per frame. */
-    record SpecialGhost(BlockPos pos, BlockState state) {
+    /**
+     * A missing block whose looks come (partly) from a block-entity renderer, drawn per frame.
+     * {@code data} is the schematic's block entity data for it (sign text, banner patterns...), if any.
+     */
+    record SpecialGhost(BlockPos pos, BlockState state, @Nullable CompoundTag data) {
     }
 
     /**
@@ -168,7 +172,7 @@ final class SectionMeshBuilder {
                             blockRenderer.tesselateBlock(quadOutput, x - 1, y - 1, z - 1, view, pos, want, in.blockModels().get(want), want.getSeed(pos));
                         }
                         if (want.hasBlockEntity()) {
-                            specials.add(new SpecialGhost(pos.immutable(), want));
+                            specials.add(new SpecialGhost(pos.immutable(), want, tileEntityAt(pos.getX(), pos.getY(), pos.getZ(), want)));
                         }
                     }
                     if (in.outlined()[st.ordinal()]) {
@@ -193,6 +197,16 @@ final class SectionMeshBuilder {
             }
         }
         return found;
+    }
+
+    /** The block entity data of whichever placement supplied {@code want} at this position. */
+    private @Nullable CompoundTag tileEntityAt(int wx, int wy, int wz, BlockState want) {
+        for (Placement.Transform t : in.transforms()) {
+            if (t.stateAt(wx, wy, wz) == want) {
+                return t.tileEntityAt(wx, wy, wz);
+            }
+        }
+        return null;
     }
 
     private void outline(BufferBuilder lines, int x, int y, int z, int i, BlockStatus st, BlockPos pos) {

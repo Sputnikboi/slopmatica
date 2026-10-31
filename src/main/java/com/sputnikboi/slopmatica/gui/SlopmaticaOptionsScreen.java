@@ -72,6 +72,7 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
         );
 
         list.addHeader(Component.translatable("slopmatica.options.paste"));
+        list.addSmall(toggle("slopmatica.options.include_nbt", c.includeNbt, v -> c.includeNbt = v, false));
         list.addSmall(new OptionInstance<>(
             "slopmatica.options.paste_replace",
             v -> Tooltip.create(Component.translatable("slopmatica.options.paste_replace." + v.name().toLowerCase(Locale.ROOT) + ".tooltip")),

@@ -52,7 +52,17 @@ class SchematicFormatsTest {
         CompoundTag chest = new CompoundTag();
         chest.putString("id", "minecraft:chest");
         chest.putString("CustomName", "\"loot\"");
-        return new BlockVolume("sample", "tester", sx, sy, sz, PALETTE, indices, Map.of(BlockPos.asLong(1, 2, 3), chest));
+        CompoundTag stand = new CompoundTag();
+        stand.putString("id", "minecraft:armor_stand");
+        stand.putString("CustomName", "\"steve\"");
+        stand.put("Pos", EntityData.doubles(1000, 64, 1000)); // absolute junk: the writer makes it relative
+        CompoundTag frame = new CompoundTag();
+        frame.putString("id", "minecraft:item_frame");
+        frame.putIntArray(EntityData.BLOCK_POS, new int[] {1000, 64, 1000});
+        List<EntityData> entities = List.of(
+            new EntityData(new net.minecraft.world.phys.Vec3(2.5, 1, 4.25), new BlockPos(2, 1, 4), stand),
+            new EntityData(new net.minecraft.world.phys.Vec3(3.5, 1.5, 0.97), new BlockPos(3, 1, 1), frame));
+        return new BlockVolume("sample", "tester", sx, sy, sz, PALETTE, indices, Map.of(BlockPos.asLong(1, 2, 3), chest), entities);
     }
 
     /** Every format reads back exactly what it wrote, block entities included. */
@@ -79,6 +89,39 @@ class SchematicFormatsTest {
         assertEquals("\"loot\"", region.tileEntityAt(1, 2, 3).getStringOr("CustomName", ""));
         assertNull(region.tileEntityAt(0, 0, 0));
         assertEquals(v.nonAirBlocks(), schematic.blockCount());
+
+        List<EntityData> entities = region.entities();
+        assertEquals(2, entities.size(), format + " entities");
+        EntityData stand = entities.stream().filter(e -> e.nbt().getStringOr("id", "").equals("minecraft:armor_stand")).findFirst().orElseThrow();
+        assertEquals(new net.minecraft.world.phys.Vec3(2.5, 1, 4.25), stand.pos());
+        assertEquals("\"steve\"", stand.nbt().getStringOr("CustomName", ""));
+        EntityData frame = entities.stream().filter(e -> e.nbt().getStringOr("id", "").equals("minecraft:item_frame")).findFirst().orElseThrow();
+        assertEquals(new BlockPos(3, 1, 1), frame.blockPos(), format + " hanging block");
+    }
+
+    /** An entity inside a block ends up inside that block's new place, for every rotation and mirror. */
+    @Test
+    void entitiesFollowTheirBlock(@TempDir Path dir) throws Exception {
+        BlockVolume v = sample(5, 3, 6);
+        Path file = dir.resolve("e.slopmatic");
+        SchematicFormats.SLOPMATIC.write(file, v);
+        Schematic schematic = Schematic.load(file);
+        for (net.minecraft.world.level.block.Mirror mirror : net.minecraft.world.level.block.Mirror.values()) {
+            for (net.minecraft.world.level.block.Rotation rotation : net.minecraft.world.level.block.Rotation.values()) {
+                Placement p = new Placement(schematic, "e", new BlockPos(100, 64, -40));
+                p.setMirror(mirror);
+                p.setRotation(rotation);
+                List<EntityData> world = p.transform().worldEntities();
+                List<EntityData> local = schematic.regions().getFirst().entities();
+                for (int i = 0; i < local.size(); i++) {
+                    BlockPos block = BlockPos.containing(local.get(i).pos());
+                    BlockPos expected = p.transform().toWorld(block.getX(), block.getY(), block.getZ());
+                    assertEquals(expected, BlockPos.containing(world.get(i).pos()), mirror + " " + rotation + " entity " + i);
+                    BlockPos hang = local.get(i).blockPos();
+                    assertEquals(p.transform().toWorld(hang.getX(), hang.getY(), hang.getZ()), world.get(i).blockPos());
+                }
+            }
+        }
     }
 
     /** The point of .slopmatic: a sparse 64^3 build is far smaller than as .nbt, and smaller than as .litematic. */

@@ -27,9 +27,10 @@ import net.minecraft.nbt.NbtIo;
  *   Size: int[3], BlockCount: long (non-air, non-void),
  *   Regions: [{
  *     Name: string, Pos: int[3], Size: int[3],
- *     Palette: [{Name, Properties}],   // vanilla block state form
+ *     Palette: [block state],          // vanilla's form for DataVersion: {id, properties} from 5006, {Name, Properties} before
  *     Blocks: byte[],                  // (index, run) pairs as unsigned varints, x fastest, then z, then y
- *     BlockEntities: [{Pos: int[3] (region-relative), ...block entity data}]
+ *     BlockEntities: [{Pos: int[3] (region-relative), ...block entity data}],
+ *     Entities: [{...entity data with id; Pos: double list and block_pos (if any) region-relative}]
  *   }]
  * }
  * </pre>
@@ -86,7 +87,12 @@ public final class SlopmaticFormat {
                     tileEntities.put(BlockPos.asLong(p[0], p[1], p[2]), data);
                 }
             }
-            regions.add(new RawSchematic.Region(tag.getStringOr("Name", name), pos[0], pos[1], pos[2], size[0], size[1], size[2], palette, blocks, tileEntities));
+            List<EntityData> entities = new ArrayList<>();
+            ListTag entityList = tag.getListOrEmpty("Entities");
+            for (int i = 0; i < entityList.size(); i++) {
+                entities.add(EntityData.fromRelativeNbt(entityList.getCompoundOrEmpty(i)));
+            }
+            regions.add(new RawSchematic.Region(tag.getStringOr("Name", name), pos[0], pos[1], pos[2], size[0], size[1], size[2], palette, blocks, tileEntities, entities));
         }
         if (regions.isEmpty()) {
             throw new IOException("no regions");
@@ -114,6 +120,9 @@ public final class SlopmaticFormat {
         region.put("Palette", paletteTag);
         region.putByteArray("Blocks", encode(v.indices()));
         region.put("BlockEntities", tiles);
+        ListTag entities = new ListTag();
+        v.entities().forEach(e -> entities.add(e.relativeNbt()));
+        region.put("Entities", entities);
         ListTag regions = new ListTag();
         regions.add(region);
 

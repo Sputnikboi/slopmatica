@@ -3,19 +3,19 @@ package com.sputnikboi.slopmatica.schematic;
 import java.util.List;
 import java.util.Map;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtUtils;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.Property;
 
 /**
  * A box of blocks to save, as every writer takes it: a palette (index 0 is air) and one palette
  * index per block, x fastest, then z, then y.
  *
  * @param tileEntities block entity data keyed by {@code BlockPos.asLong} of the relative position
+ * @param entities entities with positions relative to the box
  */
 public record BlockVolume(String name, String author, int sizeX, int sizeY, int sizeZ,
-                          List<BlockState> palette, int[] indices, Map<Long, CompoundTag> tileEntities) {
+                          List<BlockState> palette, int[] indices, Map<Long, CompoundTag> tileEntities, List<EntityData> entities) {
 
     public long nonAirBlocks() {
         long n = 0;
@@ -33,21 +33,12 @@ public record BlockVolume(String name, String author, int sizeX, int sizeY, int 
         return new BlockPos(x, rest / sizeZ, rest % sizeZ);
     }
 
-    /** {@code {Name, Properties}}, the block state form every format here uses. */
+    /**
+     * Vanilla's block state form for the current data version ({@code {id, properties}} since data
+     * version 5006, when vanilla renamed {@code Name}/{@code Properties}), which is what Litematica
+     * and structure blocks on this version read back.
+     */
     static CompoundTag stateTag(BlockState state) {
-        CompoundTag tag = new CompoundTag();
-        tag.putString("Name", BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());
-        if (!state.getProperties().isEmpty()) {
-            CompoundTag props = new CompoundTag();
-            for (Property<?> property : state.getProperties()) {
-                props.putString(property.getName(), valueName(state, property));
-            }
-            tag.put("Properties", props);
-        }
-        return tag;
-    }
-
-    private static <T extends Comparable<T>> String valueName(BlockState state, Property<T> property) {
-        return property.getName(state.getValue(property));
+        return NbtUtils.writeBlockState(state);
     }
 }

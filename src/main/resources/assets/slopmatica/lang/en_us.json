@@ -144,5 +144,7 @@
   "slopmatica.info.wrong": "Wrong block",
   "slopmatica.info.placed": "Placed: %s",
   "slopmatica.options.block_info": "Block Info Panel",
-  "slopmatica.options.block_info.tooltip": "Top right: the schematic block under your crosshair, its status, and for yellow and red blocks exactly what differs (placed → wanted)."
+  "slopmatica.options.block_info.tooltip": "Top right: the schematic block under your crosshair, its status, and for yellow and red blocks exactly what differs (placed → wanted).",
+  "slopmatica.options.include_nbt": "NBT Data",
+  "slopmatica.options.include_nbt.tooltip": "Copy and paste block data (chest contents, sign text, banner patterns) and entities (item frames, armor stands, paintings, mobs). Off: blocks only."
 }

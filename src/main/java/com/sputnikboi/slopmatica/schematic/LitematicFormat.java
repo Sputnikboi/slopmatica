@@ -64,7 +64,13 @@ public final class LitematicFormat {
                 CompoundTag te = tiles.getCompoundOrEmpty(i);
                 tileEntities.put(BlockPos.asLong(te.getIntOr("x", 0), te.getIntOr("y", 0), te.getIntOr("z", 0)), te);
             }
-            regions.add(new RawSchematic.Region(regionName, minX, minY, minZ, sx, sy, sz, palette, blocks, tileEntities));
+            // Entities keep their full NBT with Pos relative to the region's min corner.
+            List<EntityData> entities = new ArrayList<>();
+            ListTag entityList = tag.getListOrEmpty("Entities");
+            for (int i = 0; i < entityList.size(); i++) {
+                entities.add(EntityData.fromRelativeNbt(entityList.getCompoundOrEmpty(i)));
+            }
+            regions.add(new RawSchematic.Region(regionName, minX, minY, minZ, sx, sy, sz, palette, blocks, tileEntities, entities));
         }
         return new RawSchematic(name, meta.getStringOr("Author", ""), dataVersion, regions);
     }
@@ -95,7 +101,9 @@ public final class LitematicFormat {
         region.put("BlockStatePalette", paletteTag);
         region.putLongArray("BlockStates", packed);
         region.put("TileEntities", tiles);
-        region.put("Entities", new ListTag());
+        ListTag entities = new ListTag();
+        v.entities().forEach(e -> entities.add(e.relativeNbt()));
+        region.put("Entities", entities);
         region.put("PendingBlockTicks", new ListTag());
         region.put("PendingFluidTicks", new ListTag());
         CompoundTag regions = new CompoundTag();

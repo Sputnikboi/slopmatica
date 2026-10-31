@@ -6,6 +6,14 @@ import com.sputnikboi.slopmatica.placement.Placement;
 import com.sputnikboi.slopmatica.placement.PlacementManager;
 import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.schematic.BlockVolume;
+import com.sputnikboi.slopmatica.schematic.EntityData;
+import net.minecraft.util.ProblemReporter;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.decoration.HangingEntity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.storage.TagValueOutput;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import com.sputnikboi.slopmatica.schematic.SchematicFormats;
 import com.sputnikboi.slopmatica.schematic.Schematic;
 import com.sputnikboi.slopmatica.view.PlacementView;
@@ -112,12 +120,15 @@ public final class Clipboard {
                 }
             }
         }
-        Map<Long, CompoundTag> tiles = blockEntityData(mc, level, blockEntities, box);
+        // NBT: block entity data and entities, unless turned off in Options.
+        boolean nbt = SlopmaticaConfig.get().includeNbt;
+        Map<Long, CompoundTag> tiles = nbt ? blockEntityData(mc, level, blockEntities, box) : Map.of();
+        List<EntityData> entities = nbt ? entities(mc, level, box) : List.of();
 
         String name = "copy " + LocalDateTime.now().format(STAMP);
         SchematicFormats format = SlopmaticaConfig.get().copyFormat;
         Path file = copiesDir().resolve(name.replace(' ', '_') + format.extension);
-        BlockVolume blocks = new BlockVolume(name, mc.player.getGameProfile().name(), sx, sy, sz, palette, indices, tiles);
+        BlockVolume blocks = new BlockVolume(name, mc.player.getGameProfile().name(), sx, sy, sz, palette, indices, tiles, entities);
         CompletableFuture.runAsync(() -> {
             try {
                 format.write(file, blocks);
@@ -130,8 +141,9 @@ public final class Clipboard {
                 return;
             }
             last = file;
-            SlopmaticaActions.chat(SlopmaticaActions.prefix().append(String.format("Copied %d x %d x %d to schematics/copies/%s. Paste with %s",
-                sx, sy, sz, file.getFileName(), PlacementViewKey.name(SlopmaticaKeys.PASTE))));
+            String extra = !nbt ? " (without NBT data)" : entities.isEmpty() ? "" : " with " + entities.size() + (entities.size() == 1 ? " entity" : " entities");
+            SlopmaticaActions.chat(SlopmaticaActions.prefix().append(String.format("Copied %d x %d x %d%s to schematics/copies/%s. Paste with %s",
+                sx, sy, sz, extra, file.getFileName(), PlacementViewKey.name(SlopmaticaKeys.PASTE))));
         }, mc);
     }
 
@@ -166,6 +178,36 @@ public final class Clipboard {
             }
         }
         return tiles;
+    }
+
+    /**
+     * Entities inside the selection, players excluded, as vanilla structure blocks save them. Like
+     * block entities, singleplayer reads the server's complete copies.
+     */
+    private static List<EntityData> entities(Minecraft mc, ClientLevel level, BoundingBox box) {
+        IntegratedServer server = mc.getSingleplayerServer();
+        if (server != null) {
+            ServerLevel serverLevel = server.getLevel(level.dimension());
+            if (serverLevel != null) {
+                return server.submit(() -> collectEntities(serverLevel, box)).join();
+            }
+        }
+        return collectEntities(level, box);
+    }
+
+    private static List<EntityData> collectEntities(net.minecraft.world.level.Level level, BoundingBox box) {
+        BlockPos min = new BlockPos(box.minX(), box.minY(), box.minZ());
+        List<EntityData> out = new ArrayList<>();
+        for (Entity entity : level.getEntitiesOfClass(Entity.class, AABB.of(box), e -> !(e instanceof Player))) {
+            TagValueOutput output = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, level.registryAccess());
+            if (!entity.save(output)) {
+                continue; // Passengers are saved with what they ride.
+            }
+            Vec3 pos = entity.position().subtract(min.getX(), min.getY(), min.getZ());
+            BlockPos blockPos = entity instanceof HangingEntity hanging ? hanging.getPos().subtract(min) : BlockPos.containing(pos);
+            out.add(new EntityData(pos, blockPos, output.buildResult()));
+        }
+        return out;
     }
 
     /** Loads the newest copy as a placement under the crosshair and starts carrying it. */

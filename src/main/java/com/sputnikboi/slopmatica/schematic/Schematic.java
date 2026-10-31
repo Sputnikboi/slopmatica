@@ -76,6 +76,7 @@ public final class Schematic {
         private final BlockState[] palette;
         private final PackedIntArray blocks;
         private final Map<Long, CompoundTag> tileEntities;
+        private final List<EntityData> entities;
         private final BoundingBox bounds;
         private final long blockCount;
 
@@ -90,6 +91,8 @@ public final class Schematic {
             this.palette = palette;
             this.blocks = raw.blocks();
             this.tileEntities = raw.tileEntities();
+            // Kept in schematic space, like the blocks.
+            this.entities = raw.entities().stream().map(e -> e.offset(raw.minX(), raw.minY(), raw.minZ())).toList();
             this.bounds = new BoundingBox(minX, minY, minZ, minX + sizeX - 1, minY + sizeY - 1, minZ + sizeZ - 1);
 
             long count = 0;
@@ -115,6 +118,11 @@ public final class Schematic {
         /** Block entity data at schematic-space coordinates (with region-relative x/y/z), or null. */
         public @Nullable CompoundTag tileEntityAt(int x, int y, int z) {
             return tileEntities.isEmpty() ? null : tileEntities.get(BlockPos.asLong(x - minX, y - minY, z - minZ));
+        }
+
+        /** Entities with schematic-space positions. */
+        public List<EntityData> entities() {
+            return entities;
         }
 
         public String name() {

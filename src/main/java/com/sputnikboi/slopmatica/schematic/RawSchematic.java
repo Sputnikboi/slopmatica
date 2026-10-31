@@ -16,6 +16,7 @@ public record RawSchematic(String name, String author, int dataVersion, List<Reg
      * @param palette block states as {@code {Name, Properties}} compounds (lower-case keys accepted too)
      * @param blocks palette index per position, x fastest, then z, then y
      * @param tileEntities block entity data keyed by {@code BlockPos.asLong} of the region-relative position
+     * @param entities entities with region-relative positions
      */
     public record Region(
         String name,
@@ -23,7 +24,8 @@ public record RawSchematic(String name, String author, int dataVersion, List<Reg
         int sizeX, int sizeY, int sizeZ,
         List<CompoundTag> palette,
         PackedIntArray blocks,
-        Map<Long, CompoundTag> tileEntities
+        Map<Long, CompoundTag> tileEntities,
+        List<EntityData> entities
     ) {
         public int index(int x, int y, int z) {
             return (y * sizeZ + z) * sizeX + x;

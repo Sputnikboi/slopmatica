@@ -12,6 +12,7 @@ import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtUtils;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Vanilla structure files ({@code .nbt}, as structure blocks and {@code /place template} use):
@@ -66,7 +67,17 @@ public final class StructureNbtFormat {
             blocks.set((long) (y * sz + z) * sx + x, state);
             block.getCompound("nbt").ifPresent(nbt -> tileEntities.put(BlockPos.asLong(x, y, z), nbt));
         }
-        RawSchematic.Region region = new RawSchematic.Region(name, 0, 0, 0, sx, sy, sz, palette, blocks, tileEntities);
+        List<EntityData> entities = new ArrayList<>();
+        ListTag entityList = root.getListOrEmpty("entities");
+        for (int i = 0; i < entityList.size(); i++) {
+            CompoundTag e = entityList.getCompoundOrEmpty(i);
+            ListTag pos = e.getListOrEmpty("pos");
+            ListTag blockPos = e.getListOrEmpty("blockPos");
+            Vec3 p = new Vec3(pos.getDoubleOr(0, 0), pos.getDoubleOr(1, 0), pos.getDoubleOr(2, 0));
+            BlockPos bp = blockPos.size() == 3 ? new BlockPos(blockPos.getIntOr(0, 0), blockPos.getIntOr(1, 0), blockPos.getIntOr(2, 0)) : BlockPos.containing(p);
+            e.getCompound("nbt").ifPresent(nbt -> entities.add(new EntityData(p, bp, nbt)));
+        }
+        RawSchematic.Region region = new RawSchematic.Region(name, 0, 0, 0, sx, sy, sz, palette, blocks, tileEntities, entities);
         return new RawSchematic(name, root.getStringOr("author", ""), root.getIntOr("DataVersion", 0), List.of(region));
     }
 
@@ -95,7 +106,15 @@ public final class StructureNbtFormat {
         root.put("size", ints(v.sizeX(), v.sizeY(), v.sizeZ()));
         root.put("palette", paletteTag);
         root.put("blocks", blockList);
-        root.put("entities", new ListTag());
+        ListTag entities = new ListTag();
+        for (EntityData e : v.entities()) {
+            CompoundTag entry = new CompoundTag();
+            entry.put("pos", EntityData.doubles(e.pos().x, e.pos().y, e.pos().z));
+            entry.put("blockPos", ints(e.blockPos().getX(), e.blockPos().getY(), e.blockPos().getZ()));
+            entry.put("nbt", e.relativeNbt());
+            entities.add(entry);
+        }
+        root.put("entities", entities);
         root.putString("author", v.author());
         SchematicFormats.writeAtomically(file, NbtUtils.addCurrentDataVersion(root));
     }

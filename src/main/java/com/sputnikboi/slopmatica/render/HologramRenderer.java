@@ -196,7 +196,8 @@ public final class HologramRenderer {
                     nearby.add(section.specials);
                 }
             }
-            specialGhosts.submit(context.submitNodeCollector(), context.poseStack(), camera, nearby, SlopmaticaConfig.get().ghostOpacity);
+            specialGhosts.submit(context.submitNodeCollector(), context.poseStack(), camera, context.levelState().cameraRenderState,
+                Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(false), nearby, SlopmaticaConfig.get().ghostOpacity);
         } catch (RuntimeException e) {
             if (!renderFailureLogged) {
                 renderFailureLogged = true;
