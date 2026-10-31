@@ -136,6 +136,15 @@ public final class DevHarness {
                 LOGGER.info("dev cloud status: {}", CloudSync.INSTANCE.status());
             } else if (step.equals("status")) {
                 LOGGER.info("dev cloud status: {} (used {} of {})", CloudSync.INSTANCE.status(), CloudSync.INSTANCE.usedBytes(), CloudSync.INSTANCE.quotaBytes());
+            } else if (step.startsWith("set ")) {
+                // set <config field> <true|false>: flip an option without the options screen.
+                String[] parts = step.split(" ");
+                try {
+                    var field = com.sputnikboi.slopmatica.config.SlopmaticaConfig.class.getField(parts[1]);
+                    field.setBoolean(com.sputnikboi.slopmatica.config.SlopmaticaConfig.get(), Boolean.parseBoolean(parts[2]));
+                } catch (ReflectiveOperationException e) {
+                    LOGGER.warn("No boolean option {}", parts[1]);
+                }
             } else if (step.equals("quit")) {
                 mc.stop();
             } else {

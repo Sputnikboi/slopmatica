@@ -74,7 +74,9 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
         list.addHeader(Component.translatable("slopmatica.options.easy_place"));
         list.addSmall(
             toggle("slopmatica.options.easy_place_on", c.easyPlace, v -> c.easyPlace = v, false),
-            toggle("slopmatica.options.easy_place_restrict", c.easyPlaceRestrict, v -> c.easyPlaceRestrict = v, false)
+            toggle("slopmatica.options.easy_place_restrict", c.easyPlaceRestrict, v -> c.easyPlaceRestrict = v, false),
+            toggle("slopmatica.options.easy_place_rotate", c.easyPlaceRotate, v -> c.easyPlaceRotate = v, false),
+            toggle("slopmatica.options.easy_place_angel", c.easyPlaceAngel, v -> c.easyPlaceAngel = v, false)
         );
 
         list.addHeader(Component.translatable("slopmatica.options.paste"));

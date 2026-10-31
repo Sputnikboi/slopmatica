@@ -43,6 +43,10 @@ public final class SlopmaticaConfig {
     public boolean viewCollision = true;
     /** Right-clicking a missing ghost block places exactly that block (toggled with its key). */
     public boolean easyPlace = false;
+    /** Easy Place may turn the player for a click to get a block's facing right (angle placement). */
+    public boolean easyPlaceRotate = true;
+    /** Easy Place may place blocks in mid-air, with nothing next to them (angel placement). */
+    public boolean easyPlaceAngel = false;
     /** With Easy Place on, refuse normal placements that disagree with the schematic. */
     public boolean easyPlaceRestrict = true;
     /** Copy block entity data (chest contents, sign text) and entities (frames, armor stands), and paste them. */

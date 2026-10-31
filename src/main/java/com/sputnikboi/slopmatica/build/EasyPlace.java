@@ -42,7 +42,12 @@ import org.jspecify.annotations.Nullable;
  * <p>Orientation comes from simulating the placement client-side for every way it could be done
  * (each neighbouring block to click, upper or lower half of its face, each way to face) and using
  * the first that yields the wanted state. Facing is then sent to the server for that one click,
- * the way Litematica does it, so no server-side mod is needed.
+ * the way Litematica does it ("angle placement"), so no server-side mod is needed. With Turn to
+ * Place off it never turns the player: only the current facing is tried, and when that can't give
+ * the right state it says which way to look instead of placing the block wrong.
+ *
+ * <p>Angel placement (an option) also allows clicking the empty spot itself, so blocks can be placed
+ * floating in mid-air; vanilla servers accept it, which is why servers that allow Litematica do.
  *
  * <p>With Easy Place on, normal placements that would put a block where the schematic wants a
  * different one (or air) are refused, unless that option is off.
@@ -55,7 +60,7 @@ public final class EasyPlace {
     private static final double[] HALVES = {0.25, 0.75};
 
     /** One way to place the block: click this face at this point, facing this way. */
-    private record Candidate(BlockHitResult hit, float yaw, float pitch, BlockState result) {
+    private record Candidate(BlockHitResult hit, float yaw, float pitch, BlockState result, int score) {
     }
 
     private EasyPlace() {
@@ -98,10 +103,25 @@ public final class EasyPlace {
         if (!(want.getBlock().asItem() instanceof BlockItem item)) {
             return false; // Fluids, fire and the like: nothing to hold.
         }
-        Candidate best = bestCandidate(player, level, target.pos(), want, new ItemStack(item));
+        ItemStack stack = new ItemStack(item);
+        boolean mayTurn = SlopmaticaConfig.get().easyPlaceRotate;
+        // Without turning, only the way the player already faces counts.
+        float[] yaws = mayTurn ? YAWS : new float[] {player.getYRot()};
+        float[] pitches = mayTurn ? PITCHES : new float[] {player.getXRot()};
+        Candidate best = bestCandidate(player, level, target.pos(), want, stack, yaws, pitches);
         if (best == null) {
             fail(Component.translatable("slopmatica.easy_place.no_support", want.getBlock().getName()));
             return true;
+        }
+        if (!mayTurn && best.result() != want) {
+            // Say which way would work rather than placing it wrong. "Better", not "exact": some
+            // properties (a stair's corner shape) only come from neighbours and never match yet.
+            Candidate needed = bestCandidate(player, level, target.pos(), want, stack, YAWS, PITCHES);
+            if (needed != null && needed.score() > best.score()) {
+                String look = Direction.fromYRot(needed.yaw()).getName() + (needed.pitch() > 45 ? ", looking down" : needed.pitch() < -45 ? ", looking up" : "");
+                fail(Component.translatable("slopmatica.easy_place.face", look));
+                return true;
+            }
         }
         if (!holdItem(mc, player, item)) {
             fail(Component.translatable("slopmatica.easy_place.no_item", item.getName(new ItemStack(item))));
@@ -136,42 +156,28 @@ public final class EasyPlace {
      * lower and upper part of its face (slabs, stairs, trapdoors), each way to face (stairs,
      * furnaces, pistons...). Exactly the wanted state wins; otherwise the closest match.
      */
-    private static @Nullable Candidate bestCandidate(LocalPlayer player, ClientLevel level, BlockPos pos, BlockState want, ItemStack stack) {
+    private static @Nullable Candidate bestCandidate(LocalPlayer player, ClientLevel level, BlockPos pos, BlockState want, ItemStack stack,
+                                                     float[] yaws, float[] pitches) {
         float savedYaw = player.getYRot(), savedPitch = player.getXRot();
-        Candidate best = null;
-        int bestScore = -1;
+        Search search = new Search(player, pos, want, stack, yaws, pitches);
         try {
+            // A normal click on a neighbouring block's face, as a player would.
             for (Direction toNeighbour : Direction.values()) {
                 BlockPos neighbour = pos.relative(toNeighbour);
                 BlockState support = level.getBlockState(neighbour);
                 if (support.isAir() || support.canBeReplaced() || support.getCollisionShape(level, neighbour).isEmpty()) {
                     continue;
                 }
-                Direction face = toNeighbour.getOpposite();
-                for (double half : toNeighbour.getAxis().isVertical() ? new double[] {0.5} : HALVES) {
-                    Vec3 hit = Vec3.atCenterOf(pos).relative(toNeighbour, 0.5).with(Direction.Axis.Y, toNeighbour.getAxis().isVertical() ? pos.getY() + (toNeighbour == Direction.UP ? 1 : 0) : pos.getY() + half);
-                    BlockHitResult hitResult = new BlockHitResult(hit, face, neighbour, false);
-                    for (float yaw : YAWS) {
-                        for (float pitch : PITCHES) {
-                            player.setYRot(yaw);
-                            player.setXRot(pitch);
-                            BlockPlaceContext context = new BlockPlaceContext(player, InteractionHand.MAIN_HAND, stack, hitResult);
-                            if (!context.getClickedPos().equals(pos) || !context.canPlace()) {
-                                continue;
-                            }
-                            BlockState result = ((BlockItemInvoker) stack.getItem()).slopmatica$getPlacementState(context);
-                            if (result == null) {
-                                continue;
-                            }
-                            int score = score(result, want);
-                            if (score > bestScore) {
-                                bestScore = score;
-                                best = new Candidate(hitResult, yaw, pitch, result);
-                                if (result == want) {
-                                    return best;
-                                }
-                            }
-                        }
+                if (search.tryFace(neighbour, toNeighbour.getOpposite(), toNeighbour)) {
+                    return search.best;
+                }
+            }
+            // Angel placement: click the empty spot itself, on any of its faces. A replaceable
+            // clicked block is placed into, so the block appears right there, floating if need be.
+            if (SlopmaticaConfig.get().easyPlaceAngel) {
+                for (Direction face : Direction.values()) {
+                    if (search.tryFace(pos, face, face)) {
+                        return search.best;
                     }
                 }
             }
@@ -179,7 +185,63 @@ public final class EasyPlace {
             player.setYRot(savedYaw);
             player.setXRot(savedPitch);
         }
-        return best;
+        return search.best;
+    }
+
+    /** The best placement found so far while trying faces, points on them, and facings. */
+    private static final class Search {
+        final LocalPlayer player;
+        final BlockPos pos;
+        final BlockState want;
+        final ItemStack stack;
+        final float[] yaws, pitches;
+        @Nullable Candidate best;
+        int bestScore = -1;
+
+        Search(LocalPlayer player, BlockPos pos, BlockState want, ItemStack stack, float[] yaws, float[] pitches) {
+            this.player = player;
+            this.pos = pos;
+            this.want = want;
+            this.stack = stack;
+            this.yaws = yaws;
+            this.pitches = pitches;
+        }
+
+        /**
+         * Tries clicking {@code clicked} on {@code face}, at the side of {@code pos} toward
+         * {@code side} (lower and upper half for sides, so slabs and stairs can go either way).
+         * True once the exact wanted state is found.
+         */
+        boolean tryFace(BlockPos clicked, Direction face, Direction side) {
+            for (double half : side.getAxis().isVertical() ? new double[] {0.5} : HALVES) {
+                Vec3 hit = Vec3.atCenterOf(pos).relative(side, 0.5)
+                    .with(Direction.Axis.Y, side.getAxis().isVertical() ? pos.getY() + (side == Direction.UP ? 1 : 0) : pos.getY() + half);
+                BlockHitResult hitResult = new BlockHitResult(hit, face, clicked, false);
+                for (float yaw : yaws) {
+                    for (float pitch : pitches) {
+                        player.setYRot(yaw);
+                        player.setXRot(pitch);
+                        BlockPlaceContext context = new BlockPlaceContext(player, InteractionHand.MAIN_HAND, stack, hitResult);
+                        if (!context.getClickedPos().equals(pos) || !context.canPlace()) {
+                            continue;
+                        }
+                        BlockState result = ((BlockItemInvoker) stack.getItem()).slopmatica$getPlacementState(context);
+                        if (result == null) {
+                            continue;
+                        }
+                        int score = score(result, want);
+                        if (score > bestScore) {
+                            bestScore = score;
+                            best = new Candidate(hitResult, yaw, pitch, result, score);
+                            if (result == want) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        }
     }
 
     /** How alike two states are: same block first, then the number of equal properties. */
