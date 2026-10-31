@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{% block title %}Slopmatica Cloud{% endblock %}</title>
+<link rel="icon" href="{{ base }}/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{ base }}/static/style.css?v={{ v }}">
+</head>
+<body data-base="{{ base }}">
+<header class="topbar">
+  <a class="brand" href="{{ base }}/"><img src="{{ base }}/static/icon.svg" alt="" width="24" height="24"> <span>Slopmatica Cloud</span></a>
+  {% block header %}{% endblock %}
+</header>
+<main class="wrap">
+{% block main %}{% endblock %}
+</main>
+<footer class="wrap foot">Slopmatica Cloud &middot; schematic sync for the Slopmatica mod</footer>
+{% block scripts %}{% endblock %}
+</body>
+</html>

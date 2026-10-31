@@ -1,11 +1,14 @@
 package com.sputnikboi.slopmatica.view;
 
 import com.sputnikboi.slopmatica.SlopmaticaActions;
+import com.sputnikboi.slopmatica.SlopmaticaKeys;
+import com.sputnikboi.slopmatica.build.PlacementBuilder;
 import com.sputnikboi.slopmatica.placement.Placement;
 import com.sputnikboi.slopmatica.placement.PlacementManager;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
+import net.minecraft.client.Camera;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -14,6 +17,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
+import net.minecraft.util.Util;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.phys.AABB;
@@ -21,13 +25,15 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
+import org.joml.Vector3fc;
 import org.jspecify.annotations.Nullable;
 
 /**
  * Placement view: a free camera for positioning one placement. The player stays put while the
  * camera flies with the movement keys and looks with the mouse. Left click picks the placement up
- * so it follows the crosshair and puts it down again; right click while carrying puts it back
- * where it was. The view's own keys rotate, mirror and nudge it one block at a time.
+ * so it follows the crosshair and puts it down again. Right click frees the cursor
+ * ({@link PlacementViewScreen}): drag the build around and use the on-screen buttons. The view's own
+ * keys rotate, mirror and nudge it (Shift: 5 blocks); the mouse wheel nudges it up and down.
  *
  * <p>Client thread only. The mixins in {@code mixin/view} ask {@link #active()} to hand the
  * camera, mouse and clicks over to this class and to freeze the player's own input.
@@ -38,14 +44,20 @@ public final class PlacementView {
     private static final double SPEED = 0.6;
     private static final double SPRINT_SPEED = 2.0;
     private static final double REACH = 256;
+    /** Shift is also "fly down"; don't sink while it is held to nudge 5 blocks at a time. */
+    private static final long SHIFT_NUDGE_GRACE_MS = 600;
 
     private @Nullable Placement placement;
     private double x, y, z, xo, yo, zo;
     private float yRot, xRot;
+    /** Where the placement was when the view opened, for Reset. */
+    private @Nullable BlockPos startOrigin;
+    private @Nullable Rotation startRotation;
+    private net.minecraft.world.level.block.@Nullable Mirror startMirror;
+    private long lastShiftNudge;
 
     /** Origin minus the targeted block when picked up, so it doesn't jump to the crosshair. */
     private @Nullable BlockPos carryOffset;
-    private @Nullable BlockPos carryStart;
     private double carryDistance;
     private @Nullable BlockPos lastTarget;
 
@@ -54,6 +66,10 @@ public final class PlacementView {
 
     public boolean active() {
         return placement != null;
+    }
+
+    public @Nullable Placement placement() {
+        return placement;
     }
 
     /** Enters the view for the placement under the crosshair, or the active one; leaves it if already in. */
@@ -66,24 +82,39 @@ public final class PlacementView {
             return;
         }
         Vec3 eye = mc.player.getEyePosition();
-        Placement target = placementAlong(eye, mc.player.getViewVector(1.0F));
+        Placement target = placementAlong(mc, eye, mc.player.getViewVector(1.0F));
         if (target == null) {
-            target = PlacementManager.INSTANCE.selected().filter(Placement::visible).orElse(null);
+            target = PlacementManager.INSTANCE.selected().filter(p -> p.visible() && p.inDimension(mc.level)).orElse(null);
         }
         if (target == null) {
             SlopmaticaActions.actionBar(Component.literal("Look at a placement first (or load one)").withColor(SlopmaticaActions.ERROR));
             return;
         }
+        enter(mc, target, false);
+    }
+
+    /** Opens the view on a placement, optionally already carrying it (used by paste). */
+    public void enter(Minecraft mc, Placement target, boolean carrying) {
+        if (mc.player == null) {
+            return;
+        }
         PlacementManager.INSTANCE.select(target);
         placement = target;
+        Vec3 eye = mc.player.getEyePosition();
         x = xo = eye.x;
         y = yo = eye.y;
         z = zo = eye.z;
         yRot = mc.player.getYRot();
         xRot = mc.player.getXRot();
+        startOrigin = target.transform().origin();
+        startRotation = target.transform().rotation();
+        startMirror = target.transform().mirror();
         carryOffset = null;
-        carryStart = null;
-        SlopmaticaActions.actionBar(Component.literal("Placement view: " + target.name()).withColor(SlopmaticaActions.ACCENT));
+        if (carrying) {
+            pickUp(mc, target);
+        } else {
+            SlopmaticaActions.actionBar(Component.literal("Placement view: " + target.name()).withColor(SlopmaticaActions.ACCENT));
+        }
     }
 
     /** Leaving while carrying puts the placement down where it is. */
@@ -93,19 +124,21 @@ public final class PlacementView {
         }
         placement = null;
         carryOffset = null;
-        carryStart = null;
+        if (mc.gui.screen() instanceof PlacementViewScreen) {
+            mc.gui.setScreen(null);
+        }
         if (mc.player != null) {
             SlopmaticaActions.actionBar(Component.literal("Placement view closed").withColor(SlopmaticaActions.ACCENT));
         }
     }
 
     /** The nearest visible placement whose box the ray passes through. */
-    private static @Nullable Placement placementAlong(Vec3 from, Vec3 direction) {
+    private static @Nullable Placement placementAlong(Minecraft mc, Vec3 from, Vec3 direction) {
         Vec3 to = from.add(direction.scale(REACH));
         Placement best = null;
         double bestDist = Double.MAX_VALUE;
         for (Placement p : PlacementManager.INSTANCE.placements()) {
-            if (!p.visible()) {
+            if (!p.visible() || mc.level == null || !p.inDimension(mc.level)) {
                 continue;
             }
             AABB box = AABB.of(p.transform().worldBounds());
@@ -136,6 +169,10 @@ public final class PlacementView {
         return xRot;
     }
 
+    public boolean carrying() {
+        return carryOffset != null;
+    }
+
     /** Runs at the start of the client tick, before vanilla handles the keys this view takes over. */
     public void tick(Minecraft mc) {
         Placement p = placement;
@@ -160,23 +197,18 @@ public final class PlacementView {
         }
         fly(mc);
 
-        Consumer<Component> feedback = SlopmaticaActions::actionBar;
         while (mc.options.keyAttack.consumeClick()) {
             if (carryOffset == null) {
                 pickUp(mc, p);
             } else {
-                carryOffset = null;
-                carryStart = null;
-                feedback.accept(Component.literal("Placed " + p.name() + " at " + p.transform().origin().toShortString()).withColor(SlopmaticaActions.ACCENT));
+                putDown(p);
             }
         }
         while (mc.options.keyUse.consumeClick()) {
-            if (carryOffset != null && carryStart != null) {
-                SlopmaticaActions.moveTo(p, carryStart, msg -> { });
-                carryOffset = null;
-                carryStart = null;
-                feedback.accept(Component.literal("Move cancelled").withColor(SlopmaticaActions.ACCENT));
+            if (carryOffset != null) {
+                putDown(p);
             }
+            mc.gui.setScreen(new PlacementViewScreen());
         }
         while (mc.options.keyPickItem.consumeClick()) {
             // Swallowed so the player doesn't pick blocks from where they stand.
@@ -192,30 +224,84 @@ public final class PlacementView {
     }
 
     /** Handles the view's own keys. Runs every tick so presses outside the view are drained, not queued. */
-    public void handleKeys(Minecraft mc, KeyMapping rotate, KeyMapping mirror, KeyMapping[] nudges) {
-        Placement p = placement;
-        Consumer<Component> feedback = SlopmaticaActions::actionBar;
-        while (rotate.consumeClick()) {
-            if (p != null) {
-                SlopmaticaActions.rotate(p, Rotation.CLOCKWISE_90, feedback);
-                rebaseCarry(mc, p);
+    public void handleKeys(Minecraft mc) {
+        while (SlopmaticaKeys.VIEW_ROTATE.consumeClick()) {
+            rotate(mc, Rotation.CLOCKWISE_90);
+        }
+        while (SlopmaticaKeys.VIEW_MIRROR.consumeClick()) {
+            mirror(mc);
+        }
+        for (int i = 0; i < SlopmaticaKeys.VIEW_NUDGES.length; i++) {
+            while (SlopmaticaKeys.VIEW_NUDGES[i].consumeClick()) {
+                nudge(mc, i);
             }
         }
-        while (mirror.consumeClick()) {
-            if (p != null) {
-                SlopmaticaActions.setMirror(p, SlopmaticaActions.nextMirror(p.transform().mirror()), feedback);
-                rebaseCarry(mc, p);
-            }
+        while (SlopmaticaKeys.VIEW_PASTE.consumeClick()) {
+            build(mc);
+        }
+    }
+
+    public void rotate(Minecraft mc, Rotation by) {
+        Placement p = placement;
+        if (p != null) {
+            SlopmaticaActions.rotate(p, by, SlopmaticaActions::actionBar);
+            rebaseCarry(p);
+        }
+    }
+
+    public void mirror(Minecraft mc) {
+        Placement p = placement;
+        if (p != null) {
+            SlopmaticaActions.setMirror(p, SlopmaticaActions.nextMirror(p.transform().mirror()), SlopmaticaActions::actionBar);
+            rebaseCarry(p);
+        }
+    }
+
+    /**
+     * Nudges along {@code direction}: 0 forward, 1 back, 2 left, 3 right (relative to where the
+     * camera looks), 4 up, 5 down. Five blocks with Shift held.
+     */
+    public void nudge(Minecraft mc, int direction) {
+        Placement p = placement;
+        if (p == null) {
+            return;
+        }
+        int amount = 1;
+        if (mc.hasShiftDown()) {
+            amount = 5;
+            lastShiftNudge = Util.getMillis();
         }
         Direction facing = Direction.fromYRot(yRot);
         Direction[] directions = {facing, facing.getOpposite(), facing.getCounterClockWise(), facing.getClockWise(), Direction.UP, Direction.DOWN};
-        for (int i = 0; i < nudges.length; i++) {
-            while (nudges[i].consumeClick()) {
-                if (p != null) {
-                    SlopmaticaActions.nudge(p, directions[i], 1, feedback);
-                    rebaseCarry(mc, p);
-                }
-            }
+        SlopmaticaActions.nudge(p, directions[direction], amount, SlopmaticaActions::actionBar);
+        rebaseCarry(p);
+    }
+
+    /** Mouse wheel: up or down. */
+    public void scroll(Minecraft mc, double amount) {
+        if (amount > 0) {
+            nudge(mc, 4);
+        } else if (amount < 0) {
+            nudge(mc, 5);
+        }
+    }
+
+    /** Back to where the placement was when the view opened. */
+    public void reset(Minecraft mc) {
+        Placement p = placement;
+        if (p != null && startOrigin != null) {
+            carryOffset = null;
+            p.setRotation(startRotation);
+            p.setMirror(startMirror);
+            SlopmaticaActions.moveTo(p, startOrigin, SlopmaticaActions::actionBar);
+        }
+    }
+
+    /** Pastes the placement's blocks into the world (creative), then leaves the view. */
+    public void build(Minecraft mc) {
+        Placement p = placement;
+        if (p != null && PlacementBuilder.INSTANCE.start(mc, p, SlopmaticaActions::actionBar)) {
+            exit(mc);
         }
     }
 
@@ -223,7 +309,8 @@ public final class PlacementView {
         var o = mc.options;
         double forward = (o.keyUp.isDown() ? 1 : 0) - (o.keyDown.isDown() ? 1 : 0);
         double strafe = (o.keyLeft.isDown() ? 1 : 0) - (o.keyRight.isDown() ? 1 : 0);
-        double up = (o.keyJump.isDown() ? 1 : 0) - (o.keyShift.isDown() ? 1 : 0);
+        boolean sinking = o.keyShift.isDown() && Util.getMillis() - lastShiftNudge > SHIFT_NUDGE_GRACE_MS;
+        double up = (o.keyJump.isDown() ? 1 : 0) - (sinking ? 1 : 0);
         double len = Math.sqrt(forward * forward + strafe * strafe + up * up);
         if (len < 1.0E-4) {
             return;
@@ -239,6 +326,23 @@ public final class PlacementView {
         float pitch = xRot * Mth.DEG_TO_RAD, yaw = -yRot * Mth.DEG_TO_RAD;
         float cp = Mth.cos(pitch);
         return new Vec3(Mth.sin(yaw) * cp, -Mth.sin(pitch), Mth.cos(yaw) * cp);
+    }
+
+    /**
+     * The ray through a point on screen ({@code mx, my} in GUI pixels of a {@code w x h} screen),
+     * for clicking on the build with a free cursor.
+     */
+    public Vec3 rayThrough(Minecraft mc, double mx, double my, int w, int h) {
+        Camera camera = mc.gameRenderer.mainCamera();
+        double tan = Math.tan(Math.toRadians(camera.getFov()) / 2);
+        double nx = (2 * mx / w - 1) * tan * w / h;
+        double ny = (1 - 2 * my / h) * tan;
+        Vector3fc f = camera.forwardVector(), u = camera.upVector(), l = camera.leftVector();
+        return new Vec3(f.x() - l.x() * nx + u.x() * ny, f.y() - l.y() * nx + u.y() * ny, f.z() - l.z() * nx + u.z() * ny).normalize();
+    }
+
+    public Vec3 eye() {
+        return new Vec3(x, y, z);
     }
 
     /** The block in front of the face under the crosshair, or a point at carrying distance in the air. */
@@ -259,45 +363,55 @@ public final class PlacementView {
             ? Math.max(4, hit.getLocation().distanceTo(from))
             : Math.max(8, AABB.of(p.transform().worldBounds()).getCenter().distanceTo(from));
         BlockPos target = target(mc);
-        carryStart = p.transform().origin();
-        carryOffset = carryStart.subtract(target);
+        carryOffset = p.transform().origin().subtract(target);
         lastTarget = target;
-        SlopmaticaActions.actionBar(Component.literal("Carrying " + p.name() + " (left click to place, right click to cancel)").withColor(SlopmaticaActions.ACCENT));
+        SlopmaticaActions.actionBar(Component.literal("Carrying " + p.name() + " (left click to put down)").withColor(SlopmaticaActions.ACCENT));
+    }
+
+    private void putDown(Placement p) {
+        carryOffset = null;
+        SlopmaticaActions.actionBar(Component.literal("Placed " + p.name() + " at " + p.transform().origin().toShortString()).withColor(SlopmaticaActions.ACCENT));
     }
 
     /** After a rotate or nudge while carrying, keep carrying from the new position. */
-    private void rebaseCarry(Minecraft mc, Placement p) {
+    private void rebaseCarry(Placement p) {
         if (carryOffset != null && lastTarget != null) {
             carryOffset = p.transform().origin().subtract(lastTarget);
         }
     }
 
-    /** Controls reminder, top left, while the view is open. */
-    public void extractHud(GuiGraphicsExtractor graphics, KeyMapping toggle, KeyMapping rotate, KeyMapping mirror, KeyMapping[] nudges) {
+    /** Controls reminder, top left, while flying (the cursor screen draws its own). */
+    public void extractHud(GuiGraphicsExtractor graphics) {
         Placement p = placement;
         Minecraft mc = Minecraft.getInstance();
         if (p == null || mc.gui.screen() != null) {
             return;
         }
+        KeyMapping[] n = SlopmaticaKeys.VIEW_NUDGES;
         List<String> lines = new ArrayList<>();
         lines.add("Placement view: " + p.name() + (carryOffset != null ? "  (carrying)" : ""));
         lines.add("Fly: " + key(mc.options.keyUp) + key(mc.options.keyLeft) + key(mc.options.keyDown) + key(mc.options.keyRight)
             + ", " + key(mc.options.keyJump) + " / " + key(mc.options.keyShift) + ", " + key(mc.options.keySprint) + " faster");
-        lines.add(carryOffset == null ? "Left click: pick up" : "Left click: put down   Right click: cancel move");
-        lines.add("Rotate: " + key(rotate) + "   Mirror: " + key(mirror) + " (" + SlopmaticaActions.mirrorLabel(p.transform().mirror()) + ")");
-        lines.add("Nudge: " + key(nudges[0]) + " " + key(nudges[1]) + " " + key(nudges[2]) + " " + key(nudges[3]) + "   up/down: " + key(nudges[4]) + " " + key(nudges[5]));
-        lines.add("Done: " + key(toggle) + " or Esc");
+        lines.add(carryOffset == null ? "Left click: pick up   Right click: free cursor" : "Left click: put down   Right click: free cursor");
+        lines.add("Rotate: " + key(SlopmaticaKeys.VIEW_ROTATE) + "   Mirror: " + key(SlopmaticaKeys.VIEW_MIRROR) + " (" + SlopmaticaActions.mirrorLabel(p.transform().mirror()) + ")");
+        lines.add("Nudge: " + key(n[0]) + " " + key(n[1]) + " " + key(n[2]) + " " + key(n[3]) + "   up/down: " + key(n[4]) + " " + key(n[5]) + " or scroll");
+        lines.add("Hold Shift to nudge 5 blocks");
+        lines.add("Done: " + key(SlopmaticaKeys.PLACEMENT_VIEW) + " or Esc");
+        drawPanel(graphics, mc, lines, 4, 4);
+    }
+
+    static void drawPanel(GuiGraphicsExtractor graphics, Minecraft mc, List<String> lines, int x, int y) {
         int width = 0;
         for (String line : lines) {
             width = Math.max(width, mc.font.width(line));
         }
-        graphics.fill(4, 4, 12 + width, 8 + lines.size() * 11, 0x90000000);
+        graphics.fill(x, y, x + 8 + width, y + 4 + lines.size() * 11, 0x90000000);
         for (int i = 0; i < lines.size(); i++) {
-            graphics.text(mc.font, lines.get(i), 8, 7 + i * 11, i == 0 ? SlopmaticaActions.ACCENT : 0xFFE0E0E0);
+            graphics.text(mc.font, lines.get(i), x + 4, y + 3 + i * 11, i == 0 ? SlopmaticaActions.ACCENT : 0xFFE0E0E0);
         }
     }
 
-    private static String key(KeyMapping mapping) {
+    static String key(KeyMapping mapping) {
         return mapping.isUnbound() ? "(unbound)" : mapping.getTranslatedKeyMessage().getString();
     }
 }

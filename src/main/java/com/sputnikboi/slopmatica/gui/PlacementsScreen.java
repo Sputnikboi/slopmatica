@@ -1,6 +1,7 @@
 package com.sputnikboi.slopmatica.gui;
 
 import com.sputnikboi.slopmatica.SlopmaticaActions;
+import com.sputnikboi.slopmatica.build.PlacementBuilder;
 import com.sputnikboi.slopmatica.placement.Placement;
 import com.sputnikboi.slopmatica.placement.PlacementManager;
 import java.util.Locale;
@@ -60,8 +61,13 @@ public class PlacementsScreen extends Screen {
         mirrorButton = row2.addChild(button("", p -> SlopmaticaActions.setMirror(p, SlopmaticaActions.nextMirror(p.transform().mirror()), this::status)));
         Button unload = row2.addChild(button("slopmatica.placements.unload", p -> SlopmaticaActions.unload(p, this::status)));
         Button materials = row1.addChild(button("slopmatica.placements.materials", p -> minecraft.gui.setScreen(new MaterialListScreen(this, p))));
+        Button build = row2.addChild(button("slopmatica.placements.build", p -> {
+            if (PlacementBuilder.INSTANCE.start(minecraft, p, this::status)) {
+                minecraft.gui.setScreen(null);
+            }
+        }));
         row2.addChild(Button.builder(CommonComponents.GUI_BACK, b -> onClose()).width(BUTTON_WIDTH).build());
-        placementButtons = new Button[] {visibilityButton, moveHere, rotate, materials, mirrorButton, unload};
+        placementButtons = new Button[] {visibilityButton, moveHere, rotate, materials, mirrorButton, unload, build};
 
         addRenderableWidget(list);
         footer.visitWidgets(this::addRenderableWidget);

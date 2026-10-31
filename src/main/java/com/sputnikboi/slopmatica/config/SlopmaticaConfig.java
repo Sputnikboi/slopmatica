@@ -3,6 +3,7 @@ package com.sputnikboi.slopmatica.config;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParseException;
+import com.sputnikboi.slopmatica.build.PlacementBuilder;
 import com.sputnikboi.slopmatica.verify.BlockStatus;
 import java.io.IOException;
 import java.io.Reader;
@@ -33,6 +34,8 @@ public final class SlopmaticaConfig {
     /** Multiplier on {@code HologramRenderer.BASE_LINE_WIDTH}, half of vanilla's block outline. */
     public float outlineWidth = 1.0F;
     public boolean fadeOutlines = true;
+    /** What pasting into the world may overwrite. */
+    public PlacementBuilder.Replace pasteReplace = PlacementBuilder.Replace.NONE;
     public int fadeStart = 24;
     public int fadeEnd = 48;
 
@@ -84,6 +87,9 @@ public final class SlopmaticaConfig {
         outlineWidth = Math.clamp(outlineWidth, 0.01F, 4.0F);
         fadeStart = Math.clamp(fadeStart, 4, 256);
         fadeEnd = Math.clamp(fadeEnd, fadeStart + 4, 260);
+        if (pasteReplace == null) {
+            pasteReplace = PlacementBuilder.Replace.NONE;
+        }
         return this;
     }
 

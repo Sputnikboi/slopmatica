@@ -4,6 +4,10 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import net.minecraft.core.BlockPos;
+import net.minecraft.nbt.CompoundTag;
+import org.jspecify.annotations.Nullable;
 import java.util.Set;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
@@ -70,6 +74,7 @@ public final class Schematic {
         private final int minX, minY, minZ, sizeX, sizeY, sizeZ;
         private final BlockState[] palette;
         private final PackedIntArray blocks;
+        private final Map<Long, CompoundTag> tileEntities;
         private final BoundingBox bounds;
         private final long blockCount;
 
@@ -83,6 +88,7 @@ public final class Schematic {
             this.sizeZ = raw.sizeZ();
             this.palette = palette;
             this.blocks = raw.blocks();
+            this.tileEntities = raw.tileEntities();
             this.bounds = new BoundingBox(minX, minY, minZ, minX + sizeX - 1, minY + sizeY - 1, minZ + sizeZ - 1);
 
             long count = 0;
@@ -103,6 +109,11 @@ public final class Schematic {
             }
             int id = blocks.get((long) (ry * sizeZ + rz) * sizeX + rx);
             return id < palette.length ? id : 0;
+        }
+
+        /** Block entity data at schematic-space coordinates (with region-relative x/y/z), or null. */
+        public @Nullable CompoundTag tileEntityAt(int x, int y, int z) {
+            return tileEntities.isEmpty() ? null : tileEntities.get(BlockPos.asLong(x - minX, y - minY, z - minZ));
         }
 
         public String name() {

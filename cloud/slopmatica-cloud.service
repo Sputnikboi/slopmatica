@@ -1,0 +1,19 @@
+# systemd *user* unit. Install (not done automatically):
+#   ln -s ~/Git/stencil/cloud/slopmatica-cloud.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now slopmatica-cloud
+# Optional overrides go in ~/.config/slopmatica-cloud/env (SLOPMATICA_* variables).
+[Unit]
+Description=Slopmatica Cloud (schematic sync for the Slopmatica mod)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Git/stencil/cloud
+EnvironmentFile=-%h/.config/slopmatica-cloud/env
+ExecStart=%h/Git/stencil/cloud/.venv/bin/uvicorn slopmatica_cloud.main:app --host 127.0.0.1 --port 8095 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

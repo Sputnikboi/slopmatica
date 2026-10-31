@@ -2,6 +2,7 @@ package com.sputnikboi.slopmatica.mixin.view;
 
 import com.sputnikboi.slopmatica.view.PlacementView;
 import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -25,9 +26,12 @@ abstract class CameraMixin {
     private void slopmatica$placementView(float partialTicks, CallbackInfo ci) {
         PlacementView view = PlacementView.INSTANCE;
         if (view.active()) {
+            Vec3 pos = view.position(partialTicks);
             setRotation(view.yRot(), view.xRot());
-            setPosition(view.position(partialTicks));
-            detached = true;
+            setPosition(pos);
+            // Draw the player once the camera has left their head; until then it would fill the view.
+            Minecraft mc = Minecraft.getInstance();
+            detached = mc.player == null || mc.player.getEyePosition(partialTicks).distanceToSqr(pos) > 1.0;
         }
     }
 }

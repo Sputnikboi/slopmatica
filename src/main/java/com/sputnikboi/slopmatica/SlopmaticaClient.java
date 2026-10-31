@@ -1,13 +1,18 @@
 package com.sputnikboi.slopmatica;
 
+import com.sputnikboi.slopmatica.build.PlacementBuilder;
+import com.sputnikboi.slopmatica.build.Selection;
 import com.sputnikboi.slopmatica.command.SlopmaticaCommands;
 import com.sputnikboi.slopmatica.dev.DevHarness;
 import com.sputnikboi.slopmatica.placement.PlacementManager;
+import com.sputnikboi.slopmatica.placement.PlacementStore;
 import com.sputnikboi.slopmatica.render.HologramRenderer;
 import com.sputnikboi.slopmatica.view.PlacementView;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLevelEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
@@ -18,6 +23,13 @@ public final class SlopmaticaClient implements ClientModInitializer {
     public void onInitializeClient() {
         HologramRenderer renderer = HologramRenderer.INSTANCE;
         PlacementManager.INSTANCE.addListener(renderer::onPlacementsChanged);
+        PlacementManager.INSTANCE.addListener(PlacementStore.INSTANCE::markDirty);
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, mc) -> PlacementStore.INSTANCE.onJoin(mc));
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> {
+            PlacementView.INSTANCE.exit(mc);
+            PlacementStore.INSTANCE.onDisconnect();
+        });
+        ClientTickEvents.END_CLIENT_TICK.register(mc -> PlacementStore.INSTANCE.tick());
 
         LevelRenderEvents.END_MAIN.register(renderer::render);
         LevelRenderEvents.COLLECT_SUBMITS.register(renderer::collectSubmits);
@@ -26,8 +38,9 @@ public final class SlopmaticaClient implements ClientModInitializer {
         ClientLevelEvents.AFTER_CLIENT_LEVEL_CHANGE.register((mc, level) -> renderer.reset());
         ClientCommandRegistrationCallback.EVENT.register(SlopmaticaCommands::register);
         SlopmaticaKeys.register();
-        HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "placement_view"), (graphics, delta) -> PlacementView.INSTANCE.extractHud(
-            graphics, SlopmaticaKeys.PLACEMENT_VIEW, SlopmaticaKeys.VIEW_ROTATE, SlopmaticaKeys.VIEW_MIRROR, SlopmaticaKeys.VIEW_NUDGES));
+        HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "placement_view"), (graphics, delta) -> PlacementView.INSTANCE.extractHud(graphics));
+        LevelRenderEvents.COLLECT_SUBMITS.register(Selection.INSTANCE::submit);
+        ClientTickEvents.END_CLIENT_TICK.register(PlacementBuilder.INSTANCE::tick);
         ClientLevelEvents.AFTER_CLIENT_LEVEL_CHANGE.register((mc, level) -> PlacementView.INSTANCE.exit(mc));
         DevHarness.install();
     }

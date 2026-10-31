@@ -56,7 +56,11 @@ public final class SlopmaticaActions {
                 feedback.accept(Component.literal("[Slopmatica] Could not load " + file.getFileName() + ": " + cause.getMessage()).withColor(ERROR));
                 return;
             }
-            Placement placement = PlacementManager.INSTANCE.add(schematic, origin);
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.level == null) {
+                return;
+            }
+            Placement placement = PlacementManager.INSTANCE.add(schematic, origin, mc.level.dimension().identifier().toString());
             var size = schematic.bounds();
             feedback.accept(prefix().append(String.format(Locale.ROOT, "Placed %s at %d %d %d (%d x %d x %d, %,d blocks)",
                 placement.name(), origin.getX(), origin.getY(), origin.getZ(), size.getXSpan(), size.getYSpan(), size.getZSpan(), schematic.blockCount())));

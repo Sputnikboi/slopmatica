@@ -16,12 +16,19 @@ import org.jspecify.annotations.Nullable;
 public final class Placement {
     private final Schematic schematic;
     private final String name;
+    /** The dimension it was placed in, e.g. {@code minecraft:overworld}; shown only there. */
+    private final String dimension;
     private volatile Transform transform;
     private boolean visible = true;
 
     public Placement(Schematic schematic, String name, BlockPos origin) {
+        this(schematic, name, origin, "minecraft:overworld");
+    }
+
+    public Placement(Schematic schematic, String name, BlockPos origin, String dimension) {
         this.schematic = schematic;
         this.name = name;
+        this.dimension = dimension;
         this.transform = new Transform(schematic, origin, Rotation.NONE, Mirror.NONE);
     }
 
@@ -31,6 +38,14 @@ public final class Placement {
 
     public String name() {
         return name;
+    }
+
+    public String dimension() {
+        return dimension;
+    }
+
+    public boolean inDimension(net.minecraft.world.level.Level level) {
+        return dimension.equals(level.dimension().identifier().toString());
     }
 
     public Transform transform() {
@@ -142,6 +157,40 @@ public final class Placement {
                 }
             }
             return found;
+        }
+
+        /** Block entity data the schematic has for a world position, or null. */
+        public net.minecraft.nbt.@Nullable CompoundTag tileEntityAt(int wx, int wy, int wz) {
+            if (!worldBounds.isInside(wx, wy, wz)) {
+                return null;
+            }
+            BlockPos local = toLocal(wx, wy, wz);
+            for (Schematic.Region region : regions) {
+                var tag = region.tileEntityAt(local.getX(), local.getY(), local.getZ());
+                if (tag != null) {
+                    return tag;
+                }
+            }
+            return null;
+        }
+
+        /** World-space to schematic-space: the inverse of {@link #toWorld}. */
+        public BlockPos toLocal(int wx, int wy, int wz) {
+            int dx = wx - origin.getX();
+            int dz = wz - origin.getZ();
+            int x, z;
+            switch (rotation) {
+                case CLOCKWISE_90 -> { x = dz; z = -dx; }
+                case COUNTERCLOCKWISE_90 -> { x = -dz; z = dx; }
+                case CLOCKWISE_180 -> { x = -dx; z = -dz; }
+                default -> { x = dx; z = dz; }
+            }
+            switch (mirror) {
+                case LEFT_RIGHT -> z = -z;
+                case FRONT_BACK -> x = -x;
+                default -> { }
+            }
+            return new BlockPos(x, wy - origin.getY(), z);
         }
 
         /** Schematic-space to world-space; the same convention as vanilla structure templates. */

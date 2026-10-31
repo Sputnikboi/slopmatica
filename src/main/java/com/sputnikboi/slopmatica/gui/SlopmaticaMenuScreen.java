@@ -1,10 +1,13 @@
 package com.sputnikboi.slopmatica.gui;
 
+import com.sputnikboi.slopmatica.build.Clipboard;
+import com.sputnikboi.slopmatica.build.Selection;
 import com.sputnikboi.slopmatica.placement.Placement;
 import com.sputnikboi.slopmatica.placement.PlacementManager;
 import com.sputnikboi.slopmatica.render.HologramRenderer;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.StringWidget;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.layouts.HeaderAndFooterLayout;
 import net.minecraft.client.gui.layouts.LinearLayout;
 import net.minecraft.client.gui.screens.Screen;
@@ -41,6 +44,17 @@ public class SlopmaticaMenuScreen extends Screen {
             b -> minecraft.gui.setScreen(new MaterialListScreen(this, active))
         ).width(BUTTON_WIDTH).build());
         materials.active = active != null;
+        LinearLayout copyRow = column.addChild(LinearLayout.horizontal().spacing(4));
+        copyRow.addChild(Button.builder(Component.translatable("slopmatica.menu.copy"), b -> {
+            onClose();
+            Clipboard.INSTANCE.copy(minecraft);
+        }).width((BUTTON_WIDTH - 8) / 3).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.copy.tooltip"))).build());
+        copyRow.addChild(Button.builder(Component.translatable("slopmatica.menu.paste"), b -> {
+            onClose();
+            Clipboard.INSTANCE.paste(minecraft);
+        }).width((BUTTON_WIDTH - 8) / 3).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.paste.tooltip"))).build());
+        copyRow.addChild(Button.builder(Component.translatable("slopmatica.menu.clear_selection"), b -> Selection.INSTANCE.clear())
+            .width(BUTTON_WIDTH - 8 - 2 * ((BUTTON_WIDTH - 8) / 3)).build());
         column.addChild(Button.builder(Component.translatable("slopmatica.menu.options"), b -> minecraft.gui.setScreen(new SlopmaticaOptionsScreen(this)))
             .width(BUTTON_WIDTH).build());
         column.addChild(Button.builder(hologramLabel(), b -> {

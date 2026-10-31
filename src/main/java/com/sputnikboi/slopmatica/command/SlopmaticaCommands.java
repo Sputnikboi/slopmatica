@@ -14,6 +14,9 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.sputnikboi.slopmatica.SlopmaticaActions;
+import com.sputnikboi.slopmatica.build.Clipboard;
+import com.sputnikboi.slopmatica.build.PlacementBuilder;
+import com.sputnikboi.slopmatica.build.Selection;
 import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.gui.SlopmaticaMenuScreen;
 import com.sputnikboi.slopmatica.placement.Placement;
@@ -124,6 +127,27 @@ public final class SlopmaticaCommands {
             c.getSource().sendFeedback(SlopmaticaActions.prefix().append(String.format(Locale.ROOT, "Ghost opacity %.0f%%", config.ghostOpacity * 100)));
             return 1;
         })));
+
+        root.then(literal("corner").executes(c -> {
+            Selection.INSTANCE.setCorner(Minecraft.getInstance());
+            return 1;
+        }));
+        root.then(literal("copy").executes(c -> {
+            Clipboard.INSTANCE.copy(Minecraft.getInstance());
+            return 1;
+        }));
+        root.then(literal("paste").executes(c -> {
+            // After the chat screen has closed, since paste opens the placement view.
+            Minecraft mc = Minecraft.getInstance();
+            mc.schedule(() -> Clipboard.INSTANCE.paste(mc));
+            return 1;
+        }));
+        root.then(literal("build")
+            .executes(c -> withSelected(c, p -> PlacementBuilder.INSTANCE.start(Minecraft.getInstance(), p, feedback(c))))
+            .then(literal("stop").executes(c -> {
+                PlacementBuilder.INSTANCE.stop(feedback(c));
+                return 1;
+            })));
 
         dispatcher.register(root);
     }

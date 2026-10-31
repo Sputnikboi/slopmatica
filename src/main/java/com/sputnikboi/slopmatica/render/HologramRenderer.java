@@ -240,7 +240,7 @@ public final class HologramRenderer {
         Long2ObjectOpenHashMap<Section> wanted = new Long2ObjectOpenHashMap<>();
         int minSectionY = level.getMinSectionY(), maxSectionY = level.getMaxSectionY();
         for (Placement placement : PlacementManager.INSTANCE.placements()) {
-            if (!placement.visible()) {
+            if (!placement.visible() || !placement.inDimension(level)) {
                 continue;
             }
             BoundingBox box = placement.transform().worldBounds();
@@ -313,7 +313,7 @@ public final class HologramRenderer {
         dirty.sort(Comparator.comparingLong(s -> distanceSq(s.key, camX, camY, camZ)));
 
         List<Placement.Transform> transforms = PlacementManager.INSTANCE.placements().stream()
-            .filter(Placement::visible)
+            .filter(p -> p.visible() && p.inDimension(level))
             .map(Placement::transform)
             .toList();
         SlopmaticaConfig config = SlopmaticaConfig.get();

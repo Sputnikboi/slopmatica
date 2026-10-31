@@ -31,8 +31,8 @@ public final class PlacementManager {
         return placements.stream().filter(p -> p.name().equalsIgnoreCase(name)).findFirst();
     }
 
-    public Placement add(Schematic schematic, BlockPos origin) {
-        Placement placement = new Placement(schematic, uniqueName(schematic.name()), origin);
+    public Placement add(Schematic schematic, BlockPos origin, String dimension) {
+        Placement placement = new Placement(schematic, uniqueName(schematic.name()), origin, dimension);
         placements.add(placement);
         selected = placement;
         changed();
@@ -44,6 +44,13 @@ public final class PlacementManager {
         if (selected == placement) {
             selected = placements.isEmpty() ? null : placements.getLast();
         }
+        changed();
+    }
+
+    /** Drops every placement at once, for leaving a world. */
+    public void clear() {
+        placements.clear();
+        selected = null;
         changed();
     }
 

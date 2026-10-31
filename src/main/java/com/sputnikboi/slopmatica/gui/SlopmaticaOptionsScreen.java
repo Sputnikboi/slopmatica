@@ -4,7 +4,13 @@ import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.render.HologramRenderer;
 import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
+import com.mojang.serialization.Codec;
+import com.sputnikboi.slopmatica.build.PlacementBuilder;
+import java.util.List;
+import java.util.Locale;
 import net.minecraft.client.OptionInstance;
+import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.Options;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.options.OptionsSubScreen;
@@ -16,6 +22,9 @@ import org.jspecify.annotations.Nullable;
  * the options menu. Keybinds are not here on purpose: they are in Controls > Key Binds.
  */
 public class SlopmaticaOptionsScreen extends OptionsSubScreen {
+    private static final int KEYS_BUTTON_WIDTH = 90;
+    private @Nullable Button keyBindsButton;
+
     public SlopmaticaOptionsScreen(@Nullable Screen parent) {
         super(parent, Minecraft.getInstance().options, Component.translatable("slopmatica.options.title"));
     }
@@ -52,6 +61,34 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
                 c.fadeStart = Math.min(c.fadeStart, v - 4);
             }, false)
         );
+
+        list.addHeader(Component.translatable("slopmatica.options.paste"));
+        list.addSmall(new OptionInstance<>(
+            "slopmatica.options.paste_replace",
+            v -> Tooltip.create(Component.translatable("slopmatica.options.paste_replace." + v.name().toLowerCase(Locale.ROOT) + ".tooltip")),
+            // Cycle buttons add the caption themselves.
+            (caption, v) -> Component.translatable("slopmatica.options.paste_replace." + v.name().toLowerCase(Locale.ROOT)),
+            new OptionInstance.Enum<>(List.of(PlacementBuilder.Replace.values()), Codec.STRING.xmap(PlacementBuilder.Replace::valueOf, Enum::name)),
+            c.pasteReplace,
+            v -> c.pasteReplace = v
+        ));
+    }
+
+    @Override
+    protected void init() {
+        super.init();
+        // Bottom right, out of the way of Done: straight to this mod's keys.
+        keyBindsButton = addRenderableWidget(Button.builder(Component.translatable("slopmatica.options.keybinds"),
+            b -> minecraft.gui.setScreen(new SlopmaticaKeyBindsScreen(this))).width(KEYS_BUTTON_WIDTH).build());
+        repositionElements();
+    }
+
+    @Override
+    protected void repositionElements() {
+        super.repositionElements();
+        if (keyBindsButton != null) {
+            keyBindsButton.setPosition(width - KEYS_BUTTON_WIDTH - 6, height - 26);
+        }
     }
 
     /**

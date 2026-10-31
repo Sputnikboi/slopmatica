@@ -3,7 +3,10 @@ package com.sputnikboi.slopmatica.schematic;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtAccounter;
@@ -20,7 +23,9 @@ public record RawLitematic(String name, int version, int dataVersion, List<Regio
         int minX, int minY, int minZ,
         int sizeX, int sizeY, int sizeZ,
         List<CompoundTag> palette,
-        PackedIntArray blocks
+        PackedIntArray blocks,
+        /** Block entity data keyed by {@code BlockPos.asLong} of the region-relative position. */
+        Map<Long, CompoundTag> tileEntities
     ) {
         public int index(int x, int y, int z) {
             return (y * sizeZ + z) * sizeX + x;
@@ -66,7 +71,14 @@ public record RawLitematic(String name, int version, int dataVersion, List<Regio
                 continue;
             }
             PackedIntArray blocks = new PackedIntArray(PackedIntArray.bitsFor(palette.size()), volume, packed);
-            regions.add(new Region(regionName, minX, minY, minZ, sx, sy, sz, palette, blocks));
+            // Litematica stores block entities with their position relative to the region's min corner.
+            Map<Long, CompoundTag> tileEntities = new HashMap<>();
+            ListTag tiles = tag.getListOrEmpty("TileEntities");
+            for (int i = 0; i < tiles.size(); i++) {
+                CompoundTag te = tiles.getCompoundOrEmpty(i);
+                tileEntities.put(BlockPos.asLong(te.getIntOr("x", 0), te.getIntOr("y", 0), te.getIntOr("z", 0)), te);
+            }
+            regions.add(new Region(regionName, minX, minY, minZ, sx, sy, sz, palette, blocks, tileEntities));
         }
         return new RawLitematic(name, version, dataVersion, regions);
     }
