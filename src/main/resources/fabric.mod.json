@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "slopmatica",
+  "version": "${version}",
+  "name": "Slopmatica",
+  "description": "Schematic holograms for building: loads Litematica .litematic files and shows what is missing, correct, or wrong.",
+  "authors": ["Sputnikboi"],
+  "license": "All-Rights-Reserved",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["com.sputnikboi.slopmatica.SlopmaticaClient"]
+  },
+  "mixins": [
+    "slopmatica.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": ">=26.3",
+    "fabric-api": "*"
+  }
+}

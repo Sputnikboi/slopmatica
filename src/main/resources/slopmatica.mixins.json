@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "package": "com.sputnikboi.slopmatica.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "ClientLevelMixin",
+    "RenderSetupAccessor",
+    "RenderTypeAccessor",
+    "TextureBindingAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
