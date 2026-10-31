@@ -353,6 +353,7 @@ public final class CloudSync {
             JsonObject me = getJson("/api/me");
             readUsage(me);
             notify(String.format(Locale.ROOT, "Cloud: %d uploaded, %d downloaded, %d removed", up, down, removed));
+            CloudPresence.INSTANCE.refresh();
         }
         status = quotaHit ? "Cloud storage is full: some files were not uploaded" : "Synced " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm"));
     }

@@ -86,7 +86,8 @@ public final class DevHarness {
             } else if (step.startsWith("screen ")) {
                 mc.gui.setScreen(switch (step.substring(7).trim()) {
                     case "menu" -> new SlopmaticaMenuScreen(null);
-                    case "browser" -> new SchematicBrowserScreen(null);
+                    case "browser" -> new SchematicBrowserScreen(null, false);
+                    case "cloud-browser" -> new SchematicBrowserScreen(null, true);
                     case "placements" -> new PlacementsScreen(null);
                     case "options" -> new SlopmaticaOptionsScreen(null);
                     case "cloud" -> new CloudScreen(null);

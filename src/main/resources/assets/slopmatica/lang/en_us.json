@@ -164,5 +164,7 @@
   "slopmatica.options.easy_place_angel": "Angel Placement",
   "slopmatica.options.easy_place_angel.tooltip": "Easy Place can place blocks floating in mid-air, with nothing next to them, as Litematica does. Vanilla servers accept it; some anti-cheat plugins don't. Placing against a neighbour is still preferred when that gives the right block.",
   "slopmatica.cloud.password": "Set Website Password...",
-  "slopmatica.cloud.password.tooltip": "Opens your account page on the website, already logged in. Set a password there to log in on the website directly with your Minecraft name, without the game."
+  "slopmatica.cloud.password.tooltip": "Opens your account page on the website, already logged in. Set a password there to log in on the website directly with your Minecraft name, without the game.",
+  "slopmatica.browser.tab.local": "This Computer",
+  "slopmatica.browser.tab.cloud": "Cloud"
 }

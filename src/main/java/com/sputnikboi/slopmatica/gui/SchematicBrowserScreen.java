@@ -4,6 +4,7 @@ import com.mojang.blaze3d.Blaze3D;
 import com.sputnikboi.slopmatica.SlopmaticaActions;
 import com.sputnikboi.slopmatica.schematic.SchematicFormats;
 import net.minecraft.nbt.ListTag;
+import com.sputnikboi.slopmatica.cloud.CloudPresence;
 import com.sputnikboi.slopmatica.cloud.CloudSync;
 import net.minecraft.client.gui.components.Tooltip;
 import com.sputnikboi.slopmatica.render.SchematicThumbnails;
@@ -60,9 +61,19 @@ public class SchematicBrowserScreen extends Screen {
     private static final Map<Path, Component> INFO_CACHE = new ConcurrentHashMap<>();
 
     private final @Nullable Screen parent;
-    private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, 60, 53);
-    private final Path root;
+    private static final int BADGE_COLOR = 0xFF55CCFF;
+    /** The tab the browser last showed, so reopening it lands in the same place. */
+    private static boolean lastCloudTab;
+
+    private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, 82, 53);
+    private final Path schematics;
+    private final Path cloudDir;
+    /** Cloud tab: browse {@code schematics/cloud/}; otherwise everything else in {@code schematics/}. */
+    private boolean cloudTab;
+    private Path root;
     private Path current;
+    private Button localTabButton;
+    private Button cloudTabButton;
     private String filter = "";
     private FileList list;
     private StringWidget pathLabel;
@@ -71,10 +82,25 @@ public class SchematicBrowserScreen extends Screen {
     private Button uploadButton;
 
     public SchematicBrowserScreen(@Nullable Screen parent) {
+        this(parent, lastCloudTab);
+    }
+
+    public SchematicBrowserScreen(@Nullable Screen parent, boolean cloud) {
         super(Component.translatable("slopmatica.browser.title"));
         this.parent = parent;
-        this.root = SlopmaticaActions.schematicsDir();
+        this.schematics = SlopmaticaActions.schematicsDir();
+        this.cloudDir = CloudSync.cloudDir();
+        this.cloudTab = lastCloudTab = cloud;
+        this.root = cloudTab ? cloudDir : schematics;
         this.current = root;
+        CloudPresence.INSTANCE.refresh();
+    }
+
+    private void showTab(boolean cloud) {
+        cloudTab = lastCloudTab = cloud;
+        root = cloud ? cloudDir : schematics;
+        current = root;
+        refresh();
     }
 
     @Override
@@ -82,6 +108,9 @@ public class SchematicBrowserScreen extends Screen {
         LinearLayout header = layout.addToHeader(LinearLayout.vertical().spacing(4));
         header.defaultCellSetting().alignHorizontallyCenter();
         header.addChild(new StringWidget(title, font));
+        LinearLayout tabs = header.addChild(LinearLayout.horizontal().spacing(4));
+        localTabButton = tabs.addChild(Button.builder(Component.translatable("slopmatica.browser.tab.local"), b -> showTab(false)).width(110).build());
+        cloudTabButton = tabs.addChild(Button.builder(Component.translatable("slopmatica.browser.tab.cloud"), b -> showTab(true)).width(110).build());
         pathLabel = header.addChild(new StringWidget(Math.min(width - 20, 400), 9, Component.empty(), font));
         EditBox search = header.addChild(new EditBox(font, 0, 0, 200, 15, Component.translatable("slopmatica.browser.search")));
         search.setHint(Component.translatable("slopmatica.browser.search").withStyle(EditBox.SEARCH_HINT_STYLE));
@@ -161,8 +190,13 @@ public class SchematicBrowserScreen extends Screen {
             if (!current.equals(root)) {
                 entries.add(new FileEntry(current.getParent(), Kind.PARENT));
             }
+            try {
+                Files.createDirectories(current); // the cloud folder before the first sync
+            } catch (IOException ignored) {
+                // Listing below reports it as empty.
+            }
             try (Stream<Path> children = Files.list(current)) {
-                children.filter(p -> !hidden(root, p) && (Files.isDirectory(p) || isSchematic(p)))
+                children.filter(p -> !hidden(root, p) && !p.equals(cloudDir) && (Files.isDirectory(p) || isSchematic(p)))
                     .sorted(Comparator.comparing((Path p) -> !Files.isDirectory(p)).thenComparing(p -> p.getFileName().toString().toLowerCase(Locale.ROOT)))
                     .forEach(p -> entries.add(new FileEntry(p, Files.isDirectory(p) ? Kind.DIR : Kind.FILE)));
             } catch (IOException e) {
@@ -171,7 +205,7 @@ public class SchematicBrowserScreen extends Screen {
         } else {
             String needle = filter.toLowerCase(Locale.ROOT);
             try (Stream<Path> files = Files.walk(root, 8)) {
-                files.filter(p -> isSchematic(p) && !hidden(root, p) && root.relativize(p).toString().toLowerCase(Locale.ROOT).contains(needle))
+                files.filter(p -> isSchematic(p) && !hidden(root, p) && (cloudTab || !p.startsWith(cloudDir)) && root.relativize(p).toString().toLowerCase(Locale.ROOT).contains(needle))
                     .sorted(Comparator.comparing(p -> root.relativize(p).toString().toLowerCase(Locale.ROOT)))
                     .forEach(p -> entries.add(new FileEntry(p, Kind.FILE)));
             } catch (IOException e) {
@@ -180,7 +214,15 @@ public class SchematicBrowserScreen extends Screen {
         }
         list.replaceEntries(entries);
         list.setScrollAmount(0);
-        setLabel(pathLabel, Component.literal(filter.isEmpty() ? "schematics/" + pathFromRoot(current) : "Searching all folders").withColor(DETAIL_COLOR));
+        localTabButton.active = cloudTab;
+        cloudTabButton.active = !cloudTab;
+        uploadButton.visible = !cloudTab;
+        String where = cloudTab ? "cloud/" : "schematics/";
+        String label = filter.isEmpty() ? where + pathFromRoot(current) : cloudTab ? "Searching the cloud" : "Searching all folders";
+        if (cloudTab && !CloudSync.INSTANCE.loggedIn()) {
+            label = "Not logged in to the cloud: menu → Cloud";
+        }
+        setLabel(pathLabel, Component.literal(label).withColor(DETAIL_COLOR));
         onSelectionChanged(null);
     }
 
@@ -211,7 +253,7 @@ public class SchematicBrowserScreen extends Screen {
 
     private void onSelectionChanged(@Nullable FileEntry entry) {
         loadButton.active = entry != null && entry.kind == Kind.FILE;
-        uploadButton.active = loadButton.active && CloudSync.INSTANCE.loggedIn();
+        uploadButton.active = loadButton.active && CloudSync.INSTANCE.loggedIn() && !CloudPresence.INSTANCE.inCloud(entry.path);
         if (entry == null || entry.kind != Kind.FILE) {
             setLabel(infoLabel, Component.empty());
             return;
@@ -372,8 +414,18 @@ public class SchematicBrowserScreen extends Screen {
                     graphics.blit(RenderPipelines.GUI_TEXTURED, icon, getContentX() + 1, getContentYMiddle() - ICON / 2, 0, 0, ICON, ICON, size, size, size, size);
                 }
             }
-            String shown = font.plainSubstrByWidth(label, getContentRight() - textX - detailWidth - 10);
+            // "in cloud" / "on disk": the same schematic exists on the other side too.
+            String badge = kind != Kind.FILE ? null
+                : cloudTab ? (CloudPresence.INSTANCE.onDisk(path) ? "on disk" : null)
+                : (CloudPresence.INSTANCE.inCloud(path) ? "in cloud" : null);
+            int badgeWidth = badge == null ? 0 : font.width(badge) + 8;
+            String shown = font.plainSubstrByWidth(label, getContentRight() - textX - detailWidth - badgeWidth - 14);
             graphics.text(font, shown, textX, y, kind == Kind.FILE ? -1 : DIR_COLOR);
+            if (badge != null) {
+                int bx = textX + font.width(shown) + 6;
+                graphics.fill(bx, y - 2, bx + badgeWidth, y + 9, 0x6055CCFF);
+                graphics.text(font, badge, bx + 4, y, BADGE_COLOR);
+            }
             if (!detail.isEmpty()) {
                 graphics.text(font, detail, getContentRight() - detailWidth - 2, y, DETAIL_COLOR);
             }
