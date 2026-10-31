@@ -34,6 +34,8 @@ public final class SlopmaticaConfig {
     /** Multiplier on {@code HologramRenderer.BASE_LINE_WIDTH}, half of vanilla's block outline. */
     public float outlineWidth = 1.0F;
     public boolean fadeOutlines = true;
+    /** Survival/adventure: getting hurt drops you out of the placement view, back to your body. */
+    public boolean exitViewWhenHurt = true;
     /** What pasting into the world may overwrite. */
     public PlacementBuilder.Replace pasteReplace = PlacementBuilder.Replace.NONE;
     public int fadeStart = 24;

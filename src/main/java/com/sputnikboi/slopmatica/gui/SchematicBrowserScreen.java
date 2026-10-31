@@ -7,6 +7,8 @@ import net.minecraft.client.gui.components.Tooltip;
 import com.sputnikboi.slopmatica.render.SchematicThumbnails;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -45,8 +47,11 @@ import org.jspecify.annotations.Nullable;
  */
 public class SchematicBrowserScreen extends Screen {
     private static final int DIR_COLOR = 0xFFFFE070;
-    private static final int ROW_HEIGHT = 28;
-    private static final int ICON = 24;
+    private static final int ROW_HEIGHT = 52;
+    private static final int ICON = 48;
+    private static final int MAX_PREVIEW = 192;
+    private static final ItemStack FOLDER_ICON = new ItemStack(Items.CHEST);
+    private static final ItemStack PARENT_ICON = new ItemStack(Items.ARROW);
     private static final int DETAIL_COLOR = 0xFF909090;
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
     /** File info is read off-thread once per file and kept for the session. */
@@ -119,13 +124,18 @@ public class SchematicBrowserScreen extends Screen {
             return;
         }
         int left = list.getRowRight() + 12;
-        int size = Math.min(SchematicThumbnails.SIZE, Math.min(width - left - 8, layout.getContentHeight() - 16));
-        if (size < 48) {
+        int size = Math.min(MAX_PREVIEW, Math.min(width - left - 8, layout.getContentHeight() - 16));
+        if (size < ICON + 16) {
             return;
         }
-        Identifier icon = SchematicThumbnails.INSTANCE.get(selected.path);
+        // Its own high-resolution render; the list icon stands in until that is ready.
+        int full = SchematicThumbnails.PREVIEW_SIZE;
+        Identifier icon = SchematicThumbnails.INSTANCE.get(selected.path, full);
+        if (icon == null) {
+            full = SchematicThumbnails.SIZE;
+            icon = SchematicThumbnails.INSTANCE.get(selected.path);
+        }
         if (icon != null) {
-            int full = SchematicThumbnails.SIZE;
             graphics.blit(RenderPipelines.GUI_TEXTURED, icon, left, layout.getHeaderHeight() + 8, 0, 0, size, size, full, full, full, full);
         }
     }
@@ -150,7 +160,7 @@ public class SchematicBrowserScreen extends Screen {
                 entries.add(new FileEntry(current.getParent(), Kind.PARENT));
             }
             try (Stream<Path> children = Files.list(current)) {
-                children.filter(p -> Files.isDirectory(p) || isSchematic(p))
+                children.filter(p -> !hidden(root, p) && (Files.isDirectory(p) || isSchematic(p)))
                     .sorted(Comparator.comparing((Path p) -> !Files.isDirectory(p)).thenComparing(p -> p.getFileName().toString().toLowerCase(Locale.ROOT)))
                     .forEach(p -> entries.add(new FileEntry(p, Files.isDirectory(p) ? Kind.DIR : Kind.FILE)));
             } catch (IOException e) {
@@ -159,7 +169,7 @@ public class SchematicBrowserScreen extends Screen {
         } else {
             String needle = filter.toLowerCase(Locale.ROOT);
             try (Stream<Path> files = Files.walk(root, 8)) {
-                files.filter(p -> isSchematic(p) && root.relativize(p).toString().toLowerCase(Locale.ROOT).contains(needle))
+                files.filter(p -> isSchematic(p) && !hidden(root, p) && root.relativize(p).toString().toLowerCase(Locale.ROOT).contains(needle))
                     .sorted(Comparator.comparing(p -> root.relativize(p).toString().toLowerCase(Locale.ROOT)))
                     .forEach(p -> entries.add(new FileEntry(p, Kind.FILE)));
             } catch (IOException e) {
@@ -181,6 +191,16 @@ public class SchematicBrowserScreen extends Screen {
     private String pathFromRoot(Path dir) {
         String rel = root.relativize(dir).toString().replace('\\', '/');
         return rel.isEmpty() ? "" : rel + "/";
+    }
+
+    /** Dot folders (the cloud trash, for one) are housekeeping, not schematics to browse. */
+    private static boolean hidden(Path root, Path p) {
+        for (Path part : root.relativize(p)) {
+            if (part.toString().startsWith(".")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isSchematic(Path p) {
@@ -296,7 +316,14 @@ public class SchematicBrowserScreen extends Screen {
             int y = getContentYMiddle() - 4;
             int detailWidth = font.width(detail);
             int textX = getContentX() + ICON + 6;
-            if (kind == Kind.FILE) {
+            if (kind != Kind.FILE) {
+                // A chest for folders, an arrow for "up", drawn at icon size.
+                graphics.pose().pushMatrix();
+                graphics.pose().translate(getContentX() + 1 + ICON / 2.0F - 16, getContentYMiddle() - 16);
+                graphics.pose().scale(2.0F, 2.0F);
+                graphics.item(kind == Kind.PARENT ? PARENT_ICON : FOLDER_ICON, 0, 0);
+                graphics.pose().popMatrix();
+            } else {
                 Identifier icon = SchematicThumbnails.INSTANCE.get(path);
                 if (icon != null) {
                     int size = SchematicThumbnails.SIZE;

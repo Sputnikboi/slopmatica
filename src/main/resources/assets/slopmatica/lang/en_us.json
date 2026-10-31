@@ -128,5 +128,8 @@
   "slopmatica.cloud.autosync_on": "Auto-sync: ON",
   "slopmatica.cloud.autosync_off": "Auto-sync: OFF",
   "slopmatica.cloud.folder": "Open Cloud Folder",
-  "slopmatica.cloud.hint": "Cloud schematics are kept in schematics/cloud/"
+  "slopmatica.cloud.hint": "Cloud schematics are kept in schematics/cloud/",
+  "slopmatica.options.view": "Placement View",
+  "slopmatica.options.exit_view_when_hurt": "Leave When Hurt",
+  "slopmatica.options.exit_view_when_hurt.tooltip": "In survival and adventure, taking damage closes the placement view so you can deal with whatever is hurting you. Creative is never affected."
 }

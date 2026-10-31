@@ -3,6 +3,7 @@ package com.sputnikboi.slopmatica.view;
 import com.sputnikboi.slopmatica.SlopmaticaActions;
 import com.sputnikboi.slopmatica.SlopmaticaKeys;
 import com.sputnikboi.slopmatica.build.PlacementBuilder;
+import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.placement.Placement;
 import com.sputnikboi.slopmatica.placement.PlacementManager;
 import java.util.ArrayList;
@@ -55,6 +56,8 @@ public final class PlacementView {
     private @Nullable Rotation startRotation;
     private net.minecraft.world.level.block.@Nullable Mirror startMirror;
     private long lastShiftNudge;
+    /** Health plus absorption last tick, to notice damage. */
+    private float lastHealth;
 
     /** Origin minus the targeted block when picked up, so it doesn't jump to the crosshair. */
     private @Nullable BlockPos carryOffset;
@@ -106,6 +109,7 @@ public final class PlacementView {
         z = zo = eye.z;
         yRot = mc.player.getYRot();
         xRot = mc.player.getXRot();
+        lastHealth = mc.player.getHealth() + mc.player.getAbsorptionAmount();
         startOrigin = target.transform().origin();
         startRotation = target.transform().rotation();
         startMirror = target.transform().mirror();
@@ -181,6 +185,15 @@ public final class PlacementView {
         }
         if (mc.player == null || mc.level == null || !PlacementManager.INSTANCE.placements().contains(p)) {
             placement = null;
+            return;
+        }
+        // Your body is standing defenceless somewhere: getting hurt brings you back to it.
+        float health = mc.player.getHealth() + mc.player.getAbsorptionAmount();
+        boolean hurt = health < lastHealth;
+        lastHealth = health;
+        if (hurt && SlopmaticaConfig.get().exitViewWhenHurt && mc.gameMode != null && mc.gameMode.getPlayerMode().isSurvival()) {
+            exit(mc);
+            SlopmaticaActions.actionBar(Component.literal("You took damage: placement view closed").withColor(SlopmaticaActions.ERROR));
             return;
         }
         if (mc.gui.screen() instanceof PauseScreen) {

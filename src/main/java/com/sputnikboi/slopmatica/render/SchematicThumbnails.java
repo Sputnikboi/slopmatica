@@ -77,7 +77,10 @@ public final class SchematicThumbnails {
     public static final SchematicThumbnails INSTANCE = new SchematicThumbnails();
 
     private static final Logger LOGGER = LoggerFactory.getLogger("Slopmatica");
+    /** List icons. */
     public static final int SIZE = 128;
+    /** The big preview beside the list, rendered separately so it stays sharp. */
+    public static final int PREVIEW_SIZE = 512;
     /** Bigger schematics get no icon: meshing them would take too long for a list entry. */
     private static final long MAX_VOLUME = 4L * 1024 * 1024;
     private static final int GRASS = 0xFF91BD59, FOLIAGE = 0xFF77AB2F, DRY_FOLIAGE = 0xFFA0815A, WATER = 0xFF3F76E4;
@@ -88,7 +91,7 @@ public final class SchematicThumbnails {
     }
 
     /** A meshed schematic waiting for the render thread. */
-    private record Job(Path file, String key, @Nullable MeshData solid, @Nullable MeshData translucent, ByteBufferBuilder[] buffers, BoundingBox bounds) {
+    private record Job(Path file, String key, int size, @Nullable MeshData solid, @Nullable MeshData translucent, ByteBufferBuilder[] buffers, BoundingBox bounds) {
         void close() {
             if (solid != null) {
                 solid.close();
@@ -115,11 +118,16 @@ public final class SchematicThumbnails {
         return Minecraft.getInstance().gameDirectory.toPath().resolve("slopmatica").resolve("thumbnails");
     }
 
-    /** The icon's texture if ready; otherwise starts making it and returns null for now. */
+    /** The list icon's texture if ready; otherwise starts making it and returns null for now. */
     public @Nullable Identifier get(Path file) {
+        return get(file, SIZE);
+    }
+
+    /** The icon at {@code size} pixels square ({@link #SIZE} or {@link #PREVIEW_SIZE}), as {@link #get(Path)}. */
+    public @Nullable Identifier get(Path file, int size) {
         String key;
         try {
-            key = key(file);
+            key = key(file, size);
         } catch (IOException e) {
             return null;
         }
@@ -139,23 +147,28 @@ public final class SchematicThumbnails {
                     LOGGER.warn("Bad cached icon {}", png, e);
                 }
             }
-            mesh(file, key);
+            mesh(file, key, size);
         });
         return null;
     }
 
-    /** The cached PNG for a file, if one has been rendered (used for cloud uploads). */
+    /** The sharpest cached PNG for a file, if one has been rendered (used for cloud uploads). */
     public Optional<Path> cachedPng(Path file) {
         try {
-            Path png = cacheDir().resolve(key(file) + ".png");
-            return Files.isRegularFile(png) ? Optional.of(png) : Optional.empty();
+            for (int size : new int[] {PREVIEW_SIZE, SIZE}) {
+                Path png = cacheDir().resolve(key(file, size) + ".png");
+                if (Files.isRegularFile(png)) {
+                    return Optional.of(png);
+                }
+            }
         } catch (IOException e) {
-            return Optional.empty();
+            // Unreadable file: no icon.
         }
+        return Optional.empty();
     }
 
-    private static String key(Path file) throws IOException {
-        String id = file.toAbsolutePath().normalize() + "|" + Files.size(file) + "|" + Files.getLastModifiedTime(file).toMillis();
+    private static String key(Path file, int size) throws IOException {
+        String id = file.toAbsolutePath().normalize() + "|" + Files.size(file) + "|" + Files.getLastModifiedTime(file).toMillis() + "|" + size;
         try {
             byte[] hash = MessageDigest.getInstance("SHA-1").digest(id.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(hash, 0, 12);
@@ -164,7 +177,7 @@ public final class SchematicThumbnails {
         }
     }
 
-    private void mesh(Path file, String key) {
+    private void mesh(Path file, String key, int size) {
         Minecraft mc = Minecraft.getInstance();
         try {
             Schematic schematic = Schematic.load(file);
@@ -202,7 +215,7 @@ public final class SchematicThumbnails {
                     }
                 }
             }
-            ready.add(new Job(file, key, solid.build(), translucent.build(), new ByteBufferBuilder[] {solidBytes, translucentBytes}, b));
+            ready.add(new Job(file, key, size, solid.build(), translucent.build(), new ByteBufferBuilder[] {solidBytes, translucentBytes}, b));
         } catch (IOException | RuntimeException e) {
             LOGGER.debug("No icon for {}", file, e);
             entries.put(key, new Entry(State.NONE, null));
@@ -228,8 +241,8 @@ public final class SchematicThumbnails {
     private void render(Minecraft mc, Job job) {
         GpuDevice device = RenderSystem.getDevice();
         GpuTexture color = device.createTexture(() -> "Slopmatica icon", GpuTexture.USAGE_COPY_SRC | GpuTexture.USAGE_COPY_DST | GpuTexture.USAGE_RENDER_ATTACHMENT | GpuTexture.USAGE_TEXTURE_BINDING,
-            GpuFormat.RGBA8_UNORM, SIZE, SIZE, 1, 1);
-        GpuTexture depth = device.createTexture(() -> "Slopmatica icon depth", GpuTexture.USAGE_RENDER_ATTACHMENT | GpuTexture.USAGE_COPY_DST, GpuFormat.D32_FLOAT, SIZE, SIZE, 1, 1);
+            GpuFormat.RGBA8_UNORM, job.size(), job.size(), 1, 1);
+        GpuTexture depth = device.createTexture(() -> "Slopmatica icon depth", GpuTexture.USAGE_RENDER_ATTACHMENT | GpuTexture.USAGE_COPY_DST, GpuFormat.D32_FLOAT, job.size(), job.size(), 1, 1);
         GpuTextureView colorView = device.createTextureView(color);
         GpuTextureView depthView = device.createTextureView(depth);
         try {
@@ -287,7 +300,7 @@ public final class SchematicThumbnails {
                     translucentVertices.close();
                 }
             }
-            readBack(color, job.key());
+            readBack(color, job.key(), job.size());
         } finally {
             colorView.close();
             depthView.close();
@@ -320,17 +333,17 @@ public final class SchematicThumbnails {
         pass.drawIndexed(indexCount, 1, 0, 0, 0);
     }
 
-    private void readBack(GpuTexture color, String key) {
+    private void readBack(GpuTexture color, String key, int size) {
         GpuDevice device = RenderSystem.getDevice();
         int bytes = color.getFormat().blockSize();
-        GpuBuffer buffer = device.createBuffer(() -> "Slopmatica icon readback", GpuBuffer.USAGE_MAP_READ | GpuBuffer.USAGE_COPY_DST, (long) SIZE * SIZE * bytes);
+        GpuBuffer buffer = device.createBuffer(() -> "Slopmatica icon readback", GpuBuffer.USAGE_MAP_READ | GpuBuffer.USAGE_COPY_DST, (long) size * size * bytes);
         device.createCommandEncoder().copyTextureToBuffer(color, buffer, 0L, () -> {
-            NativeImage image = new NativeImage(SIZE, SIZE, false);
+            NativeImage image = new NativeImage(size, size, false);
             try (GpuBufferSlice.MappedView read = buffer.map(true, false)) {
-                for (int y = 0; y < SIZE; y++) {
-                    for (int x = 0; x < SIZE; x++) {
+                for (int y = 0; y < size; y++) {
+                    for (int x = 0; x < size; x++) {
                         // Rows come back bottom-up.
-                        image.setPixelABGR(x, SIZE - y - 1, read.data().getInt((x + y * SIZE) * bytes));
+                        image.setPixelABGR(x, size - y - 1, read.data().getInt((x + y * size) * bytes));
                     }
                 }
             } finally {
@@ -338,7 +351,7 @@ public final class SchematicThumbnails {
                 color.close();
             }
             Path png = cacheDir().resolve(key + ".png");
-            NativeImage copy = new NativeImage(SIZE, SIZE, false);
+            NativeImage copy = new NativeImage(size, size, false);
             copy.copyFrom(image);
             Util.ioPool().execute(() -> {
                 try {
