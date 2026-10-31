@@ -3,9 +3,11 @@
   "package": "com.sputnikboi.slopmatica.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
+    "BlockItemInvoker",
     "ClientLevelMixin",
     "KeyBindsListMixin",
     "KeyBindsScreenAccessor",
+    "MinecraftEasyPlaceMixin",
     "RenderSetupAccessor",
     "RenderTypeAccessor",
     "TextureBindingAccessor",

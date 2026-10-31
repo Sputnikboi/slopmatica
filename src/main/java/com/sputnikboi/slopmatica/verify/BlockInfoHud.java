@@ -1,5 +1,6 @@
 package com.sputnikboi.slopmatica.verify;
 
+import com.sputnikboi.slopmatica.build.EasyPlace;
 import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.placement.Placement;
 import com.sputnikboi.slopmatica.placement.PlacementManager;
@@ -34,10 +35,7 @@ public final class BlockInfoHud {
     private static final double REACH = 64;
     private static final int TEXT = 0xFFE0E0E0, DIM = 0xFFA0A0A0;
 
-    private record Target(BlockPos pos, BlockState want, BlockState actual, BlockStatus status) {
-    }
-
-    private @Nullable Target target;
+    private SchematicRaycast.@Nullable Hit target;
 
     private BlockInfoHud() {
     }
@@ -49,70 +47,17 @@ public final class BlockInfoHud {
         if (level == null || mc.player == null || HologramRenderer.INSTANCE.hidden() || !SlopmaticaConfig.get().blockInfo) {
             return;
         }
-        List<Placement.Transform> transforms = new ArrayList<>();
-        for (Placement p : PlacementManager.INSTANCE.placements()) {
-            if (p.visible() && p.inDimension(level)) {
-                transforms.add(p.transform());
-            }
-        }
+        List<Placement.Transform> transforms = SchematicRaycast.visibleTransforms(level);
         if (transforms.isEmpty()) {
             return;
         }
         Camera camera = mc.gameRenderer.mainCamera();
         Vector3fc f = camera.forwardVector();
-        target = trace(level, transforms, camera.position(), new Vec3(f.x(), f.y(), f.z()));
-    }
-
-    /**
-     * Steps through the cells along the ray (Amanatides and Woo) until one holds a schematic block,
-     * or a real block with no schematic block, which hides anything behind it.
-     */
-    private static @Nullable Target trace(ClientLevel level, List<Placement.Transform> transforms, Vec3 from, Vec3 dir) {
-        int x = (int) Math.floor(from.x), y = (int) Math.floor(from.y), z = (int) Math.floor(from.z);
-        int stepX = dir.x > 0 ? 1 : -1, stepY = dir.y > 0 ? 1 : -1, stepZ = dir.z > 0 ? 1 : -1;
-        double tDeltaX = Math.abs(1 / dir.x), tDeltaY = Math.abs(1 / dir.y), tDeltaZ = Math.abs(1 / dir.z);
-        // An axis the ray runs parallel to is never crossed (and 0 * infinity would be NaN).
-        double tMaxX = dir.x == 0 ? Double.MAX_VALUE : (dir.x > 0 ? x + 1 - from.x : from.x - x) * tDeltaX;
-        double tMaxY = dir.y == 0 ? Double.MAX_VALUE : (dir.y > 0 ? y + 1 - from.y : from.y - y) * tDeltaY;
-        double tMaxZ = dir.z == 0 ? Double.MAX_VALUE : (dir.z > 0 ? z + 1 - from.z : from.z - z) * tDeltaZ;
-        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        double t = 0;
-        while (t <= REACH) {
-            pos.set(x, y, z);
-            BlockState want = null;
-            for (Placement.Transform transform : transforms) {
-                BlockState s = transform.stateAt(x, y, z);
-                if (s != null && !s.isAir()) {
-                    want = s;
-                    break;
-                }
-            }
-            BlockState actual = level.getBlockState(pos);
-            if (want != null) {
-                return new Target(pos.immutable(), want, actual, BlockMatcher.compare(want, actual));
-            }
-            if (!actual.isAir() && actual.getFluidState().isEmpty()) {
-                return null;
-            }
-            if (tMaxX < tMaxY && tMaxX < tMaxZ) {
-                x += stepX;
-                t = tMaxX;
-                tMaxX += tDeltaX;
-            } else if (tMaxY < tMaxZ) {
-                y += stepY;
-                t = tMaxY;
-                tMaxY += tDeltaY;
-            } else {
-                z += stepZ;
-                t = tMaxZ;
-                tMaxZ += tDeltaZ;
-            }
-        }
-        return null;
+        target = SchematicRaycast.trace(level, transforms, camera.position(), new Vec3(f.x(), f.y(), f.z()), REACH);
     }
 
     public void extract(GuiGraphicsExtractor graphics) {
-        Target t = target;
+        SchematicRaycast.Hit t = target;
         Minecraft mc = Minecraft.getInstance();
         if (t == null || mc.gui.screen() != null) {
             return;
@@ -133,6 +78,9 @@ public final class BlockInfoHud {
             }
             case WRONG -> lines.add(Component.translatable("slopmatica.info.placed", t.actual().getBlock().getName()).withColor(TEXT));
             default -> { }
+        }
+        if (t.status() == BlockStatus.MISSING && EasyPlace.INSTANCE.enabled()) {
+            lines.add(Component.translatable("slopmatica.info.easy_place").withColor(BlockStatus.MATCH.color()));
         }
         lines.add(Component.literal(t.pos().toShortString()).withColor(DIM));
 

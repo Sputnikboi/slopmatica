@@ -2,6 +2,7 @@ package com.sputnikboi.slopmatica;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.sputnikboi.slopmatica.build.Clipboard;
+import com.sputnikboi.slopmatica.build.EasyPlace;
 import com.sputnikboi.slopmatica.build.Selection;
 import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.gui.SchematicBrowserScreen;
@@ -42,6 +43,7 @@ public final class SlopmaticaKeys {
     private static final KeyMapping TOGGLE_HOLOGRAM = register(MAIN, "toggle_hologram");
     private static final KeyMapping TOGGLE_OUTLINES = register(MAIN, "toggle_outlines");
     private static final KeyMapping TOGGLE_GHOSTS = register(MAIN, "toggle_ghosts");
+    private static final KeyMapping TOGGLE_EASY_PLACE = register(MAIN, "toggle_easy_place");
 
     private static final KeyMapping MOVE_HERE = register(PLACEMENT, "move_here");
     private static final KeyMapping NUDGE_FORWARD = register(PLACEMENT, "nudge_forward");
@@ -119,6 +121,9 @@ public final class SlopmaticaKeys {
             config.showGhosts = !config.showGhosts;
             config.save();
             feedback.accept(Component.literal(config.showGhosts ? "Ghost blocks shown" : "Ghost blocks hidden").withColor(SlopmaticaActions.ACCENT));
+        }
+        while (TOGGLE_EASY_PLACE.consumeClick()) {
+            EasyPlace.INSTANCE.toggle();
         }
         while (PLACEMENT_VIEW.consumeClick()) {
             PlacementView.INSTANCE.toggle(mc);

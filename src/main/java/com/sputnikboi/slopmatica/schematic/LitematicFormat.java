@@ -64,11 +64,12 @@ public final class LitematicFormat {
                 CompoundTag te = tiles.getCompoundOrEmpty(i);
                 tileEntities.put(BlockPos.asLong(te.getIntOr("x", 0), te.getIntOr("y", 0), te.getIntOr("z", 0)), te);
             }
-            // Entities keep their full NBT with Pos relative to the region's min corner.
+            // Litematica stores entity Pos relative to the region's Position (not its min corner,
+            // as for block entities); the two differ on axes with a negative size.
             List<EntityData> entities = new ArrayList<>();
             ListTag entityList = tag.getListOrEmpty("Entities");
             for (int i = 0; i < entityList.size(); i++) {
-                entities.add(EntityData.fromRelativeNbt(entityList.getCompoundOrEmpty(i)));
+                entities.add(EntityData.fromRelativeNbt(entityList.getCompoundOrEmpty(i)).offset(pos[0] - minX, pos[1] - minY, pos[2] - minZ));
             }
             regions.add(new RawSchematic.Region(regionName, minX, minY, minZ, sx, sy, sz, palette, blocks, tileEntities, entities));
         }

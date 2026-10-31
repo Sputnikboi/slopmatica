@@ -146,5 +146,16 @@
   "slopmatica.options.block_info": "Block Info Panel",
   "slopmatica.options.block_info.tooltip": "Top right: the schematic block under your crosshair, its status, and for yellow and red blocks exactly what differs (placed → wanted).",
   "slopmatica.options.include_nbt": "NBT Data",
-  "slopmatica.options.include_nbt.tooltip": "Copy and paste block data (chest contents, sign text, banner patterns) and entities (item frames, armor stands, paintings, mobs). Off: blocks only."
+  "slopmatica.options.include_nbt.tooltip": "Copy and paste block data (chest contents, sign text, banner patterns) and entities (item frames, armor stands, paintings, mobs). Off: blocks only.",
+  "key.slopmatica.toggle_easy_place": "Toggle Easy Place",
+  "slopmatica.options.easy_place": "Easy Place",
+  "slopmatica.options.easy_place_on": "Easy Place",
+  "slopmatica.options.easy_place_on.tooltip": "Right-click a missing ghost block to place exactly that block, facing the right way. The item is taken from your hotbar or inventory (in creative, made for you). Hold right click to keep placing. Has a toggle key in Key Binds.",
+  "slopmatica.options.easy_place_restrict": "Block Wrong Placements",
+  "slopmatica.options.easy_place_restrict.tooltip": "While Easy Place is on, placing a block where the schematic wants a different block (or air) is refused. Using doors, levers, chests and the like still works.",
+  "slopmatica.easy_place.no_support": "Easy Place: nothing next to the %s to place it against",
+  "slopmatica.easy_place.no_item": "Easy Place: you have no %s",
+  "slopmatica.easy_place.refused": "Easy Place: the schematic wants %s here",
+  "slopmatica.easy_place.refused_air": "Easy Place: the schematic wants this spot empty",
+  "slopmatica.info.easy_place": "Right click to place"
 }

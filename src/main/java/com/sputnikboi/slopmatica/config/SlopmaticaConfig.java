@@ -41,6 +41,10 @@ public final class SlopmaticaConfig {
     public boolean exitViewWhenHurt = true;
     /** The placement view's camera bumps into blocks instead of flying through them. */
     public boolean viewCollision = true;
+    /** Right-clicking a missing ghost block places exactly that block (toggled with its key). */
+    public boolean easyPlace = false;
+    /** With Easy Place on, refuse normal placements that disagree with the schematic. */
+    public boolean easyPlaceRestrict = true;
     /** Copy block entity data (chest contents, sign text) and entities (frames, armor stands), and paste them. */
     public boolean includeNbt = true;
     /** The file format copies are saved in. */
