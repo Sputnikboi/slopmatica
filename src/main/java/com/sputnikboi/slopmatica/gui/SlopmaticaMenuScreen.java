@@ -55,6 +55,8 @@ public class SlopmaticaMenuScreen extends Screen {
         }).width((BUTTON_WIDTH - 8) / 3).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.paste.tooltip"))).build());
         copyRow.addChild(Button.builder(Component.translatable("slopmatica.menu.clear_selection"), b -> Selection.INSTANCE.clear())
             .width(BUTTON_WIDTH - 8 - 2 * ((BUTTON_WIDTH - 8) / 3)).build());
+        column.addChild(Button.builder(Component.translatable("slopmatica.menu.cloud"), b -> minecraft.gui.setScreen(new CloudScreen(this)))
+            .width(BUTTON_WIDTH).build());
         column.addChild(Button.builder(Component.translatable("slopmatica.menu.options"), b -> minecraft.gui.setScreen(new SlopmaticaOptionsScreen(this)))
             .width(BUTTON_WIDTH).build());
         column.addChild(Button.builder(hologramLabel(), b -> {

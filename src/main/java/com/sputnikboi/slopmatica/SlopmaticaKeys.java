@@ -29,10 +29,11 @@ import net.minecraft.world.level.block.Rotation;
  * collides with other mods.
  */
 public final class SlopmaticaKeys {
-    private static final KeyMapping.Category MAIN = category("main");
-    private static final KeyMapping.Category PLACEMENT = category("placement");
-    private static final KeyMapping.Category VIEW = category("view");
-    private static final KeyMapping.Category COPY = category("copy");
+    // Fabric lists mod categories alphabetically by id, so the ids carry the order.
+    private static final KeyMapping.Category MAIN = category("1_main");
+    private static final KeyMapping.Category PLACEMENT = category("2_placement");
+    private static final KeyMapping.Category VIEW = category("3_view");
+    private static final KeyMapping.Category COPY = category("4_copy");
     private static int order;
 
     private static final KeyMapping OPEN_MENU = register(MAIN, "open_menu", InputConstants.KEY_M);

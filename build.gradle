@@ -50,6 +50,10 @@ loom {
             if (project.hasProperty('devScript')) {
                 vmArg "-Dslopmatica.dev.script=${project.property('devScript')}"
             }
+            // Cloud login against a test server with a fake Mojang check: skip the real session join.
+            if (project.hasProperty('devSkipJoin')) {
+                vmArg "-Dslopmatica.dev.skipJoin=true"
+            }
         }
     }
 }

@@ -2,11 +2,13 @@ package com.sputnikboi.slopmatica;
 
 import com.sputnikboi.slopmatica.build.PlacementBuilder;
 import com.sputnikboi.slopmatica.build.Selection;
+import com.sputnikboi.slopmatica.cloud.CloudSync;
 import com.sputnikboi.slopmatica.command.SlopmaticaCommands;
 import com.sputnikboi.slopmatica.dev.DevHarness;
 import com.sputnikboi.slopmatica.placement.PlacementManager;
 import com.sputnikboi.slopmatica.placement.PlacementStore;
 import com.sputnikboi.slopmatica.render.HologramRenderer;
+import com.sputnikboi.slopmatica.render.SchematicThumbnails;
 import com.sputnikboi.slopmatica.view.PlacementView;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -41,6 +43,8 @@ public final class SlopmaticaClient implements ClientModInitializer {
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "placement_view"), (graphics, delta) -> PlacementView.INSTANCE.extractHud(graphics));
         LevelRenderEvents.COLLECT_SUBMITS.register(Selection.INSTANCE::submit);
         ClientTickEvents.END_CLIENT_TICK.register(PlacementBuilder.INSTANCE::tick);
+        ClientTickEvents.END_CLIENT_TICK.register(SchematicThumbnails.INSTANCE::tick);
+        ClientTickEvents.END_CLIENT_TICK.register(mc -> CloudSync.INSTANCE.tick());
         ClientLevelEvents.AFTER_CLIENT_LEVEL_CHANGE.register((mc, level) -> PlacementView.INSTANCE.exit(mc));
         DevHarness.install();
     }

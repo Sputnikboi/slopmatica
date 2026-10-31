@@ -29,7 +29,7 @@ public class SlopmaticaKeyBindsScreen extends KeyBindsScreen {
     @Override
     protected void addFooter() {
         LinearLayout buttons = layout.addToFooter(LinearLayout.horizontal().spacing(8));
-        buttons.addChild(Button.builder(Component.translatable("slopmatica.keys.reset"), b -> {
+        Button reset = buttons.addChild(Button.builder(Component.translatable("slopmatica.keys.reset"), b -> {
             for (KeyMapping key : options.keyMappings) {
                 if (SlopmaticaKeys.isOurs(key)) {
                     key.setKey(key.getDefaultKey());
@@ -37,6 +37,7 @@ public class SlopmaticaKeyBindsScreen extends KeyBindsScreen {
             }
             ((KeyBindsScreenAccessor) this).slopmatica$keyBindsList().resetMappingAndUpdateButtons();
         }).build());
+        ((KeyBindsScreenAccessor) this).slopmatica$setResetButton(reset);
         buttons.addChild(Button.builder(CommonComponents.GUI_DONE, b -> onClose()).build());
     }
 }

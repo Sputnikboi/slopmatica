@@ -1,6 +1,10 @@
 package com.sputnikboi.slopmatica.dev;
 
+import com.sputnikboi.slopmatica.SlopmaticaActions;
+import com.sputnikboi.slopmatica.cloud.CloudSync;
+import com.sputnikboi.slopmatica.gui.CloudScreen;
 import com.sputnikboi.slopmatica.gui.MaterialListScreen;
+import com.sputnikboi.slopmatica.gui.SlopmaticaKeyBindsScreen;
 import com.sputnikboi.slopmatica.gui.PlacementsScreen;
 import com.sputnikboi.slopmatica.placement.PlacementManager;
 import com.sputnikboi.slopmatica.view.PlacementView;
@@ -85,6 +89,8 @@ public final class DevHarness {
                     case "browser" -> new SchematicBrowserScreen(null);
                     case "placements" -> new PlacementsScreen(null);
                     case "options" -> new SlopmaticaOptionsScreen(null);
+                    case "cloud" -> new CloudScreen(null);
+                    case "slopkeys" -> new SlopmaticaKeyBindsScreen(null);
                     case "materials" -> new MaterialListScreen(null, PlacementManager.INSTANCE.selected().orElseThrow());
                     case "keybinds" -> new KeyBindsScreen(null, mc.options);
                     default -> null;
@@ -119,6 +125,17 @@ public final class DevHarness {
                 } else {
                     mc.player.turn(dx, dy);
                 }
+            } else if (step.startsWith("cloud ")) {
+                String[] parts = step.split(" ", 3);
+                switch (parts[1]) {
+                    case "login" -> CloudSync.INSTANCE.login();
+                    case "sync" -> CloudSync.INSTANCE.syncNow();
+                    case "upload" -> CloudSync.INSTANCE.upload(SlopmaticaActions.schematicsDir().resolve(parts[2]));
+                    default -> LOGGER.warn("Unknown cloud step: {}", step);
+                }
+                LOGGER.info("dev cloud status: {}", CloudSync.INSTANCE.status());
+            } else if (step.equals("status")) {
+                LOGGER.info("dev cloud status: {} (used {} of {})", CloudSync.INSTANCE.status(), CloudSync.INSTANCE.usedBytes(), CloudSync.INSTANCE.quotaBytes());
             } else if (step.equals("quit")) {
                 mc.stop();
             } else {

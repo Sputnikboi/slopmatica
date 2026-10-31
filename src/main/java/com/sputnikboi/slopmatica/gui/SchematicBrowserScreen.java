@@ -2,6 +2,11 @@ package com.sputnikboi.slopmatica.gui;
 
 import com.mojang.blaze3d.Blaze3D;
 import com.sputnikboi.slopmatica.SlopmaticaActions;
+import com.sputnikboi.slopmatica.cloud.CloudSync;
+import net.minecraft.client.gui.components.Tooltip;
+import com.sputnikboi.slopmatica.render.SchematicThumbnails;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.resources.Identifier;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -40,6 +45,8 @@ import org.jspecify.annotations.Nullable;
  */
 public class SchematicBrowserScreen extends Screen {
     private static final int DIR_COLOR = 0xFFFFE070;
+    private static final int ROW_HEIGHT = 28;
+    private static final int ICON = 24;
     private static final int DETAIL_COLOR = 0xFF909090;
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
     /** File info is read off-thread once per file and kept for the session. */
@@ -54,6 +61,7 @@ public class SchematicBrowserScreen extends Screen {
     private StringWidget pathLabel;
     private StringWidget infoLabel;
     private Button loadButton;
+    private Button uploadButton;
 
     public SchematicBrowserScreen(@Nullable Screen parent) {
         super(Component.translatable("slopmatica.browser.title"));
@@ -83,6 +91,12 @@ public class SchematicBrowserScreen extends Screen {
         infoLabel = footer.addChild(new StringWidget(Math.min(width - 20, 400), 9, Component.empty(), font));
         LinearLayout buttons = footer.addChild(LinearLayout.horizontal().spacing(8));
         loadButton = buttons.addChild(Button.builder(Component.translatable("slopmatica.browser.load"), b -> activate(list.getSelected())).width(100).build());
+        uploadButton = buttons.addChild(Button.builder(Component.translatable("slopmatica.browser.upload"), b -> {
+            FileEntry selected = list.getSelected();
+            if (selected != null && selected.kind == Kind.FILE) {
+                CloudSync.INSTANCE.upload(selected.path);
+            }
+        }).width(100).tooltip(Tooltip.create(Component.translatable("slopmatica.browser.upload.tooltip"))).build());
         buttons.addChild(Button.builder(Component.translatable("slopmatica.browser.open_folder"), b -> Blaze3D.openPath(current)).width(100).build());
         buttons.addChild(Button.builder(CommonComponents.GUI_BACK, b -> onClose()).width(100).build());
 
@@ -94,6 +108,26 @@ public class SchematicBrowserScreen extends Screen {
         setInitialFocus(search);
         refresh();
         repositionElements();
+    }
+
+    /** A bigger icon of the selected schematic beside the list, when the window is wide enough. */
+    @Override
+    public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
+        super.extractRenderState(graphics, mouseX, mouseY, a);
+        FileEntry selected = list == null ? null : list.getSelected();
+        if (selected == null || selected.kind != Kind.FILE) {
+            return;
+        }
+        int left = list.getRowRight() + 12;
+        int size = Math.min(SchematicThumbnails.SIZE, Math.min(width - left - 8, layout.getContentHeight() - 16));
+        if (size < 48) {
+            return;
+        }
+        Identifier icon = SchematicThumbnails.INSTANCE.get(selected.path);
+        if (icon != null) {
+            int full = SchematicThumbnails.SIZE;
+            graphics.blit(RenderPipelines.GUI_TEXTURED, icon, left, layout.getHeaderHeight() + 8, 0, 0, size, size, full, full, full, full);
+        }
     }
 
     @Override
@@ -155,6 +189,7 @@ public class SchematicBrowserScreen extends Screen {
 
     private void onSelectionChanged(@Nullable FileEntry entry) {
         loadButton.active = entry != null && entry.kind == Kind.FILE;
+        uploadButton.active = loadButton.active && CloudSync.INSTANCE.loggedIn();
         if (entry == null || entry.kind != Kind.FILE) {
             setLabel(infoLabel, Component.empty());
             return;
@@ -215,7 +250,7 @@ public class SchematicBrowserScreen extends Screen {
 
     private class FileList extends ObjectSelectionList<FileEntry> {
         FileList(Minecraft minecraft) {
-            super(minecraft, SchematicBrowserScreen.this.width, layout.getContentHeight(), layout.getHeaderHeight(), 16);
+            super(minecraft, SchematicBrowserScreen.this.width, layout.getContentHeight(), layout.getHeaderHeight(), ROW_HEIGHT);
         }
 
         @Override
@@ -260,8 +295,16 @@ public class SchematicBrowserScreen extends Screen {
         public void extractContent(GuiGraphicsExtractor graphics, int mouseX, int mouseY, boolean hovered, float a) {
             int y = getContentYMiddle() - 4;
             int detailWidth = font.width(detail);
-            String shown = font.plainSubstrByWidth(label, getContentWidth() - detailWidth - 12);
-            graphics.text(font, shown, getContentX() + 2, y, kind == Kind.FILE ? -1 : DIR_COLOR);
+            int textX = getContentX() + ICON + 6;
+            if (kind == Kind.FILE) {
+                Identifier icon = SchematicThumbnails.INSTANCE.get(path);
+                if (icon != null) {
+                    int size = SchematicThumbnails.SIZE;
+                    graphics.blit(RenderPipelines.GUI_TEXTURED, icon, getContentX() + 1, getContentYMiddle() - ICON / 2, 0, 0, ICON, ICON, size, size, size, size);
+                }
+            }
+            String shown = font.plainSubstrByWidth(label, getContentRight() - textX - detailWidth - 10);
+            graphics.text(font, shown, textX, y, kind == Kind.FILE ? -1 : DIR_COLOR);
             if (!detail.isEmpty()) {
                 graphics.text(font, detail, getContentRight() - detailWidth - 2, y, DETAIL_COLOR);
             }
