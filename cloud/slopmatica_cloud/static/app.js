@@ -2,6 +2,7 @@
 (function () {
   const base = document.body.dataset.base || "";
   const HDR = { "X-Requested-With": "slopmatica" };
+  const SCHEMATIC = /\.(slopmatic|nbt|litematic)$/i;
   const enc = (path) => path.split("/").map(encodeURIComponent).join("/");
   const fileUrl = (path) => base + "/api/files/" + enc(path);
 
@@ -33,7 +34,7 @@
       if (BAD.test(s)) return 'names may not contain <>:"|?*\\';
       if (s !== s.trim() || s.endsWith(".")) return "names may not start/end with spaces or end with '.'";
     }
-    if (!/\.litematic$/i.test(segs[segs.length - 1])) return "only .litematic files are allowed";
+    if (!SCHEMATIC.test(segs[segs.length - 1])) return "only .slopmatic, .nbt and .litematic files are allowed";
     return null;
   }
   const normFolder = (f) => f.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
@@ -88,7 +89,8 @@
       if (to === null) return;
       to = normFolder(to);
       if (!to || to === path) return;
-      if (!/\.litematic$/i.test(to)) to += ".litematic";
+      // Keep the original format's extension if the new name has none.
+      if (!SCHEMATIC.test(to)) to += path.match(SCHEMATIC)[0];
       const err = checkPath(to);
       if (err) { alert("Invalid name: " + err); return; }
       const r = await fetch(base + "/api/files/move", {

@@ -9,6 +9,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import org.jspecify.annotations.Nullable;
 import java.util.Set;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 
@@ -32,13 +33,13 @@ public final class Schematic {
     }
 
     public static Schematic load(Path path) throws IOException {
-        return fromRaw(RawLitematic.read(path), path);
+        return fromRaw(SchematicFormats.read(path), path);
     }
 
-    public static Schematic fromRaw(RawLitematic raw, Path source) {
+    public static Schematic fromRaw(RawSchematic raw, Path source) {
         BlockStateParser parser = new BlockStateParser(raw.dataVersion());
         List<Region> regions = new ArrayList<>();
-        for (RawLitematic.Region r : raw.regions()) {
+        for (RawSchematic.Region r : raw.regions()) {
             BlockState[] palette = r.palette().stream().map(parser::parse).toArray(BlockState[]::new);
             regions.add(new Region(r, palette));
         }
@@ -78,7 +79,7 @@ public final class Schematic {
         private final BoundingBox bounds;
         private final long blockCount;
 
-        Region(RawLitematic.Region raw, BlockState[] palette) {
+        Region(RawSchematic.Region raw, BlockState[] palette) {
             this.name = raw.name();
             this.minX = raw.minX();
             this.minY = raw.minY();
@@ -94,7 +95,7 @@ public final class Schematic {
             long count = 0;
             for (long i = 0, n = blocks.size(); i < n; i++) {
                 int id = blocks.get(i);
-                if (id < palette.length && !palette[id].isAir()) {
+                if (id < palette.length && !palette[id].isAir() && !palette[id].is(Blocks.STRUCTURE_VOID)) {
                     count++;
                 }
             }

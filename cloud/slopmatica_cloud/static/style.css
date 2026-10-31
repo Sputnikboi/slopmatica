@@ -102,3 +102,5 @@ input:focus, select:focus, .btn:focus-visible, .chip:focus-visible { outline: 2p
   .hero h1 { font-size: 23px; }
 }
 @media (max-width: 360px) { .grid { grid-template-columns: 1fr; } }
+
+.name .ext { font-weight: normal; font-size: 0.75em; opacity: 0.6; }

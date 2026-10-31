@@ -1,4 +1,4 @@
-"""Slopmatica Cloud: per-Minecraft-account storage for .litematic schematics.
+"""Slopmatica Cloud: per-Minecraft-account storage for schematics (.slopmatic, .nbt, .litematic).
 
 Identity comes from Mojang's session server (the same handshake a Minecraft
 server does), so there are no passwords. See README.md for the API.
@@ -120,6 +120,10 @@ class ApiError(Exception):
         self.payload = {"error": error, **extra}
 
 
+# The formats the Slopmatica mod reads: its own, vanilla structure files, Litematica's.
+SCHEMATIC_EXTENSIONS = (".slopmatic", ".nbt", ".litematic")
+
+
 def validate_path(path: str) -> str:
     """Validate a user-relative schematic path; return it unchanged or raise ApiError(400)."""
     def bad(why: str) -> ApiError:
@@ -147,11 +151,11 @@ def validate_path(path: str) -> str:
             raise bad('control characters and <>:"|?* are not allowed')
         if seg != seg.strip() or seg.endswith("."):
             raise bad("segments may not start/end with whitespace or end with '.'")
-    if not segments[-1].lower().endswith(".litematic"):
-        raise bad("must end in .litematic")
+    if not segments[-1].lower().endswith(SCHEMATIC_EXTENSIONS):
+        raise bad("must end in " + ", ".join(SCHEMATIC_EXTENSIONS))
     for seg in segments[:-1]:
-        if seg.lower().endswith(".litematic"):
-            raise bad("folder names may not end in .litematic")
+        if seg.lower().endswith(SCHEMATIC_EXTENSIONS):
+            raise bad("folder names may not end in a schematic extension")
     return path
 
 
@@ -749,7 +753,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 f.flush()
                 os.fsync(f.fileno())
             if not head.startswith(GZIP_MAGIC):
-                raise ApiError(400, "not a gzip file (.litematic files are gzipped NBT)")
+                raise ApiError(400, "not a gzip file (every schematic format is gzipped NBT)")
             if expected is not None and expected != digest:
                 raise ApiError(400, "sha256 mismatch", expected=expected, actual=digest)
             with store.lock:
@@ -847,7 +851,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         entries = []
         for f in files:
             folder, _, name = f.path.rpartition("/")
-            entries.append({"f": f, "folder": folder, "name": name, "stem": name[: -len(".litematic")]})
+            ext = next(e for e in SCHEMATIC_EXTENSIONS if name.lower().endswith(e))
+            entries.append({"f": f, "folder": folder, "name": name, "stem": name[: -len(ext)], "ext": ext})
         folders = sorted({e["folder"] for e in entries if e["folder"]}, key=str.lower)
         pct = 0.0 if not quota else min(100.0, used * 100.0 / quota)
         return render(

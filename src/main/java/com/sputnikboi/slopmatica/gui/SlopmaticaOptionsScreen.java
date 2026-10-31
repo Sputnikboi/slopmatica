@@ -6,6 +6,7 @@ import java.util.function.Consumer;
 import net.minecraft.client.Minecraft;
 import com.mojang.serialization.Codec;
 import com.sputnikboi.slopmatica.build.PlacementBuilder;
+import com.sputnikboi.slopmatica.schematic.SchematicFormats;
 import java.util.List;
 import java.util.Locale;
 import net.minecraft.client.OptionInstance;
@@ -38,6 +39,8 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
             toggle("slopmatica.options.show_ghosts", c.showGhosts, v -> c.showGhosts = v, false),
             slider("slopmatica.options.ghost_opacity", 5, 100, Math.round(c.ghostOpacity * 100), "%", v -> c.ghostOpacity = v / 100.0F, false)
         );
+
+        list.addSmall(toggle("slopmatica.options.block_info", c.blockInfo, v -> c.blockInfo = v, false));
 
         list.addHeader(Component.translatable("slopmatica.options.outlines"));
         list.addSmall(
@@ -77,6 +80,13 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
             new OptionInstance.Enum<>(List.of(PlacementBuilder.Replace.values()), Codec.STRING.xmap(PlacementBuilder.Replace::valueOf, Enum::name)),
             c.pasteReplace,
             v -> c.pasteReplace = v
+        ), new OptionInstance<>(
+            "slopmatica.options.copy_format",
+            v -> Tooltip.create(Component.translatable("slopmatica.options.copy_format." + v.name().toLowerCase(Locale.ROOT) + ".tooltip")),
+            (caption, v) -> Component.literal(v.extension),
+            new OptionInstance.Enum<>(List.of(SchematicFormats.values()), Codec.STRING.xmap(SchematicFormats::valueOf, Enum::name)),
+            c.copyFormat,
+            v -> c.copyFormat = v
         ));
     }
 

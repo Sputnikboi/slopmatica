@@ -391,7 +391,7 @@ public final class SchematicThumbnails {
                 int id = region.paletteIndexAt(pos.getX(), pos.getY(), pos.getZ());
                 if (id >= 0) {
                     BlockState state = region.palette()[id];
-                    if (!state.isAir()) {
+                    if (!state.isAir() && !state.is(Blocks.STRUCTURE_VOID)) {
                         return state;
                     }
                 }

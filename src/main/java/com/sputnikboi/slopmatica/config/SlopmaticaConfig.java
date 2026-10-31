@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParseException;
 import com.sputnikboi.slopmatica.build.PlacementBuilder;
+import com.sputnikboi.slopmatica.schematic.SchematicFormats;
 import com.sputnikboi.slopmatica.verify.BlockStatus;
 import java.io.IOException;
 import java.io.Reader;
@@ -34,10 +35,14 @@ public final class SlopmaticaConfig {
     /** Multiplier on {@code HologramRenderer.BASE_LINE_WIDTH}, half of vanilla's block outline. */
     public float outlineWidth = 1.0F;
     public boolean fadeOutlines = true;
+    /** Top-right panel naming the schematic block under the crosshair and what is wrong with it. */
+    public boolean blockInfo = true;
     /** Survival/adventure: getting hurt drops you out of the placement view, back to your body. */
     public boolean exitViewWhenHurt = true;
     /** The placement view's camera bumps into blocks instead of flying through them. */
     public boolean viewCollision = true;
+    /** The file format copies are saved in. */
+    public SchematicFormats copyFormat = SchematicFormats.SLOPMATIC;
     /** What pasting into the world may overwrite. */
     public PlacementBuilder.Replace pasteReplace = PlacementBuilder.Replace.NONE;
     public int fadeStart = 24;
@@ -91,6 +96,9 @@ public final class SlopmaticaConfig {
         outlineWidth = Math.clamp(outlineWidth, 0.01F, 4.0F);
         fadeStart = Math.clamp(fadeStart, 4, 256);
         fadeEnd = Math.clamp(fadeEnd, fadeStart + 4, 260);
+        if (copyFormat == null) {
+            copyFormat = SchematicFormats.SLOPMATIC;
+        }
         if (pasteReplace == null) {
             pasteReplace = PlacementBuilder.Replace.NONE;
         }

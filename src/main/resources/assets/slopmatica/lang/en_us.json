@@ -80,7 +80,7 @@
   "slopmatica.keys.title": "Slopmatica Key Binds",
   "slopmatica.keys.reset": "Reset Slopmatica Keys",
   "slopmatica.options.keybinds": "Key Binds...",
-  "slopmatica.options.paste": "Pasting (Creative)",
+  "slopmatica.options.paste": "Copy & Paste",
   "slopmatica.options.paste_replace": "Replace",
   "slopmatica.options.paste_replace.none": "Only Air",
   "slopmatica.options.paste_replace.none.tooltip": "Pasting only fills empty space; blocks already in the world stay.",
@@ -133,5 +133,16 @@
   "slopmatica.options.exit_view_when_hurt": "Leave When Hurt",
   "slopmatica.options.exit_view_when_hurt.tooltip": "In survival and adventure, taking damage closes the placement view so you can deal with whatever is hurting you. Creative is never affected.",
   "slopmatica.options.view_collision": "Camera Collision",
-  "slopmatica.options.view_collision.tooltip": "The placement view's camera bumps into blocks like you do. Turn off to fly through walls (noclip). Ghost blocks never block it."
+  "slopmatica.options.view_collision.tooltip": "The placement view's camera bumps into blocks like you do. Turn off to fly through walls (noclip). Ghost blocks never block it.",
+  "slopmatica.options.copy_format": "Save Copies As",
+  "slopmatica.options.copy_format.slopmatic.tooltip": "Slopmatica's own format: small files, fast to load. Recommended.",
+  "slopmatica.options.copy_format.nbt.tooltip": "Vanilla structure files, for structure blocks and /place template. Much bigger files for large builds.",
+  "slopmatica.options.copy_format.litematic.tooltip": "Litematica's format, for sharing with Litematica users.",
+  "slopmatica.info.missing": "Missing",
+  "slopmatica.info.match": "Correct",
+  "slopmatica.info.variant": "Wrong state",
+  "slopmatica.info.wrong": "Wrong block",
+  "slopmatica.info.placed": "Placed: %s",
+  "slopmatica.options.block_info": "Block Info Panel",
+  "slopmatica.options.block_info.tooltip": "Top right: the schematic block under your crosshair, its status, and for yellow and red blocks exactly what differs (placed → wanted)."
 }

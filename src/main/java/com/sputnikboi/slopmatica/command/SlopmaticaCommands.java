@@ -14,6 +14,7 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.sputnikboi.slopmatica.SlopmaticaActions;
+import com.sputnikboi.slopmatica.schematic.SchematicFormats;
 import com.sputnikboi.slopmatica.build.Clipboard;
 import com.sputnikboi.slopmatica.build.PlacementBuilder;
 import com.sputnikboi.slopmatica.build.Selection;
@@ -154,7 +155,9 @@ public final class SlopmaticaCommands {
 
     private static int load(FabricClientCommandSource source, String file) {
         Path dir = SlopmaticaActions.schematicsDir();
-        for (String candidate : new String[] {file, file + ".litematic"}) {
+        List<String> candidates = new java.util.ArrayList<>(List.of(file));
+        SchematicFormats.EXTENSIONS.forEach(ext -> candidates.add(file + ext));
+        for (String candidate : candidates) {
             Path path = dir.resolve(candidate).normalize();
             if (Files.isRegularFile(path)) {
                 SlopmaticaActions.load(path, source.getPlayer().blockPosition(), SlopmaticaActions::chat);
@@ -199,7 +202,7 @@ public final class SlopmaticaCommands {
     private static List<String> listSchematicFiles() {
         Path dir = SlopmaticaActions.schematicsDir();
         try (Stream<Path> files = Files.walk(dir, 4)) {
-            return files.filter(p -> p.toString().endsWith(".litematic") && Files.isRegularFile(p))
+            return files.filter(SchematicFormats::isSchematic)
                 .map(p -> dir.relativize(p).toString().replace('\\', '/'))
                 .sorted()
                 .toList();

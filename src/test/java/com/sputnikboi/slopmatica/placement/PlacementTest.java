@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import com.sputnikboi.slopmatica.SlopmaticaActions;
 import com.sputnikboi.slopmatica.schematic.PackedIntArrayAccess;
-import com.sputnikboi.slopmatica.schematic.RawLitematic;
+import com.sputnikboi.slopmatica.schematic.LitematicFormat;
 import com.sputnikboi.slopmatica.schematic.Schematic;
 import com.sputnikboi.slopmatica.verify.BlockMatcher;
 import com.sputnikboi.slopmatica.verify.BlockStatus;
@@ -80,7 +80,7 @@ class PlacementTest {
         regions.put("main", region);
         root.put("Regions", regions);
         try {
-            return Schematic.fromRaw(RawLitematic.parse(root, "asym"), Path.of("asym.litematic"));
+            return Schematic.fromRaw(LitematicFormat.parse(root, "asym"), Path.of("asym.litematic"));
         } catch (java.io.IOException e) {
             throw new AssertionError(e);
         }
@@ -163,7 +163,7 @@ class PlacementTest {
         root.putInt("MinecraftDataVersion", 3578);
         root.put("Regions", regions);
 
-        Schematic schematic = Schematic.fromRaw(RawLitematic.parse(root, "old"), Path.of("old.litematic"));
+        Schematic schematic = Schematic.fromRaw(LitematicFormat.parse(root, "old"), Path.of("old.litematic"));
         assertEquals(Blocks.SHORT_GRASS, schematic.regions().getFirst().palette()[1].getBlock());
         assertEquals(0, schematic.unknownBlocks().size());
     }

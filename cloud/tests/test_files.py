@@ -23,6 +23,9 @@ GOOD = [
     "with space/and-dash_ünïcode.litematic",
     "/".join(["d"] * 7) + "/x.litematic",  # 8 segments
     "a" * 90 + ".litematic",  # 100-char segment
+    "copy.slopmatic",
+    "structures/tower.nbt",
+    "Mixed.NBT",
 ]
 BAD = [
     "",
@@ -48,6 +51,10 @@ BAD = [
     " lead.litematic",
     "trail /a.litematic",
     "dot./a.litematic",
+    "a.schematic",
+    "a.nbt.txt",
+    "folder.nbt/inner.slopmatic",
+    ".slopmatic",
 ]
 
 
@@ -338,3 +345,11 @@ def test_reconcile_on_startup(make_client, mojang, data_dir):
     assert set(by_path) == {"keep.litematic", "new/dropped.litematic"}
     assert by_path["new/dropped.litematic"]["sha256"] == hashlib.sha256(gz(b"dropped")).hexdigest()
     assert listing["usedBytes"] == len(gz(b"k")) + len(gz(b"dropped"))
+
+
+@pytest.mark.parametrize("name", ["copy.slopmatic", "structures/tower.nbt"])
+def test_other_formats_round_trip(client, alice, name):
+    body = gz(b"blocks")
+    assert client.put("/api/files/" + name, content=body, headers=alice).status_code == 201
+    assert client.get("/api/files/" + name, headers=alice).content == body
+    assert name in [f["path"] for f in client.get("/api/files", headers=alice).json()["files"]]

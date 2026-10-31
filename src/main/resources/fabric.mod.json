@@ -3,7 +3,7 @@
   "id": "slopmatica",
   "version": "${version}",
   "name": "Slopmatica",
-  "description": "Schematic holograms for building: loads Litematica .litematic files and shows what is missing, correct, or wrong.",
+  "description": "Schematic holograms for building: shows what is missing, correct, or wrong. Reads its own .slopmatic files, vanilla .nbt structures and Litematica .litematic files.",
   "authors": ["Sputnikboi"],
   "license": "All-Rights-Reserved",
   "environment": "client",

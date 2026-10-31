@@ -14,7 +14,7 @@ import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
 import org.junit.jupiter.api.Test;
 
-class RawLitematicTest {
+class LitematicFormatTest {
 
     static long[] pack(int[] values, int bits) {
         return PackedIntArrayAccess.pack(values, bits);
@@ -50,8 +50,8 @@ class RawLitematicTest {
         ids[(1 * sz + 1) * sx + 2] = 1; // container (2,1,1) -> schematic (5,4,7)
         CompoundTag root = litematic("test", vec(5, 4, 6), vec(-3, -2, 2), List.of("minecraft:air", "minecraft:stone"), ids);
 
-        RawLitematic raw = RawLitematic.parse(root, "fallback");
-        RawLitematic.Region region = raw.regions().getFirst();
+        RawSchematic raw = LitematicFormat.parse(root, "fallback");
+        RawSchematic.Region region = raw.regions().getFirst();
         assertEquals(3, region.minX());
         assertEquals(3, region.minY());
         assertEquals(6, region.minZ());
@@ -77,9 +77,9 @@ class RawLitematicTest {
         for (Path file : files) {
             CompoundTag root = NbtIo.readCompressed(file, NbtAccounter.unlimitedHeap());
             int expected = root.getCompoundOrEmpty("Metadata").getIntOr("TotalBlocks", -1);
-            RawLitematic raw = RawLitematic.parse(root, "x");
+            RawSchematic raw = LitematicFormat.parse(root, "x");
             long counted = 0;
-            for (RawLitematic.Region r : raw.regions()) {
+            for (RawSchematic.Region r : raw.regions()) {
                 for (long i = 0; i < r.volume(); i++) {
                     String name = r.palette().get(r.blocks().get(i)).getStringOr("Name", "");
                     if (!name.equals("minecraft:air")) {

@@ -2,6 +2,8 @@ package com.sputnikboi.slopmatica.gui;
 
 import com.mojang.blaze3d.Blaze3D;
 import com.sputnikboi.slopmatica.SlopmaticaActions;
+import com.sputnikboi.slopmatica.schematic.SchematicFormats;
+import net.minecraft.nbt.ListTag;
 import com.sputnikboi.slopmatica.cloud.CloudSync;
 import net.minecraft.client.gui.components.Tooltip;
 import com.sputnikboi.slopmatica.render.SchematicThumbnails;
@@ -204,7 +206,7 @@ public class SchematicBrowserScreen extends Screen {
     }
 
     private static boolean isSchematic(Path p) {
-        return p.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".litematic") && Files.isRegularFile(p);
+        return SchematicFormats.isSchematic(p);
     }
 
     private void onSelectionChanged(@Nullable FileEntry entry) {
@@ -233,18 +235,58 @@ public class SchematicBrowserScreen extends Screen {
         });
     }
 
-    /** Litematica stores size, block count and author in the file's Metadata tag. */
+    /** Size, block count and author, from each format's header where it keeps one. */
     private static Component readInfo(Path path) {
         try {
-            CompoundTag meta = NbtIo.readCompressed(path, NbtAccounter.unlimitedHeap()).getCompoundOrEmpty("Metadata");
-            CompoundTag size = meta.getCompoundOrEmpty("EnclosingSize");
-            String author = meta.getStringOr("Author", "");
+            CompoundTag root = NbtIo.readCompressed(path, NbtAccounter.unlimitedHeap());
+            int sx, sy, sz, regions = 1;
+            long blocks;
+            String author;
+            switch (SchematicFormats.of(path)) {
+                case SLOPMATIC -> {
+                    int[] size = root.getIntArray("Size").orElse(new int[3]);
+                    sx = size[0];
+                    sy = size[1];
+                    sz = size[2];
+                    blocks = root.getLongOr("BlockCount", 0);
+                    regions = root.getListOrEmpty("Regions").size();
+                    author = root.getStringOr("Author", "");
+                }
+                case NBT -> {
+                    ListTag size = root.getListOrEmpty("size");
+                    sx = size.getIntOr(0, 0);
+                    sy = size.getIntOr(1, 0);
+                    sz = size.getIntOr(2, 0);
+                    // Count stored blocks that aren't air.
+                    ListTag palette = root.getListOrEmpty("palette");
+                    ListTag list = root.getListOrEmpty("blocks");
+                    long n = 0;
+                    for (int i = 0; i < list.size(); i++) {
+                        CompoundTag state = palette.getCompoundOrEmpty(list.getCompoundOrEmpty(i).getIntOr("state", 0));
+                        String name = state.getStringOr("Name", state.getStringOr("id", ""));
+                        if (!name.endsWith(":air") && !name.endsWith("cave_air") && !name.endsWith("void_air")) {
+                            n++;
+                        }
+                    }
+                    blocks = n;
+                    author = root.getStringOr("author", "");
+                }
+                default -> {
+                    CompoundTag meta = root.getCompoundOrEmpty("Metadata");
+                    CompoundTag size = meta.getCompoundOrEmpty("EnclosingSize");
+                    sx = size.getIntOr("x", 0);
+                    sy = size.getIntOr("y", 0);
+                    sz = size.getIntOr("z", 0);
+                    blocks = meta.getIntOr("TotalBlocks", 0);
+                    regions = meta.getIntOr("RegionCount", 1);
+                    author = meta.getStringOr("Author", "");
+                }
+            }
             String text = String.format(Locale.ROOT, "%d x %d x %d  ·  %,d blocks  ·  %d region%s%s",
-                size.getIntOr("x", 0), size.getIntOr("y", 0), size.getIntOr("z", 0), meta.getIntOr("TotalBlocks", 0),
-                meta.getIntOr("RegionCount", 1), meta.getIntOr("RegionCount", 1) == 1 ? "" : "s", author.isBlank() ? "" : "  ·  by " + author);
+                Math.abs(sx), Math.abs(sy), Math.abs(sz), blocks, regions, regions == 1 ? "" : "s", author.isBlank() ? "" : "  ·  by " + author);
             return Component.literal(text).withColor(DETAIL_COLOR);
         } catch (IOException | RuntimeException e) {
-            return Component.literal("Not a readable .litematic file").withColor(SlopmaticaActions.ERROR);
+            return Component.literal("Not a readable schematic file").withColor(SlopmaticaActions.ERROR);
         }
     }
 

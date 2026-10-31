@@ -3,6 +3,7 @@ package com.sputnikboi.slopmatica.placement;
 import com.sputnikboi.slopmatica.schematic.Schematic;
 import java.util.List;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
@@ -150,6 +151,10 @@ public final class Placement {
                 int id = regions.get(i).paletteIndexAt(x, y, z);
                 if (id >= 0) {
                     BlockState state = palettes[i][id];
+                    if (state.is(Blocks.STRUCTURE_VOID)) {
+                        // Vanilla's "leave whatever is there" (unlisted .nbt positions).
+                        continue;
+                    }
                     if (!state.isAir()) {
                         return state;
                     }

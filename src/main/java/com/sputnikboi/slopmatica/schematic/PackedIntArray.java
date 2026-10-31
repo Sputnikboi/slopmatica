@@ -2,13 +2,19 @@ package com.sputnikboi.slopmatica.schematic;
 
 /**
  * Fixed-width integers packed back to back into a long[], the layout Litematica uses for
- * {@code BlockStates}. Unlike vanilla's chunk storage, an entry may straddle two longs.
+ * {@code BlockStates}, and how every format's blocks are held in memory once loaded. Unlike
+ * vanilla's chunk storage, an entry may straddle two longs.
  */
 public final class PackedIntArray {
     private final long[] data;
     private final int bits;
     private final long mask;
     private final long size;
+
+    /** All zeros, ready to {@link #set}. */
+    public PackedIntArray(int bits, long size) {
+        this(bits, size, new long[(int) ((size * bits + 63) / 64)]);
+    }
 
     public PackedIntArray(int bits, long size, long[] data) {
         if (bits < 1 || bits > 32) {
@@ -38,6 +44,32 @@ public final class PackedIntArray {
             return (int) (data[start] >>> offset & mask);
         }
         return (int) ((data[start] >>> offset | data[end] << (64 - offset)) & mask);
+    }
+
+    public void set(long index, int value) {
+        long v = value & mask;
+        long bitIndex = index * bits;
+        int start = (int) (bitIndex >>> 6);
+        int end = (int) ((bitIndex + bits - 1) >>> 6);
+        int offset = (int) (bitIndex & 63);
+        data[start] = data[start] & ~(mask << offset) | v << offset;
+        if (start != end) {
+            int spill = 64 - offset;
+            data[end] = data[end] & ~(mask >>> spill) | v >>> spill;
+        }
+    }
+
+    public long[] data() {
+        return data;
+    }
+
+    /** Packs values end to end, straddling long boundaries (Litematica's layout). */
+    public static long[] pack(int[] values, int bits) {
+        PackedIntArray out = new PackedIntArray(bits, values.length);
+        for (int i = 0; i < values.length; i++) {
+            out.set(i, values[i]);
+        }
+        return out.data;
     }
 
     public long size() {

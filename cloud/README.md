@@ -1,6 +1,6 @@
 # Slopmatica Cloud
 
-A small self-hosted service that stores `.litematic` schematics per Minecraft account,
+A small self-hosted service that stores schematics (`.slopmatic`, vanilla `.nbt`, `.litematic`) per Minecraft account,
 for the Slopmatica mod's cloud autosync, plus a website for browsing, uploading,
 renaming and deleting them.
 
@@ -60,11 +60,11 @@ they get 403. Bearer requests don't need the header.
 
 ### Files
 
-Paths are `/`-separated and relative to the account's space. They must end in `.litematic`
-and may use at most 8 segments, 100 characters per segment and 300 characters in total.
+Paths are `/`-separated and relative to the account's space. They must end in `.slopmatic`,
+`.nbt` or `.litematic` and may use at most 8 segments, 100 characters per segment and 300 characters in total.
 These are rejected with 400: empty segments, segments starting with `.`, backslashes,
 control characters, `<>:"|?*`, segments with leading or trailing whitespace or a trailing
-`.`, and folder names ending in `.litematic`.
+`.`, and folder names ending in one of those extensions.
 
 | Method & path | Result |
 |---|---|

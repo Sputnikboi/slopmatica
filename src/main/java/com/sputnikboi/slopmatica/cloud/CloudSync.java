@@ -9,6 +9,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.sputnikboi.slopmatica.SlopmaticaActions;
 import com.sputnikboi.slopmatica.render.SchematicThumbnails;
+import com.sputnikboi.slopmatica.schematic.SchematicFormats;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -213,7 +214,7 @@ public final class CloudSync {
                     Files.createDirectories(dir);
                     Path target = dir.resolve(file.getFileName().toString());
                     for (int i = 2; Files.exists(target) && !sameContent(target, file); i++) {
-                        target = dir.resolve(stripExtension(file.getFileName().toString()) + " (" + i + ").litematic");
+                        target = dir.resolve(SchematicFormats.baseName(file) + " (" + i + ")" + SchematicFormats.of(file).extension);
                     }
                     Files.copy(file, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
                 }
@@ -294,7 +295,7 @@ public final class CloudSync {
                 } else {
                     // Both changed: keep the cloud's, save ours beside it (it uploads next sync).
                     Path ours = dir.resolve(path);
-                    String conflict = stripExtension(ours.getFileName().toString()) + " (conflict " + LocalDateTime.now().format(STAMP) + ").litematic";
+                    String conflict = SchematicFormats.baseName(ours) + " (conflict " + LocalDateTime.now().format(STAMP) + ")" + SchematicFormats.of(ours).extension;
                     Files.move(ours, ours.resolveSibling(conflict));
                     download(dir, path, r);
                     state.synced.put(path, r);
@@ -398,8 +399,7 @@ public final class CloudSync {
         Map<String, SyncState.Hash> hashes = new HashMap<>();
         try (Stream<Path> files = Files.walk(dir, 8)) {
             for (Path p : (Iterable<Path>) files::iterator) {
-                String name = p.getFileName().toString();
-                if (!Files.isRegularFile(p) || !name.toLowerCase(Locale.ROOT).endsWith(".litematic")) {
+                if (!SchematicFormats.isSchematic(p)) {
                     continue;
                 }
                 String rel = dir.relativize(p).toString().replace('\\', '/');
@@ -507,9 +507,6 @@ public final class CloudSync {
         return Files.size(a) == Files.size(b) && sha256(a).equals(sha256(b));
     }
 
-    private static String stripExtension(String name) {
-        return name.toLowerCase(Locale.ROOT).endsWith(".litematic") ? name.substring(0, name.length() - ".litematic".length()) : name;
-    }
 
     private static String message(Exception e) {
         String m = e.getMessage();

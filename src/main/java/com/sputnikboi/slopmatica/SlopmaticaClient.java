@@ -9,6 +9,7 @@ import com.sputnikboi.slopmatica.placement.PlacementManager;
 import com.sputnikboi.slopmatica.placement.PlacementStore;
 import com.sputnikboi.slopmatica.render.HologramRenderer;
 import com.sputnikboi.slopmatica.render.SchematicThumbnails;
+import com.sputnikboi.slopmatica.verify.BlockInfoHud;
 import com.sputnikboi.slopmatica.view.PlacementView;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -42,6 +43,8 @@ public final class SlopmaticaClient implements ClientModInitializer {
         SlopmaticaKeys.register();
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "placement_view"), (graphics, delta) -> PlacementView.INSTANCE.extractHud(graphics));
         LevelRenderEvents.COLLECT_SUBMITS.register(Selection.INSTANCE::submit);
+        HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "block_info"), (graphics, delta) -> BlockInfoHud.INSTANCE.extract(graphics));
+        ClientTickEvents.END_CLIENT_TICK.register(BlockInfoHud.INSTANCE::tick);
         ClientTickEvents.END_CLIENT_TICK.register(PlacementBuilder.INSTANCE::tick);
         ClientTickEvents.END_CLIENT_TICK.register(SchematicThumbnails.INSTANCE::tick);
         ClientTickEvents.END_CLIENT_TICK.register(mc -> CloudSync.INSTANCE.tick());

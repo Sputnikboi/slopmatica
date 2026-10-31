@@ -4,7 +4,9 @@ import com.sputnikboi.slopmatica.SlopmaticaActions;
 import com.sputnikboi.slopmatica.SlopmaticaKeys;
 import com.sputnikboi.slopmatica.placement.Placement;
 import com.sputnikboi.slopmatica.placement.PlacementManager;
-import com.sputnikboi.slopmatica.schematic.LitematicWriter;
+import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
+import com.sputnikboi.slopmatica.schematic.BlockVolume;
+import com.sputnikboi.slopmatica.schematic.SchematicFormats;
 import com.sputnikboi.slopmatica.schematic.Schematic;
 import com.sputnikboi.slopmatica.view.PlacementView;
 import java.io.IOException;
@@ -39,7 +41,8 @@ import net.minecraft.world.phys.HitResult;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Copy and paste. Copy saves the selection as a real .litematic in {@code schematics/copies/},
+ * Copy and paste. Copy saves the selection as a real schematic file in {@code schematics/copies/}
+ * (format chosen in Options, .slopmatic by default),
  * so a copy survives restarts, shows up in the browser and syncs like any schematic. Paste loads
  * the newest copy as a placement under the crosshair and opens the placement view carrying it;
  * from there "Paste into world" builds it (creative only, see {@link PlacementBuilder}).
@@ -112,11 +115,12 @@ public final class Clipboard {
         Map<Long, CompoundTag> tiles = blockEntityData(mc, level, blockEntities, box);
 
         String name = "copy " + LocalDateTime.now().format(STAMP);
-        Path file = copiesDir().resolve(name.replace(' ', '_') + ".litematic");
-        String author = mc.player.getGameProfile().name();
+        SchematicFormats format = SlopmaticaConfig.get().copyFormat;
+        Path file = copiesDir().resolve(name.replace(' ', '_') + format.extension);
+        BlockVolume blocks = new BlockVolume(name, mc.player.getGameProfile().name(), sx, sy, sz, palette, indices, tiles);
         CompletableFuture.runAsync(() -> {
             try {
-                LitematicWriter.write(file, name, author, sx, sy, sz, palette, indices, tiles);
+                format.write(file, blocks);
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
@@ -201,7 +205,7 @@ public final class Clipboard {
 
     private static @Nullable Path newestCopy() {
         try (Stream<Path> files = Files.list(copiesDir())) {
-            return files.filter(p -> p.toString().endsWith(".litematic"))
+            return files.filter(SchematicFormats::isSchematic)
                 .max(Comparator.comparingLong(p -> p.toFile().lastModified())).orElse(null);
         } catch (IOException e) {
             return null;
