@@ -9,6 +9,7 @@
     "KeyBindsListMixin",
     "KeyBindsScreenAccessor",
     "MinecraftEasyPlaceMixin",
+    "MinecraftQuickMenuMixin",
     "RenderSetupAccessor",
     "RenderTypeAccessor",
     "TextureBindingAccessor",

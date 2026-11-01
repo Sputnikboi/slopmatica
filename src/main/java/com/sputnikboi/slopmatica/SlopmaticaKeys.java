@@ -42,6 +42,8 @@ public final class SlopmaticaKeys {
 
     private static final KeyMapping OPEN_MENU = register(MAIN, "open_menu", InputConstants.KEY_M);
     public static final KeyMapping PLACEMENT_VIEW = register(MAIN, "placement_view", InputConstants.KEY_K);
+    /** J is unused in vanilla. */
+    public static final KeyMapping QUICK_MENU = register(MAIN, "quick_menu", InputConstants.KEY_J);
     private static final KeyMapping LOAD_SCHEMATIC = register(MAIN, "load_schematic");
     private static final KeyMapping TOGGLE_HOLOGRAM = register(MAIN, "toggle_hologram");
     private static final KeyMapping TOGGLE_OUTLINES = register(MAIN, "toggle_outlines");
@@ -196,6 +198,10 @@ public final class SlopmaticaKeys {
         while (pressed(PLAN_INVENTORY)) {
             com.sputnikboi.slopmatica.plan.InventoryPlanner.INSTANCE.calculate(mc);
         }
+        while (pressed(QUICK_MENU)) {
+            com.sputnikboi.slopmatica.quick.QuickMenu.INSTANCE.toggle(mc);
+        }
+        com.sputnikboi.slopmatica.quick.QuickMenu.INSTANCE.tickBindings(mc);
         while (pressed(PLACEMENT_VIEW)) {
             PlacementView.INSTANCE.toggle(mc);
         }

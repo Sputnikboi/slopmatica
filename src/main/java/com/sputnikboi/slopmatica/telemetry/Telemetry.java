@@ -55,7 +55,8 @@ public final class Telemetry {
     private static final long REPORT_EVERY_MS = 30 * 60 * 1000;
     private static final int MAX_QUEUED = 20;
     /** Settings that are personal or meaningless as statistics. */
-    private static final Set<String> NOT_REPORTED = Set.of("sharedFolder", "welcomeShown", "telemetry", "planIgnored", "controlsKeys");
+    private static final Set<String> NOT_REPORTED = Set.of("sharedFolder", "welcomeShown", "telemetry", "planIgnored", "controlsKeys",
+        "quickMenu", "quickToggles", "quickKeys", "cloudProfile", "cloudProfilePulled", "profilePromptShown");
 
     private final HttpClient http = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(Duration.ofSeconds(10)).build();
     /** Frame times while builds were shown, in 1 ms buckets (the last one is "100 ms or more"). */
@@ -208,6 +209,14 @@ public final class Telemetry {
         JsonObject used = new JsonObject();
         keys.forEach(used::addProperty);
         r.add("keys", used);
+        // The Quick Menu layout, only when changed from the default: which actions people want at hand.
+        java.util.List<String> layout = com.sputnikboi.slopmatica.quick.QuickMenu.layout();
+        if (!layout.equals(com.sputnikboi.slopmatica.quick.QuickAction.DEFAULT_LAYOUT)) {
+            JsonArray quick = new JsonArray();
+            layout.forEach(quick::add);
+            r.add("quickMenu", quick);
+            r.addProperty("quickMode", SlopmaticaConfig.get().quickMode.name());
+        }
         return r;
     }
 

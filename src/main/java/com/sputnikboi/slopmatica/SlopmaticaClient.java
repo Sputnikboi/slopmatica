@@ -19,6 +19,7 @@ import com.sputnikboi.slopmatica.gui.MaterialPanels;
 import com.sputnikboi.slopmatica.spawn.SpawnCheck;
 import com.sputnikboi.slopmatica.gui.WelcomeScreen;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLevelEvents;
@@ -69,6 +70,16 @@ public final class SlopmaticaClient implements ClientModInitializer {
             }
         });
         com.sputnikboi.slopmatica.plan.InventoryOverlay.register();
+        // The Quick Menu reads clicks and E before vanilla does, and takes the hotbar's place while open.
+        ClientTickEvents.START_CLIENT_TICK.register(com.sputnikboi.slopmatica.quick.QuickMenu.INSTANCE::tick);
+        HudElementRegistry.replaceElement(net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements.HOTBAR, hotbar -> (graphics, delta) -> {
+            Minecraft mc = Minecraft.getInstance();
+            if (com.sputnikboi.slopmatica.quick.QuickMenu.INSTANCE.isOpen() && mc.player != null) {
+                com.sputnikboi.slopmatica.quick.QuickMenu.INSTANCE.extractHotbar(graphics, mc);
+            } else {
+                hotbar.extractRenderState(graphics, delta);
+            }
+        });
         var telemetry = com.sputnikboi.slopmatica.telemetry.Telemetry.INSTANCE;
         PlacementManager.INSTANCE.addListener(telemetry::placementsChanged);
         ClientTickEvents.END_CLIENT_TICK.register(mc -> telemetry.tick());
