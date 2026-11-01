@@ -63,6 +63,9 @@ public final class SlopmaticaActions {
                 return;
             }
             Placement placement = PlacementManager.INSTANCE.add(schematic, origin, mc.level.dimension().identifier().toString());
+            // The origin point (by default the middle of the bottom layer) goes where you stand.
+            placement.moveOriginPointTo(origin);
+            PlacementManager.INSTANCE.changed();
             var size = schematic.bounds();
             feedback.accept(prefix().append(String.format(Locale.ROOT, "Placed %s at %d %d %d (%d x %d x %d, %,d blocks)",
                 placement.name(), origin.getX(), origin.getY(), origin.getZ(), size.getXSpan(), size.getYSpan(), size.getZSpan(), schematic.blockCount())));
@@ -104,6 +107,13 @@ public final class SlopmaticaActions {
             parts.add(String.format(Locale.ROOT, "%s (%,d)", e.getKey(), e.getValue().longValue()));
         }
         return String.join(", ", parts);
+    }
+
+    /** Puts the placement's origin point at {@code target} ("move here", /slopmatica move, the position fix). */
+    public static void moveOriginPointTo(Placement p, BlockPos target, Consumer<Component> feedback) {
+        p.moveOriginPointTo(target);
+        PlacementManager.INSTANCE.changed();
+        feedback.accept(prefix().append(String.format(Locale.ROOT, "%s at %d %d %d", p.name(), target.getX(), target.getY(), target.getZ())));
     }
 
     public static void moveTo(Placement p, BlockPos origin, Consumer<Component> feedback) {

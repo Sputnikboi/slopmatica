@@ -77,7 +77,8 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
         list.addSmall(
             toggle("slopmatica.options.view_freecam", c.viewFreecam, v -> c.viewFreecam = v, false),
             toggle("slopmatica.options.view_collision", c.viewCollision, v -> c.viewCollision = v, false),
-            toggle("slopmatica.options.exit_view_when_hurt", c.exitViewWhenHurt, v -> c.exitViewWhenHurt = v, false)
+            toggle("slopmatica.options.exit_view_when_hurt", c.exitViewWhenHurt, v -> c.exitViewWhenHurt = v, false),
+            toggle("slopmatica.options.ignore_recommendations", c.ignoreRecommendations, v -> c.ignoreRecommendations = v, false)
         );
 
         list.addHeader(Component.translatable("slopmatica.options.easy_place"));

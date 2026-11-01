@@ -239,7 +239,7 @@ public final class SlopmaticaKeys {
         Placement p = PlacementManager.INSTANCE.selected().orElse(null);
         while (pressed(MOVE_HERE)) {
             if (p != null && mc.player != null) {
-                SlopmaticaActions.moveTo(p, mc.player.blockPosition(), feedback);
+                SlopmaticaActions.moveOriginPointTo(p, mc.player.blockPosition(), feedback);
             }
         }
         while (pressed(NUDGE_FORWARD)) {

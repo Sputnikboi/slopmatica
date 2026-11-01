@@ -66,7 +66,16 @@ class TestSchematicTool {
         set(palette, indices, sx, sz, 6, 1, 2, b("waxed_copper_block"));
         set(palette, indices, sx, sz, 7, 1, 2, b("weathered_copper"));
         BlockVolume v = new BlockVolume("part2 test", "Slopmatica", sx, sy, sz, palette, indices, tiles, List.of());
-        SchematicFormats.SLOPMATIC.write(Path.of(System.getProperty("slopmatica.testschematic")), v);
+        Path out = Path.of(System.getProperty("slopmatica.testschematic"));
+        SchematicFormats.SLOPMATIC.write(out, v);
+        // Recommendations the build view should complain about.
+        com.sputnikboi.slopmatica.schematic.SchematicMeta meta = new com.sputnikboi.slopmatica.schematic.SchematicMeta();
+        meta.position = new BlockPos(10, -60, 10);
+        meta.rotation = net.minecraft.world.level.block.Rotation.CLOCKWISE_90;
+        meta.biome = "minecraft:desert";
+        meta.minVersion = "1.21";
+        meta.maxVersion = "1.21";
+        meta.write(out);
     }
 
     private static BlockState b(String id) {

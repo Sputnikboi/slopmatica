@@ -46,7 +46,29 @@ public final class Schematic {
     }
 
     public static Schematic load(Path path) throws IOException {
-        return fromRaw(SchematicFormats.read(path), path);
+        Schematic schematic = fromRaw(SchematicFormats.read(path), path);
+        schematic.meta = SchematicMeta.read(path);
+        return schematic;
+    }
+
+    /** Recommendations and origin point, from the file; edited in the schematic settings. */
+    private volatile SchematicMeta meta = new SchematicMeta();
+
+    public SchematicMeta meta() {
+        return meta;
+    }
+
+    public void setMeta(SchematicMeta meta) {
+        this.meta = meta;
+    }
+
+    /** The origin point in schematic coordinates: the file's, or the middle of the bottom layer. */
+    public net.minecraft.core.BlockPos originPoint() {
+        SchematicMeta m = meta;
+        if (m.origin != null) {
+            return m.origin;
+        }
+        return new net.minecraft.core.BlockPos(Math.floorDiv(bounds.minX() + bounds.maxX(), 2), bounds.minY(), Math.floorDiv(bounds.minZ() + bounds.maxZ(), 2));
     }
 
     public static Schematic fromRaw(RawSchematic raw, Path source) {

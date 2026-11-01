@@ -97,9 +97,9 @@ public final class SlopmaticaCommands {
         })));
 
         root.then(literal("move")
-            .then(literal("here").executes(c -> withSelected(c, p -> SlopmaticaActions.moveTo(p, c.getSource().getPlayer().blockPosition(), feedback(c)))))
+            .then(literal("here").executes(c -> withSelected(c, p -> SlopmaticaActions.moveOriginPointTo(p, c.getSource().getPlayer().blockPosition(), feedback(c)))))
             .then(argument("x", integer()).then(argument("y", integer()).then(argument("z", integer()).executes(c -> withSelected(c, p ->
-                SlopmaticaActions.moveTo(p, new BlockPos(getInteger(c, "x"), getInteger(c, "y"), getInteger(c, "z")), feedback(c))))))));
+                SlopmaticaActions.moveOriginPointTo(p, new BlockPos(getInteger(c, "x"), getInteger(c, "y"), getInteger(c, "z")), feedback(c))))))));
 
         LiteralArgumentBuilder<FabricClientCommandSource> nudge = literal("nudge");
         for (Direction d : Direction.values()) {

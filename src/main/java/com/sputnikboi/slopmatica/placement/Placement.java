@@ -90,6 +90,20 @@ public final class Placement {
         rebuild(t.origin, t.rotation, mirror);
     }
 
+    /** Where the schematic's origin point is in the world now. */
+    public BlockPos worldOriginPoint() {
+        BlockPos o = schematic.originPoint();
+        return transform.toWorld(o.getX(), o.getY(), o.getZ());
+    }
+
+    /** Moves the placement so its origin point lands on {@code target}. */
+    public void moveOriginPointTo(BlockPos target) {
+        setOrigin(transform.origin().offset(target.subtract(worldOriginPoint())));
+    }
+
+    /** Warnings about the schematic's recommendations are switched off for this placement. */
+    public boolean ignoreWarnings;
+
     public @Nullable BoundingBox crop() {
         return crop;
     }

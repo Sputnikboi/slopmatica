@@ -93,6 +93,8 @@ public final class SlopmaticaConfig {
     /** The file format copies are saved in. */
     public SchematicFormats copyFormat = SchematicFormats.SLOPMATIC;
     public CornerMode cornerMode = CornerMode.DYNAMIC;
+    /** Don't warn when a placement differs from what its schematic recommends (biome, position...). */
+    public boolean ignoreRecommendations = false;
     /** What pasting into the world may overwrite. */
     public PlacementBuilder.Replace pasteReplace = PlacementBuilder.Replace.NONE;
     /**

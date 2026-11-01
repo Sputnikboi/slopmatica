@@ -97,6 +97,33 @@ public class PlacementViewScreen extends Screen {
     /** The left column: tools, tool actions, layers, builds. Rebuilt whenever one of them changes. */
     private void initLeft(PlacementView view) {
         int x = 6, y = TOP;
+        Placement onBuild = view.placement();
+        if (onBuild != null) {
+            Placement current = onBuild;
+            List<Recommendations.Warning> warnings = Recommendations.of(minecraft, current);
+            y += warnings.size() * 11;
+            for (Recommendations.Warning w : warnings) {
+                if (w.fix() != null) {
+                    addRenderableWidget(Button.builder(w.fixLabel(), b -> {
+                        w.fix().run();
+                        rebuildWidgets();
+                    }).bounds(x, y, LEFT_W, B).build());
+                    y += B + GAP;
+                }
+            }
+            if (!current.schematic().meta().isEmpty()) {
+                addRenderableWidget(Button.builder(Component.translatable(current.ignoreWarnings ? "slopmatica.recommend.show" : "slopmatica.recommend.ignore"), b -> {
+                    current.ignoreWarnings = !current.ignoreWarnings;
+                    com.sputnikboi.slopmatica.placement.PlacementStore.INSTANCE.markDirty();
+                    rebuildWidgets();
+                }).bounds(x, y, LEFT_W, B).tooltip(Tooltip.create(Component.translatable("slopmatica.recommend.ignore.tooltip"))).build());
+                y += B + GAP;
+            }
+            addRenderableWidget(Button.builder(Component.translatable("slopmatica.info.button"),
+                b -> minecraft.gui.setScreen(new com.sputnikboi.slopmatica.gui.SchematicInfoScreen(this, current.schematic().source(), current)))
+                .bounds(x, y, LEFT_W, B).build());
+            y += B + GAP + 4;
+        }
         Tool tool = view.tool();
         addRenderableWidget(Button.builder(Component.translatable("slopmatica.tool.dropdown", tool.label(), toolsOpen ? "▴" : "▾"), b -> {
             toolsOpen = !toolsOpen;
@@ -265,12 +292,14 @@ public class PlacementViewScreen extends Screen {
             case MODIFY -> "Drag a face of the selection to resize it";
             case CROP -> "Drag a face of the orange box to crop the build";
         };
-        PlacementView.drawPanel(graphics, minecraft, List.of(
-            "Placement view: " + p.name() + "  (" + p.transform().origin().toShortString() + ")",
-            hint,
-            "Shift: buttons and keys move 5 blocks",
-            "Right click or Esc: back to flying   " + PlacementView.key(SlopmaticaKeys.PLACEMENT_VIEW) + ": done"
-        ), 4, 4);
+        List<String> lines = new java.util.ArrayList<>();
+        lines.add("Placement view: " + p.name() + "  (" + p.worldOriginPoint().toShortString() + ")");
+        List<Recommendations.Warning> warnings = Recommendations.of(minecraft, p);
+        warnings.forEach(w -> lines.add("⚠ " + w.text().getString()));
+        lines.add(hint);
+        lines.add("Shift: buttons and keys move 5 blocks");
+        lines.add("Right click or Esc: back to flying   " + PlacementView.key(SlopmaticaKeys.PLACEMENT_VIEW) + ": done");
+        PlacementView.drawPanel(graphics, minecraft, lines, 4, 4, warnings.size());
         graphics.text(font, Component.translatable("slopmatica.builds.title").withStyle(ChatFormatting.BOLD), 6, buildsTop - 11, 0xFFFFFFFF);
         MaterialPanels.INSTANCE.draw(graphics, minecraft, mouseX, mouseY, true);
     }

@@ -159,6 +159,12 @@ public class SchematicBrowserScreen extends Screen {
                 CloudSync.INSTANCE.upload(selected.path);
             }
         }).width(100).tooltip(Tooltip.create(Component.translatable("slopmatica.browser.upload.tooltip"))).build());
+        buttons.addChild(Button.builder(Component.translatable("slopmatica.info.button"), b -> {
+            FileEntry selected = list.getSelected();
+            if (selected != null && selected.kind == Kind.FILE) {
+                minecraft.gui.setScreen(new SchematicInfoScreen(this, selected.path, null));
+            }
+        }).width(100).tooltip(Tooltip.create(Component.translatable("slopmatica.info.button.tooltip"))).build());
         buttons.addChild(Button.builder(Component.translatable("slopmatica.browser.open_folder"), b -> Blaze3D.openPath(current)).width(100).build());
         buttons.addChild(Button.builder(CommonComponents.GUI_BACK, b -> onClose()).width(100).build());
 

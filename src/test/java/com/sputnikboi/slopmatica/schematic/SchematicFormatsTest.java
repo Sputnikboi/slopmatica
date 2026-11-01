@@ -99,6 +99,58 @@ class SchematicFormatsTest {
         assertEquals(new BlockPos(3, 1, 1), frame.blockPos(), format + " hanging block");
     }
 
+    /** Recommendations and the origin point are kept inside every format, and the file still loads. */
+    @ParameterizedTest
+    @EnumSource(SchematicFormats.class)
+    void metadataRoundTrips(SchematicFormats format, @TempDir Path dir) throws Exception {
+        Path file = dir.resolve("meta" + format.extension);
+        format.write(file, sample(4, 3, 5));
+        SchematicMeta meta = new SchematicMeta();
+        meta.biome = "minecraft:plains";
+        meta.position = new BlockPos(100, 64, -20);
+        meta.rotation = net.minecraft.world.level.block.Rotation.CLOCKWISE_90;
+        meta.minVersion = "1.21";
+        meta.maxVersion = "26.3";
+        meta.origin = new BlockPos(1, 0, 2);
+        meta.write(file);
+        Schematic loaded = Schematic.load(file);
+        SchematicMeta back = loaded.meta();
+        assertEquals("minecraft:plains", back.biome, format.name());
+        assertEquals(new BlockPos(100, 64, -20), back.position);
+        assertEquals(net.minecraft.world.level.block.Rotation.CLOCKWISE_90, back.rotation);
+        assertEquals("1.21", back.minVersion);
+        assertEquals("26.3", back.maxVersion);
+        assertEquals(new BlockPos(1, 0, 2), loaded.originPoint());
+        assertEquals(4 * 3 * 5, loaded.bounds().getXSpan() * loaded.bounds().getYSpan() * loaded.bounds().getZSpan(), "blocks still load");
+    }
+
+    @Test
+    void versionRanges() {
+        SchematicMeta m = new SchematicMeta();
+        m.minVersion = "1.21";
+        m.maxVersion = "1.21";
+        org.junit.jupiter.api.Assertions.assertTrue(m.versionOk("1.21.4"), "a maximum of 1.21 covers 1.21.x");
+        org.junit.jupiter.api.Assertions.assertFalse(m.versionOk("26.3"));
+        org.junit.jupiter.api.Assertions.assertFalse(m.versionOk("1.20.6"));
+        m.maxVersion = null;
+        org.junit.jupiter.api.Assertions.assertTrue(m.versionOk("26.3"));
+    }
+
+    /** The origin point lands where asked, however the build is turned. */
+    @Test
+    void originPointLandsOnTarget(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("o.slopmatic");
+        SchematicFormats.SLOPMATIC.write(file, sample(5, 3, 6));
+        Schematic schematic = Schematic.load(file);
+        assertEquals(new BlockPos(2, 0, 2), schematic.originPoint(), "default: middle of the bottom layer");
+        for (net.minecraft.world.level.block.Rotation r : net.minecraft.world.level.block.Rotation.values()) {
+            Placement p = new Placement(schematic, "o", BlockPos.ZERO);
+            p.setRotation(r);
+            p.moveOriginPointTo(new BlockPos(50, 70, -30));
+            assertEquals(new BlockPos(50, 70, -30), p.worldOriginPoint(), r.name());
+        }
+    }
+
     /** A version 2 file as older WorldEdit writes it: flat layout, palette strings, varint data. */
     @Test
     void readsWorldEditVersion2() throws Exception {

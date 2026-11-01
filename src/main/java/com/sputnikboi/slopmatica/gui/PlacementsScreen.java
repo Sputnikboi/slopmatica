@@ -54,7 +54,7 @@ public class PlacementsScreen extends Screen {
         visibilityButton = row1.addChild(button("", p -> SlopmaticaActions.setVisible(p, !p.visible(), this::status)));
         Button moveHere = row1.addChild(button("slopmatica.placements.move_here", p -> {
             if (minecraft.player != null) {
-                SlopmaticaActions.moveTo(p, minecraft.player.blockPosition(), this::status);
+                SlopmaticaActions.moveOriginPointTo(p, minecraft.player.blockPosition(), this::status);
             }
         }));
         Button rotate = row1.addChild(button("slopmatica.placements.rotate", p -> SlopmaticaActions.rotate(p, Rotation.CLOCKWISE_90, this::status)));
@@ -66,6 +66,7 @@ public class PlacementsScreen extends Screen {
                 minecraft.gui.setScreen(null);
             }
         }));
+        row2.addChild(button("slopmatica.info.button", p -> minecraft.gui.setScreen(new SchematicInfoScreen(this, p.schematic().source(), p))));
         row2.addChild(Button.builder(CommonComponents.GUI_BACK, b -> onClose()).width(BUTTON_WIDTH).build());
         placementButtons = new Button[] {visibilityButton, moveHere, rotate, materials, mirrorButton, unload, build};
 

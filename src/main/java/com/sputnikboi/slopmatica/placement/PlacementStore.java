@@ -150,6 +150,7 @@ public final class PlacementStore {
                     p.setCrop(new BoundingBox(c.get(0).getAsInt(), c.get(1).getAsInt(), c.get(2).getAsInt(), c.get(3).getAsInt(), c.get(4).getAsInt(), c.get(5).getAsInt()));
                 }
                 p.setSelectedMaterials(items(entry, "selectedMaterials"));
+                p.ignoreWarnings = entry.has("ignoreWarnings") && entry.get("ignoreWarnings").getAsBoolean();
                 p.setIgnoredMaterials(items(entry, "ignoredMaterials"));
                 if (entry.has("panel") && entry.get("panel").isJsonObject()) {
                     JsonObject panel = entry.getAsJsonObject("panel");
@@ -206,6 +207,7 @@ public final class PlacementStore {
                 e.add("crop", c);
             }
             e.add("selectedMaterials", items(p.selectedMaterials()));
+            e.addProperty("ignoreWarnings", p.ignoreWarnings);
             e.add("ignoredMaterials", items(p.ignoredMaterials()));
             JsonObject panel = new JsonObject();
             panel.addProperty("open", p.panelOpen);

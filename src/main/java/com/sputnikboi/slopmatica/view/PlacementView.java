@@ -622,6 +622,11 @@ public final class PlacementView {
         KeyMapping[] n = SlopmaticaKeys.VIEW_NUDGES;
         List<String> lines = new ArrayList<>();
         lines.add("Placement view: " + p.name() + (carryOffset != null ? "  (carrying)" : ""));
+        int warnings = 0;
+        for (Recommendations.Warning w : Recommendations.of(mc, p)) {
+            lines.add("⚠ " + w.text().getString());
+            warnings++;
+        }
         lines.add("Fly: " + key(mc.options.keyUp) + key(mc.options.keyLeft) + key(mc.options.keyDown) + key(mc.options.keyRight)
             + ", " + key(mc.options.keyJump) + " / " + key(mc.options.keyShift) + ", " + key(mc.options.keySprint) + " faster");
         lines.add("Tool: " + tool.label().getString() + " (" + key(SlopmaticaKeys.VIEW_TOOL) + " to change)");
@@ -634,17 +639,23 @@ public final class PlacementView {
         lines.add("Nudge: " + key(n[0]) + " " + key(n[1]) + " " + key(n[2]) + " " + key(n[3]) + "   up/down: " + key(n[4]) + " " + key(n[5]) + " or scroll");
         lines.add("Hold Shift to nudge 5 blocks");
         lines.add("Done: " + key(SlopmaticaKeys.PLACEMENT_VIEW) + " or Esc");
-        drawPanel(graphics, mc, lines, 4, 4);
+        drawPanel(graphics, mc, lines, 4, 4, warnings);
     }
 
     static void drawPanel(GuiGraphicsExtractor graphics, Minecraft mc, List<String> lines, int x, int y) {
+        drawPanel(graphics, mc, lines, x, y, 0);
+    }
+
+    /** {@code warnings}: how many lines after the first are warnings (drawn orange). */
+    static void drawPanel(GuiGraphicsExtractor graphics, Minecraft mc, List<String> lines, int x, int y, int warnings) {
         int width = 0;
         for (String line : lines) {
             width = Math.max(width, mc.font.width(line));
         }
         graphics.fill(x, y, x + 8 + width, y + 4 + lines.size() * 11, 0x90000000);
         for (int i = 0; i < lines.size(); i++) {
-            graphics.text(mc.font, lines.get(i), x + 4, y + 3 + i * 11, i == 0 ? SlopmaticaActions.ACCENT : 0xFFE0E0E0);
+            int color = i == 0 ? SlopmaticaActions.ACCENT : i <= warnings ? SlopmaticaActions.WARNING : 0xFFE0E0E0;
+            graphics.text(mc.font, lines.get(i), x + 4, y + 3 + i * 11, color);
         }
     }
 
