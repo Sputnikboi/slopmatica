@@ -279,7 +279,7 @@ public class PlacementViewScreen extends Screen {
             PlacementView.drawPanel(graphics, minecraft, List.of(
                 "Build view: no build selected",
                 "Select: click two blocks   Modify: drag a face",
-                "Ctrl+S: save the selection   Ctrl+Z: undo",
+                PlacementView.key(SlopmaticaKeys.VIEW_SAVE) + ": save the selection   Ctrl+Z: undo",
                 "Right click or Esc: back to flying   " + PlacementView.key(SlopmaticaKeys.PLACEMENT_VIEW) + ": done"
             ), 4, 4);
             graphics.text(font, Component.translatable("slopmatica.builds.title").withStyle(ChatFormatting.BOLD), 6, buildsTop - 11, 0xFFFFFFFF);
@@ -480,7 +480,7 @@ public class PlacementViewScreen extends Screen {
             rebuildWidgets();
             return true;
         }
-        if (event.hasControlDown() && event.key() == InputConstants.KEY_S) {
+        if (SlopmaticaKeys.VIEW_SAVE.matches(event)) {
             minecraft.gui.setScreen(new com.sputnikboi.slopmatica.gui.SaveSelectionScreen(this));
             return true;
         }

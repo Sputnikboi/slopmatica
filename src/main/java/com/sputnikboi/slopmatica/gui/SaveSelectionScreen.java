@@ -19,7 +19,7 @@ import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Save the selection as a schematic with a name and format of your choosing (Ctrl+S in the
+ * Save the selection as a schematic with a name and format of your choosing (the save key, V by default, in the
  * build view). Saved to the schematics folder, unlike the copy key, which saves to copies/.
  */
 public class SaveSelectionScreen extends Screen {

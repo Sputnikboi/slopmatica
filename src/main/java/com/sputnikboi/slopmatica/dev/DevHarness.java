@@ -114,6 +114,7 @@ public final class DevHarness {
                 KeyEvent event = switch (step.substring(4).trim()) {
                     case "tab" -> new KeyEvent(InputConstants.KEY_TAB, 9, 0);
                     case "down" -> new KeyEvent(InputConstants.KEY_DOWN, 0x40000051, 0);
+                    case "esc" -> new KeyEvent(InputConstants.KEY_ESCAPE, 27, 0);
                     case "1", "2", "3", "4", "5" -> new KeyEvent(InputConstants.KEY_1 + Integer.parseInt(step.substring(4).trim()) - 1, 0, 0);
                     default -> new KeyEvent(InputConstants.KEY_RETURN, 13, 0);
                 };
@@ -142,6 +143,12 @@ public final class DevHarness {
                     screen.mouseDragged(new net.minecraft.client.input.MouseButtonEvent(x, y, info), (x2 - x1) / 10, (y2 - y1) / 10);
                 }
                 screen.mouseReleased(new net.minecraft.client.input.MouseButtonEvent(x2, y2, info));
+            } else if (step.startsWith("wheel ")) {
+                // The mouse wheel in the world, through vanilla's handler (so mixins on it run).
+                mc.mouseHandler.onScroll(mc.getWindow().handle(), 0, Double.parseDouble(step.substring(6).trim()));
+            } else if (step.equals("slot") && mc.player != null) {
+                var quick = com.sputnikboi.slopmatica.quick.QuickMenu.INSTANCE;
+                LOGGER.info("dev slot: hotbar {} quick menu {} (open {})", mc.player.getInventory().getSelectedSlot(), quick.selected(), quick.isOpen());
             } else if (step.startsWith("scroll ") && mc.gui.screen() != null) {
                 Screen screen = mc.gui.screen();
                 screen.mouseScrolled(screen.width / 2.0, screen.height / 2.0, 0, Double.parseDouble(step.substring(7).trim()));

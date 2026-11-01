@@ -68,22 +68,31 @@ public class QuickMenuEditScreen extends Screen {
                 rebuildWidgets();
             }).bounds(fx + 406, by - 24, 54, 20).build());
         }
-        addRenderableWidget(CycleButton.<QuickMenu.Mode>builder(m -> Component.translatable("slopmatica.quick.mode." + m.name().toLowerCase(Locale.ROOT)), c.quickMode)
-            .withValues(QuickMenu.Mode.values())
-            .withTooltip(m -> Tooltip.create(Component.translatable("slopmatica.quick.mode." + m.name().toLowerCase(Locale.ROOT) + ".tooltip")))
-            .create(width / 2 - 230, by, 150, 20, Component.translatable("slopmatica.quick.mode"), (b, v) -> {
-                c.quickMode = v;
-                c.save();
-            }));
+        if (!addingToggle) {
+            // How the menu works, above the buttons (the new-toggle form takes this row while open).
+            addRenderableWidget(CycleButton.<QuickMenu.Mode>builder(m -> Component.translatable("slopmatica.quick.mode." + m.name().toLowerCase(Locale.ROOT)), c.quickMode)
+                .withValues(QuickMenu.Mode.values())
+                .withTooltip(m -> Tooltip.create(Component.translatable("slopmatica.quick.mode." + m.name().toLowerCase(Locale.ROOT) + ".tooltip")))
+                .create(width / 2 - 152, by - 24, 150, 20, Component.translatable("slopmatica.quick.mode"), (b, v) -> {
+                    c.quickMode = v;
+                    c.save();
+                }));
+            addRenderableWidget(CycleButton.onOffBuilder(c.quickCloseAfterUse)
+                .withTooltip(v -> Tooltip.create(Component.translatable("slopmatica.quick.close_after_use.tooltip")))
+                .create(width / 2 + 2, by - 24, 150, 20, Component.translatable("slopmatica.quick.close_after_use"), (b, v) -> {
+                    c.quickCloseAfterUse = v;
+                    c.save();
+                }));
+        }
         addRenderableWidget(Button.builder(Component.translatable("slopmatica.quick.edit.new_toggle"), b -> {
             addingToggle = true;
             rebuildWidgets();
-        }).bounds(width / 2 - 76, by, 100, 20).tooltip(Tooltip.create(Component.translatable("slopmatica.quick.edit.new_toggle.tooltip"))).build());
+        }).bounds(width / 2 - 152, by, 100, 20).tooltip(Tooltip.create(Component.translatable("slopmatica.quick.edit.new_toggle.tooltip"))).build());
         addRenderableWidget(Button.builder(Component.translatable("slopmatica.quick.edit.reset"), b -> {
             c.quickMenu = new ArrayList<>(QuickAction.DEFAULT_LAYOUT);
             c.save();
-        }).bounds(width / 2 + 28, by, 96, 20).build());
-        addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> onClose()).bounds(width / 2 + 128, by, 100, 20).build());
+        }).bounds(width / 2 - 48, by, 96, 20).build());
+        addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> onClose()).bounds(width / 2 + 52, by, 100, 20).build());
     }
 
     private void addToggle() {
@@ -138,7 +147,7 @@ public class QuickMenuEditScreen extends Screen {
         for (int i = 0; i < all.size(); i++) {
             QuickAction action = all.get(i);
             int x = gridX + (i % columns) * (ENTRY_W + 4), y = gridY + (i / columns) * (ENTRY_H + 2);
-            if (y + ENTRY_H > height - (addingToggle ? 56 : 32)) {
+            if (y + ENTRY_H > height - 56) {
                 break;
             }
             boolean over = mouseX >= x && mouseX < x + ENTRY_W && mouseY >= y && mouseY < y + ENTRY_H;

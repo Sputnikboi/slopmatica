@@ -49,6 +49,8 @@ public final class SlopmaticaConfig {
     /** The Quick Menu's nine slots: action ids, "" for empty. */
     public java.util.List<String> quickMenu = new java.util.ArrayList<>(com.sputnikboi.slopmatica.quick.QuickLayout.DEFAULT);
     public com.sputnikboi.slopmatica.quick.QuickMenu.Mode quickMode = com.sputnikboi.slopmatica.quick.QuickMenu.Mode.CLICK;
+    /** Close the Quick Menu after running an action (otherwise it stays open until its key is pressed again). */
+    public boolean quickCloseAfterUse = false;
     /** Setting toggles the player made, offered in the Quick Menu editor (ids, see SettingToggle). */
     public java.util.List<String> quickToggles = new java.util.ArrayList<>();
     /** Keys bound straight to actions: action id -> key name (key.keyboard.x). */

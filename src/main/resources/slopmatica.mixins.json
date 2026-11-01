@@ -10,6 +10,7 @@
     "KeyBindsScreenAccessor",
     "MinecraftEasyPlaceMixin",
     "MinecraftQuickMenuMixin",
+    "MouseHandlerQuickMenuMixin",
     "RenderSetupAccessor",
     "RenderTypeAccessor",
     "TextureBindingAccessor",

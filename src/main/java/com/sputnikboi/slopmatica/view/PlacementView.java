@@ -76,7 +76,6 @@ public final class PlacementView {
 
     /** Where a carried build was picked up, for cancelling the move. */
     private @Nullable BlockPos carryStart;
-    private boolean sWasDown;
 
     /** Origin minus the targeted block when picked up, so it doesn't jump to the crosshair. */
     private @Nullable BlockPos carryOffset;
@@ -261,12 +260,6 @@ public final class PlacementView {
             placement = p = null; // Unloaded meanwhile: carry on without a build.
             carryOffset = null;
         }
-        // Ctrl+S: save the selection. S and Ctrl also fly, so the raw keys are watched here.
-        boolean sDown = InputConstants.isKeyDown(InputConstants.KEY_S);
-        if (sDown && !sWasDown && mc.hasControlDown() && mc.gui.screen() == null) {
-            mc.gui.setScreen(new com.sputnikboi.slopmatica.gui.SaveSelectionScreen(null));
-        }
-        sWasDown = sDown;
         // Your body is standing defenceless somewhere: getting hurt brings you back to it.
         float health = mc.player.getHealth() + mc.player.getAbsorptionAmount();
         boolean hurt = health < lastHealth;
@@ -344,6 +337,11 @@ public final class PlacementView {
         while (SlopmaticaKeys.pressed(SlopmaticaKeys.VIEW_TOOL)) {
             if (active()) {
                 setTool(tool.next());
+            }
+        }
+        while (SlopmaticaKeys.pressed(SlopmaticaKeys.VIEW_SAVE)) {
+            if (active() && mc.gui.screen() == null) {
+                mc.gui.setScreen(new com.sputnikboi.slopmatica.gui.SaveSelectionScreen(null));
             }
         }
         while (SlopmaticaKeys.pressed(SlopmaticaKeys.VIEW_ROTATE)) {
@@ -614,7 +612,7 @@ public final class PlacementView {
                 "Build view: no build selected",
                 "Tool: " + tool.label().getString() + " (" + key(SlopmaticaKeys.VIEW_TOOL) + " to change)",
                 "Left click: set a selection corner   Right click: free cursor",
-                "Ctrl+S: save the selection   Ctrl+Z: undo",
+                key(SlopmaticaKeys.VIEW_SAVE) + ": save the selection   Ctrl+Z: undo",
                 "Done: " + key(SlopmaticaKeys.PLACEMENT_VIEW) + " or Esc"
             ), 4, 4);
             return;

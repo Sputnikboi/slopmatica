@@ -169,4 +169,11 @@ public class CloudScreen extends Screen {
         }
         minecraft.gui.setScreen(parent);
     }
+
+    /** init() adds everything to the layout again, so empty it first (or every rebuild stacks another copy). */
+    @Override
+    protected void rebuildWidgets() {
+        layout.removeChildren();
+        super.rebuildWidgets();
+    }
 }

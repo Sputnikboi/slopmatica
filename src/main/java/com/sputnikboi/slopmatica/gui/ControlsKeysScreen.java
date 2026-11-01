@@ -99,4 +99,15 @@ public class ControlsKeysScreen extends OptionsSubScreen {
         super.removed();
         SlopmaticaConfig.get().save();
     }
+
+    /** init() adds everything to the layout again, so empty it first (or every rebuild stacks another copy). */
+    @Override
+    protected void rebuildWidgets() {
+        double scroll = list != null ? list.scrollAmount() : 0;
+        layout.removeChildren();
+        super.rebuildWidgets();
+        if (list != null) {
+            list.setScrollAmount(scroll);
+        }
+    }
 }

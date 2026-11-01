@@ -73,6 +73,8 @@ public final class SlopmaticaKeys {
     public static final KeyMapping VIEW_PASTE = register(VIEW, "view_paste", InputConstants.KEY_RETURN);
     /** Next tool (move, select, modify selection, crop). Y is free in vanilla. */
     public static final KeyMapping VIEW_TOOL = register(VIEW, "view_tool", InputConstants.KEY_Y);
+    /** Save the selection. Not Ctrl+S: S flies backwards in the view. */
+    public static final KeyMapping VIEW_SAVE = register(VIEW, "view_save", InputConstants.KEY_V);
 
     public static final KeyMapping SELECT_CORNER = register(COPY, "select_corner", InputConstants.KEY_B);
     public static final KeyMapping COPY_SELECTION = register(COPY, "copy_selection");

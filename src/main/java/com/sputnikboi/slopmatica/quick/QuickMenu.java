@@ -16,9 +16,9 @@ import net.minecraft.world.entity.player.Inventory;
 
 /**
  * The Quick Menu: one key swaps the hotbar for action icons. Pick a slot as usual (scroll or a
- * number key) and click to run it, which closes the menu; or, by option, run it on letting go
- * of the number key, or keep the menu open until the key is pressed again. E while it is open
- * customises it. The hotbar slot you had is given back on closing.
+ * number key) and click to run it, or, by option, run it on letting go of the number key. It
+ * stays open until the key is pressed again, unless set to close after use. E while it is open
+ * customises it. The menu keeps its own selection: the item in your hand doesn't change.
  *
  * <p>Any action can also have a key of its own ({@link SlopmaticaConfig#quickKeys}), set in the
  * Keys in Controls screen; those are watched here too.
@@ -30,16 +30,14 @@ public final class QuickMenu {
     private static final Identifier SELECTION = Identifier.withDefaultNamespace("hud/hotbar_selection");
 
     public enum Mode {
-        /** Pick a slot, then left or right click; the menu closes. */
+        /** Pick a slot, then left or right click. */
         CLICK,
         /** Runs when you let go of a hotbar number key (scrolling only moves the selection). */
-        RELEASE,
-        /** Click to run, and it stays open until you close it. */
-        STAY_OPEN
+        RELEASE
     }
 
     private boolean open;
-    private int previousSlot;
+    private int selected;
     private final boolean[] hotbarDown = new boolean[9];
     private final Map<String, Boolean> boundDown = new HashMap<>();
 
@@ -48,6 +46,15 @@ public final class QuickMenu {
 
     public boolean isOpen() {
         return open;
+    }
+
+    public int selected() {
+        return selected;
+    }
+
+    /** Scrolling while open moves this instead of the hotbar slot (see MouseHandlerQuickMenuMixin). */
+    public void select(int slot) {
+        selected = Math.floorMod(slot, 9);
     }
 
     public static List<String> layout() {
@@ -60,7 +67,7 @@ public final class QuickMenu {
             close(mc);
         } else if (mc.player != null && mc.gui.screen() == null) {
             open = true;
-            previousSlot = mc.player.getInventory().getSelectedSlot();
+            selected = mc.player.getInventory().getSelectedSlot();
             for (int i = 0; i < 9; i++) {
                 hotbarDown[i] = mc.options.keyHotbarSlots[i].isDown();
             }
@@ -72,9 +79,6 @@ public final class QuickMenu {
             return;
         }
         open = false;
-        if (mc.player != null) {
-            mc.player.getInventory().setSelectedSlot(previousSlot);
-        }
     }
 
     /** Start of the client tick, before vanilla handles clicks and the inventory key. */
@@ -89,6 +93,12 @@ public final class QuickMenu {
         if (mc.gui.screen() != null) {
             return;
         }
+        // Number keys pick a slot here, before vanilla would switch the item in your hand.
+        for (int i = 0; i < 9; i++) {
+            while (mc.options.keyHotbarSlots[i].consumeClick()) {
+                selected = i;
+            }
+        }
         while (mc.options.keyInventory.consumeClick()) {
             mc.gui.setScreen(new QuickMenuEditScreen(null));
             return;
@@ -102,7 +112,7 @@ public final class QuickMenu {
             clicked = true;
         }
         if (clicked && mode != Mode.RELEASE) {
-            trigger(mc, mc.player.getInventory().getSelectedSlot());
+            trigger(mc, selected);
             return;
         }
         if (mode == Mode.RELEASE) {
@@ -126,7 +136,7 @@ public final class QuickMenu {
             SlopmaticaActions.actionBar(Component.translatable("slopmatica.quick.unavailable", action.label().get()).withColor(SlopmaticaActions.ERROR));
             return;
         }
-        if (SlopmaticaConfig.get().quickMode != Mode.STAY_OPEN) {
+        if (SlopmaticaConfig.get().quickCloseAfterUse) {
             close(mc); // First, so a screen the action opens isn't fighting the menu.
         }
         action.run().accept(mc);
@@ -160,7 +170,6 @@ public final class QuickMenu {
     /** Drawn instead of the hotbar while open. */
     public void extractHotbar(GuiGraphicsExtractor g, Minecraft mc) {
         int cx = g.guiWidth() / 2, y = g.guiHeight() - 22;
-        int selected = mc.player.getInventory().getSelectedSlot();
         g.blitSprite(RenderPipelines.GUI_TEXTURED, HOTBAR, cx - 91, y, 182, 22);
         g.blitSprite(RenderPipelines.GUI_TEXTURED, SELECTION, cx - 92 + selected * 20, y - 1, 24, 23);
         List<String> layout = layout();
@@ -184,7 +193,6 @@ public final class QuickMenu {
         Component hint = Component.translatable(switch (SlopmaticaConfig.get().quickMode) {
             case CLICK -> "slopmatica.quick.hint.click";
             case RELEASE -> "slopmatica.quick.hint.release";
-            case STAY_OPEN -> "slopmatica.quick.hint.stay";
         }, mc.options.keyInventory.getTranslatedKeyMessage());
         Component line = Component.empty().append(name.copy().withColor(current != null && current.availableNow(mc) ? 0xFFFFFFFF : 0xFFA0A0A0))
             .append(Component.literal("   ")).append(hint.copy().withColor(0xFFA0A0A0));

@@ -216,6 +216,7 @@ public final class Telemetry {
             layout.forEach(quick::add);
             r.add("quickMenu", quick);
             r.addProperty("quickMode", SlopmaticaConfig.get().quickMode.name());
+            r.addProperty("quickCloseAfterUse", SlopmaticaConfig.get().quickCloseAfterUse);
         }
         return r;
     }
