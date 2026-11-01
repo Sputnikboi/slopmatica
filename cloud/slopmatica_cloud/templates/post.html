@@ -2,9 +2,25 @@
 {% from "_post_form.html" import post_fields %}
 {% from "_badges.html" import user_badges %}
 {% block title %}{{ post.title }} &middot; Slopmatica Cloud{% endblock %}
+{% block head %}
+<meta name="description" content="{{ og.description }}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Slopmatica Cloud">
+<meta property="og:title" content="{{ og.title }}">
+<meta property="og:description" content="{{ og.description }}">
+<meta property="og:url" content="{{ og.url }}">
+{% if og.image %}<meta property="og:image" content="{{ og.image }}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="{{ og.image }}">
+{% else %}<meta name="twitter:card" content="summary">
+{% endif %}
+<meta name="twitter:title" content="{{ og.title }}">
+<meta name="twitter:description" content="{{ og.description }}">
+<link rel="canonical" href="{{ og.url }}">
+{% endblock %}
 {% block main %}
-<article class="post" data-post-id="{{ post.id }}" data-post-filename="{{ post.filename }}"{% if own %} data-own{% endif %}>
-  <div class="post-media" data-model-v="{{ post.sha256[:12] }}" data-static-v="{{ v }}">
+<article class="post" data-post-id="{{ post.id }}" data-post-filename="{{ ver.filename }}" data-version-q="{{ version_q }}"{% if own %} data-own{% endif %}>
+  <div class="post-media" data-model-v="{{ ver.sha256[:12] }}" data-static-v="{{ v }}">
     {% if has_model %}
     <div class="seg media-toggle" role="group" aria-label="Show">
       <button type="button" class="on" data-view="picture" aria-pressed="true">Picture</button>
@@ -12,8 +28,8 @@
     </div>
     {% endif %}
     <div class="post-thumb thumb" data-pane="picture">
-      {% if post.has_thumb %}
-      <img src="{{ base }}/api/board/{{ post.id }}/thumbnail?v={{ post.updated }}" alt="Preview of {{ post.title }}">
+      {% if ver.has_thumb %}
+      <img src="{{ base }}/api/board/{{ post.id }}/thumbnail{{ version_q or '?' }}{{ '&' if version_q else '' }}v={{ ver.created }}" alt="Preview of {{ post.title }}">
       {% else %}
       <div class="ph" aria-hidden="true"></div>
       {% endif %}
@@ -31,17 +47,23 @@
     <h1 class="post-title">{{ post.title }}</h1>
     {% if post.hidden %}<p class="notice warn small"><strong>Hidden by an admin.</strong> Only {{ "you" if own else "the author" }} and admins can see this post{% if post.hidden_reason %}: {{ post.hidden_reason }}{% else %}.{% endif %}</p>{% endif %}
     {% if post.visibility != "public" %}<span class="badge vis-{{ post.visibility }}">{{ post.visibility|capitalize }}</span>{% endif %}
-    {% if post.tags or post.size_class %}
+    {% if post.tags or ver.size_class or ver.complexity or ver.mc %}
     <div class="chips">
       {% for t in post.tags %}<a class="chip tag-chip" href="{{ board_url(tags=[t]) }}">{{ all_tags[t] }}</a>{% endfor %}
-      {% if post.size_class %}<a class="chip size-chip" href="{{ board_url(size=post.size_class) }}" title="Size by block count">{{ size_classes[post.size_class] }}</a>{% endif %}
+      {% if ver.size_class %}<a class="chip size-chip" href="{{ board_url(size=ver.size_class) }}" title="Size by block count">{{ size_classes[ver.size_class] }}</a>{% endif %}
+      {% if ver.complexity %}<a class="chip cx-chip cx-{{ ver.complexity }}" href="{{ board_url(complexity=ver.complexity) }}" title="{{ ver.distinct_count }} different block and entity types">{{ complexity_labels[ver.complexity] }}</a>{% endif %}
+      {% if ver.mc %}<a class="chip mc-chip" href="{{ board_url(mc=ver.mc) }}" title="For Minecraft {{ ver.mc }}">MC {{ ver.mc }}</a>{% endif %}
     </div>
     {% endif %}
     <div class="author">
-      <img class="head" src="https://mc-heads.net/avatar/{{ post.uuid }}/24" alt="" width="24" height="24">
-      <strong>{{ post.author_name }}</strong>{{ user_badges(post.author_badges) }}
+      <img class="head" src="{{ avatar_url(post.uuid, post.author_avatar_v) }}" alt="" width="24" height="24">
+      <a class="author-link" href="{{ base }}/u/{{ post.uuid }}"><strong>{{ post.author_shown }}</strong></a>{{ user_badges(post.author_badges) }}
       <span class="muted">&middot; <time datetime="{{ post.created|iso_utc }}">{{ post.created|pretty_utc }}</time></span>
     </div>
+    {% if post.coauthors %}
+    <p class="small coauthors"><span class="muted">With</span>
+      {% for a in post.coauthors %}{% if a.uuid %}<a href="{{ base }}/u/{{ a.uuid }}">{{ a.display }}</a>{% else %}<span>{{ a.display }}</span>{% endif %}{{ ", " if not loop.last else "" }}{% endfor %}</p>
+    {% endif %}
 
     <div class="vote" data-my-vote="{{ my_vote }}">
       {% set can_vote = user and member and not own %}
@@ -52,15 +74,29 @@
     </div>
     {% if not user %}<p class="muted small">Log in from the game to vote.</p>{% elif not member %}<p class="muted small">Voting and saving are for {{ server_name }} members. <a href="{{ base }}/apply">Apply for access</a></p>{% elif own %}<p class="muted small">This is your post, so you can&rsquo;t vote on it.</p>{% endif %}
 
+    {% if versions|length > 1 %}
+    <label class="field version-pick"><span class="label">Version</span>
+      <select data-version-select aria-label="Version">
+        {% for x in versions %}
+        <option value="{{ '' if x.current else x.num }}"{% if x.num == ver.num %} selected{% endif %}>v{{ x.num }}{% if x.label %} &middot; {{ x.label }}{% endif %}{% if x.mc %} &middot; MC {{ x.mc }}{% endif %}{% if x.current %} (newest){% endif %}</option>
+        {% endfor %}
+      </select></label>
+    {% if not ver.current %}<p class="notice small">You are looking at an older version, from <time datetime="{{ ver.created|iso_utc }}">{{ ver.created|pretty_utc }}</time>. <a href="{{ base }}/board/{{ post.id }}">Show the newest</a></p>{% endif %}
+    {% endif %}
+
     <dl class="facts">
-      <div><dt>Format</dt><dd>.{{ post.format }}</dd></div>
-      <div><dt>File size</dt><dd>{{ post.size|human_size }}</dd></div>
-      <div><dt>Size</dt><dd>{% if post.dims %}{{ post.dims[0] }} &times; {{ post.dims[1] }} &times; {{ post.dims[2] }}{% else %}<span class="muted">unknown</span>{% endif %}</dd></div>
-      <div><dt>Blocks</dt><dd>{% if post.block_count is not none %}{{ post.block_count|num }}{% else %}<span class="muted">unknown</span>{% endif %}</dd></div>
+      <div><dt>Format</dt><dd>.{{ ver.format }}</dd></div>
+      <div><dt>File size</dt><dd>{{ ver.size|human_size }}</dd></div>
+      <div><dt>Size</dt><dd>{% if ver.dims %}{{ ver.dims[0] }} &times; {{ ver.dims[1] }} &times; {{ ver.dims[2] }}{% else %}<span class="muted">unknown</span>{% endif %}</dd></div>
+      <div><dt>Blocks</dt><dd>{% if ver.block_count is not none %}{{ ver.block_count|num }}{% else %}<span class="muted">unknown</span>{% endif %}</dd></div>
+      <div><dt>Block types</dt><dd>{% if ver.distinct_count is not none %}{{ ver.distinct_count|num }}{% else %}<span class="muted">unknown</span>{% endif %}</dd></div>
+      <div><dt>Downloads</dt><dd>{{ post.downloads|num }}</dd></div>
+      {% if ver.label or versions|length > 1 %}<div><dt>Version</dt><dd>v{{ ver.num }}{% if ver.label %} &middot; {{ ver.label }}{% endif %}</dd></div>{% endif %}
+      {% if ver.mc %}<div><dt>Minecraft</dt><dd>{{ ver.mc }}</dd></div>{% endif %}
     </dl>
 
     <div class="post-actions">
-      <a class="btn" href="{{ base }}/api/board/{{ post.id }}/file" download="{{ post.filename }}">Download</a>
+      <a class="btn" href="{{ base }}/api/board/{{ post.id }}/file{{ version_q }}" download="{{ ver.filename }}">Download</a>
       {% if exports %}
       <select class="btn ghost export" data-post-export aria-label="Export as another format">
         <option value="" selected>Export as&hellip;</option>
@@ -71,6 +107,20 @@
     </div>
     <p class="form-msg small" data-save-msg role="status"></p>
     {% if not user %}<p class="muted small">Log in from the game to add this to your cloud files.</p>{% endif %}
+    {% if post.visibility != "private" %}
+    <div class="share">
+      <label class="label" for="share-url">Share</label>
+      <div class="share-row">
+        <input type="text" id="share-url" value="{{ share_url }}" readonly data-share-url>
+        <button type="button" class="btn ghost small" data-copy-share>Copy</button>
+      </div>
+    </div>
+    {% endif %}
+    {% if post.links %}
+    <ul class="post-links">
+      {% for url in post.links %}<li><a href="{{ url }}" rel="noopener noreferrer nofollow ugc">{{ url|domain }}</a></li>{% endfor %}
+    </ul>
+    {% endif %}
   </div>
 </article>
 
@@ -91,16 +141,51 @@
   {% elif post.visibility == "unlisted" %}
   <p class="small">Anyone with the link can see this post. It is not listed on the board.</p>
   {% endif %}
-  <p class="muted small">Snapshot of <code>{{ post.source_path }}</code>, taken <time datetime="{{ post.updated|iso_utc }}">{{ post.updated|pretty_utc }}</time>.{% if not source_exists %} That file is no longer in your cloud files.{% endif %}</p>
+  <p class="muted small">{% if post.source_path %}Version {{ post.version }} is a snapshot of <code>{{ post.source_path }}</code>{% else %}Version {{ post.version }} was uploaded directly{% endif %}, taken <time datetime="{{ post.updated|iso_utc }}">{{ post.updated|pretty_utc }}</time>.{% if post.source_path and not source_exists %} That file is no longer in your cloud files.{% endif %}</p>
   <div class="owner-actions">
     <button type="button" class="btn ghost" data-post-act="refresh"{% if not source_exists %} disabled{% endif %}>Update from my file</button>
     <button type="button" class="btn ghost danger" data-post-act="delete">Delete post</button>
   </div>
   <p class="form-msg small" data-owner-msg role="status"></p>
   <details class="edit">
-    <summary>Edit title, description, tags and visibility</summary>
+    <summary>Upload a new version</summary>
+    <form class="post-form" data-version-form novalidate>
+      <p class="small muted">The current version stays available in the version list. Every version counts toward your storage.</p>
+      <label class="field"><span class="label">From your cloud files</span>
+        <select name="path">
+          {% for f in my_files %}<option value="{{ f }}"{% if f == post.source_path %} selected{% endif %}>{{ f }}</option>{% endfor %}
+          <option value="">&mdash; or upload a file below &mdash;</option>
+        </select></label>
+      <label class="field"><span class="label">Or a file from this computer <span class="muted">(.slopmatic, .nbt or .litematic)</span></span>
+        <input type="file" name="file" accept=".slopmatic,.nbt,.litematic"></label>
+      <div class="field-row">
+        <label class="field"><span class="label">Version label <span class="muted">(optional)</span></span>
+          <input type="text" name="label" maxlength="{{ max_version_label }}" placeholder="e.g. faster clock" autocomplete="off"></label>
+        <label class="field"><span class="label">For Minecraft</span>
+          <input type="text" name="mc" value="{{ post.mc or default_mc }}" maxlength="32" placeholder="e.g. 26.3" spellcheck="false" autocomplete="off"></label>
+      </div>
+      <p class="form-msg" role="status"></p>
+      <div class="form-actions"><button type="submit" class="btn">Upload version</button></div>
+    </form>
+  </details>
+  {% if versions|length > 1 %}
+  <details class="edit">
+    <summary>Older versions</summary>
+    <ul class="version-list">
+      {% for x in versions if not x.current %}
+      <li><span>v{{ x.num }}{% if x.label %} &middot; {{ x.label }}{% endif %}{% if x.mc %} &middot; MC {{ x.mc }}{% endif %} <span class="muted">&middot; {{ x.size|human_size }}</span></span>
+        <button type="button" class="btn small ghost danger" data-delete-version="{{ x.num }}">Delete</button></li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+  <details class="edit">
+    <summary>Edit title, description, tags, co-authors, links and visibility</summary>
     <form class="post-form" data-post-form="edit" novalidate>
-      {{ post_fields(visibilities, max_title, max_description, post.title, post.description, post.visibility, allowed|map(attribute=1)|join(", "), all_tags, post.tags) }}
+      {{ post_fields(visibilities, max_title, max_description, post.title, post.description, post.visibility, allowed|map(attribute=1)|join(", "), all_tags, post.tags,
+         {"max_author_name": max_author_name, "max_links": max_links, "max_version_label": max_version_label},
+         post.coauthors|selectattr("uuid")|map(attribute="name")|join(", "), post.coauthors|rejectattr("uuid")|map(attribute="name")|join("\n"),
+         post.links, post.version_label, post.mc or "") }}
       <p class="form-msg" role="status"></p>
       <div class="form-actions"><button type="submit" class="btn">Save changes</button></div>
     </form>
@@ -131,7 +216,7 @@
       <fieldset class="field">
         <legend class="label">What are you reporting?</legend>
         <label class="radio"><input type="radio" name="kind" value="post" checked> <span>This post</span></label>
-        <label class="radio"><input type="radio" name="kind" value="user"> <span>The author, {{ post.author_name }}</span></label>
+        <label class="radio"><input type="radio" name="kind" value="user"> <span>The author, {{ post.author_shown }}</span></label>
       </fieldset>
       <fieldset class="field">
         <legend class="label">Why?</legend>

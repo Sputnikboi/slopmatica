@@ -114,6 +114,21 @@ class Schematic:
     def block_count(self) -> int:
         return sum(r.block_count() for r in self.regions)
 
+    def distinct_types(self) -> int:
+        """How many different block ids (properties ignored, so every facing of a stair is one; no air or
+        structure void) and entity ids the schematic uses: the board's complexity measure."""
+        names: set[str] = set()
+        for r in self.regions:
+            kinds = r.kinds()
+            for i in set(r.blocks):
+                if i < len(r.palette) and kinds[i] == SOLID:
+                    names.add(state_name(r.palette[i]))
+            for e in r.entities:
+                eid = e.data.get("id") if isinstance(e.data, Compound) else None
+                if isinstance(eid, str) and eid:
+                    names.add("entity:" + str(eid))
+        return len(names)
+
 
 def state_name(state: Any) -> str:
     if isinstance(state, Compound):

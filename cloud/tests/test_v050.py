@@ -632,7 +632,8 @@ def test_migrates_a_v2_database(make_client, mojang, data_dir, caplog):
     c2 = make_client()
     assert c2.app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     assert (pdir / "Halloween Ghost Ship.slopmatic").stat().st_mtime_ns == mtime
-    assert c2.get("/api/board/GhostShip1").json() == {**ghost, "tags": ["statue"]}
+    # (the anonymous download and export above count once: 0.8.0's download counter)
+    assert c2.get("/api/board/GhostShip1").json() == {**ghost, "tags": ["statue"], "downloads": 1}
     assert not any("convert" in r.message for r in caplog.records)
     assert c2.get("/api/me", headers=h).json()["usedBytes"] == used
 

@@ -1,4 +1,4 @@
-{% macro post_fields(visibilities, max_title, max_description, title="", description="", visibility="public", allowed_text="", all_tags={}, tags=()) %}
+{% macro post_fields(visibilities, max_title, max_description, title="", description="", visibility="public", allowed_text="", all_tags={}, tags=(), limits={}, players_text="", names_text="", links=(), version_label="", mc="") %}
 <label class="field">
   <span class="label">Title</span>
   <input type="text" name="title" value="{{ title }}" maxlength="{{ max_title }}" required autocomplete="off">
@@ -15,6 +15,31 @@
     {% endfor %}
   </div>
 </fieldset>
+<details class="edit more-fields"{% if players_text or names_text or links or version_label %} open{% endif %}>
+  <summary>Co-authors, links and version</summary>
+  <label class="field">
+    <span class="label">Co-authors with an account here <span class="muted">(Minecraft names)</span></span>
+    <input type="text" name="players" value="{{ players_text }}" placeholder="e.g. Steve, Alex" spellcheck="false" autocomplete="off">
+  </label>
+  <label class="field">
+    <span class="label">Other co-authors <span class="muted">(names, one per line, up to {{ limits.max_author_name }} characters)</span></span>
+    <textarea name="names" rows="2" spellcheck="false" autocomplete="off">{{ names_text }}</textarea>
+  </label>
+  <label class="field">
+    <span class="label">Links <span class="muted">(up to {{ limits.max_links }} http(s) addresses, one per line: a video, a world download&hellip;)</span></span>
+    <textarea name="links" rows="2" spellcheck="false" autocomplete="off" placeholder="https://www.youtube.com/watch?v=&hellip;">{{ links|join("\n") }}</textarea>
+  </label>
+  <div class="field-row">
+    <label class="field">
+      <span class="label">Version label <span class="muted">(optional)</span></span>
+      <input type="text" name="versionLabel" value="{{ version_label }}" maxlength="{{ limits.max_version_label }}" placeholder="e.g. first release" autocomplete="off">
+    </label>
+    <label class="field">
+      <span class="label">For Minecraft</span>
+      <input type="text" name="mc" value="{{ mc }}" maxlength="32" placeholder="e.g. 26.3" spellcheck="false" autocomplete="off">
+    </label>
+  </div>
+</details>
 <fieldset class="field vis">
   <legend class="label">Visibility</legend>
   {% set help = {

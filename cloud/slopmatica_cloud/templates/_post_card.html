@@ -1,6 +1,6 @@
 {% from "_badges.html" import user_badges %}
 {% macro post_card(p, base, show_visibility=False, chip_url=None, all_tags={}, size_classes={}) %}
-{# The whole card is clickable through the title link's ::after; the chips sit above it as their own links. #}
+{# The whole card is clickable through the title link's ::after; the chips and the author link sit above it as their own links. #}
 <article class="card post-card">
   <div class="thumb">
     {% if p.has_thumb %}
@@ -12,19 +12,23 @@
   <div class="meta">
     <h3 class="name" title="{{ p.title }}"><a class="card-link" href="{{ base }}/board/{{ p.id }}">{{ p.title }}</a></h3>
     <div class="sub author">
-      <img class="head" src="https://mc-heads.net/avatar/{{ p.uuid }}/16" alt="" width="16" height="16">
-      <span>{{ p.author_name }}</span>{{ user_badges(p.author_badges) }}
+      <img class="head" src="{{ avatar_url(p.uuid, p.author_avatar_v) }}" alt="" width="16" height="16" loading="lazy">
+      <a class="author-link" href="{{ base }}/u/{{ p.uuid }}">{{ p.author_shown }}</a>{{ user_badges(p.author_badges) }}
+      {% if p.coauthors %}<span class="muted" title="With {% for a in p.coauthors %}{{ a.display }}{{ ', ' if not loop.last else '' }}{% endfor %}">+{{ p.coauthors|length }}</span>{% endif %}
     </div>
     <div class="sub muted stats">
       <span class="score{{ ' neg' if p.score < 0 else '' }}" title="{{ p.ups }} up, {{ p.downs }} down">&#9650; {{ p.score }}</span>
-      <span>.{{ p.format }}</span>
+      <span title="Downloads and saves">&#8681; {{ p.downloads|num }}</span>
       <span>{{ p.size|human_size }}</span>
+      {% if p.version_count > 1 %}<span title="{{ p.version_count }} versions">v{{ p.version }}</span>{% endif %}
     </div>
     <div class="sub muted"><time datetime="{{ p.created|iso_utc }}">{{ p.created|pretty_utc }}</time></div>
-    {% if p.tags or p.size_class %}
+    {% if p.tags or p.size_class or p.complexity or p.mc %}
     <div class="sub chips">
       {% for t in p.tags %}<a class="chip tag-chip" href="{{ chip_url(tag=t) if chip_url else base ~ '/board?tag=' ~ t }}">{{ all_tags.get(t, t) }}</a>{% endfor %}
       {% if p.size_class %}<a class="chip size-chip" href="{{ chip_url(size=p.size_class) if chip_url else base ~ '/board?size=' ~ p.size_class }}" title="Size by block count">{{ size_classes.get(p.size_class, p.size_class) }}</a>{% endif %}
+      {% if p.complexity %}<a class="chip cx-chip cx-{{ p.complexity }}" href="{{ chip_url(complexity=p.complexity) if chip_url else base ~ '/board?complexity=' ~ p.complexity }}" title="{{ p.distinct_count }} different block and entity types">{{ complexity_labels[p.complexity] }}</a>{% endif %}
+      {% if p.mc %}<a class="chip mc-chip" href="{{ chip_url(mc=p.mc) if chip_url else base ~ '/board?mc=' ~ p.mc|urlencode }}" title="For Minecraft {{ p.mc }}">MC {{ p.mc }}</a>{% endif %}
     </div>
     {% endif %}
     {% if show_visibility %}<div class="sub"><span class="badge vis-{{ p.visibility }}">{{ p.visibility|capitalize }}</span>{% if p.hidden %} <span class="badge mod-hidden" title="Hidden by an admin">Hidden</span>{% endif %}</div>{% endif %}

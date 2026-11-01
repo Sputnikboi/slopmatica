@@ -24,6 +24,9 @@
     <input type="hidden" name="sort" value="{{ sort }}">
     {% for t in tags %}<input type="hidden" name="tag" value="{{ t }}">{% endfor %}
     {% if size %}<input type="hidden" name="size" value="{{ size }}">{% endif %}
+    {% if complexity %}<input type="hidden" name="complexity" value="{{ complexity }}">{% endif %}
+    {% if mc %}<input type="hidden" name="mc" value="{{ mc }}">{% endif %}
+    {% if author %}<input type="hidden" name="author" value="{{ author.uuid }}">{% endif %}
     <input type="search" name="q" value="{{ q }}" placeholder="Search titles, descriptions, authors" aria-label="Search the board" maxlength="100">
     <button class="btn ghost" type="submit">Search</button>
   </form>
@@ -45,12 +48,38 @@
     <a class="{{ 'on' if size == key else '' }}" href="{{ link(size=key) }}"{% if size == key %} aria-current="true"{% endif %} rel="nofollow">{{ label }}</a>
     {% endfor %}
   </div>
+  <div class="seg cx-filter" role="group" aria-label="Complexity by different block types">
+    <a class="{{ 'on' if not complexity else '' }}" href="{{ link(complexity=None) }}"{% if not complexity %} aria-current="true"{% endif %}><span class="long">Any complexity</span><span class="short">Any</span></a>
+    {% for key, label in complexity_labels.items() %}
+    <a class="{{ 'on' if complexity == key else '' }}" href="{{ link(complexity=key) }}"{% if complexity == key %} aria-current="true"{% endif %} rel="nofollow">{{ label }}</a>
+    {% endfor %}
+  </div>
+  {% if mc_versions or mc %}
+  <form class="mc-filter" method="get" action="{{ base }}/board" data-autosubmit>
+    {% if tab != "public" %}<input type="hidden" name="tab" value="{{ tab }}">{% endif %}
+    <input type="hidden" name="sort" value="{{ sort }}">
+    {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+    {% for t in tags %}<input type="hidden" name="tag" value="{{ t }}">{% endfor %}
+    {% if size %}<input type="hidden" name="size" value="{{ size }}">{% endif %}
+    {% if complexity %}<input type="hidden" name="complexity" value="{{ complexity }}">{% endif %}
+    {% if author %}<input type="hidden" name="author" value="{{ author.uuid }}">{% endif %}
+    <select name="mc" aria-label="Minecraft version">
+      <option value="">Any Minecraft version</option>
+      {% for m in mc_versions %}<option value="{{ m }}"{% if m == mc %} selected{% endif %}>Minecraft {{ m }}</option>{% endfor %}
+      {% if mc and mc not in mc_versions %}<option value="{{ mc }}" selected>Minecraft {{ mc }}</option>{% endif %}
+    </select>
+    <noscript><button class="btn ghost small" type="submit">Filter</button></noscript>
+  </form>
+  {% endif %}
 </section>
 
 {% if q %}<p class="muted result-note">{{ total }} result{{ "" if total == 1 else "s" }} for &ldquo;{{ q }}&rdquo; &middot; <a href="{{ link(q='') }}">clear</a></p>{% endif %}
-{% if tags or size %}<p class="muted result-note">{{ total }} post{{ "" if total == 1 else "s" }}
+{% if filtered_by %}<p class="muted result-note">{{ total }} post{{ "" if total == 1 else "s" }}
+  {%- if author %} by <a href="{{ base }}/u/{{ author.uuid }}"><strong>{{ author.shown }}</strong></a>{% endif %}
   {%- if tags %} tagged {% for t in tags %}<strong>{{ all_tags[t] }}</strong>{{ " and " if not loop.last else "" }}{% endfor %}{% endif %}
-  {%- if size %}{{ "," if tags else "" }} size <strong>{{ size_classes[size] }}</strong>{% endif %} &middot; <a href="{{ link(tags=[], size=None) }}">clear filters</a></p>{% endif %}
+  {%- if size %}{{ "," if tags else "" }} size <strong>{{ size_classes[size] }}</strong>{% endif %}
+  {%- if complexity %}{{ "," if tags or size else "" }} <strong>{{ complexity_labels[complexity] }}</strong>{% endif %}
+  {%- if mc %}{{ "," if tags or size or complexity else "" }} for Minecraft <strong>{{ mc }}</strong>{% endif %} &middot; <a href="{{ link(tags=[], size=None, complexity=None, mc=None, author=None) }}">clear filters</a></p>{% endif %}
 
 {% if posts %}
 <section class="grid">
@@ -63,7 +92,7 @@
   {% if page < pages %}<a class="btn ghost small" href="{{ link(page=page + 1) }}" rel="next">Next &rarr;</a>{% else %}<span></span>{% endif %}
 </nav>
 {% endif %}
-{% elif q or tags or size %}
+{% elif q or filtered_by %}
 <p class="empty muted">Nothing matches.</p>
 {% elif page > 1 %}
 <p class="empty muted">There is no page {{ page }}. <a href="{{ link() }}">Back to the first page</a></p>

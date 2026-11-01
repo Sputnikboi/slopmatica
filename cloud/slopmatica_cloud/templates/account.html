@@ -3,12 +3,58 @@
 {% block title %}Account &middot; Slopmatica Cloud{% endblock %}
 {% block main %}
 <section class="panel account-id">
-  <img class="head" src="https://mc-heads.net/avatar/{{ user.uuid }}/64" alt="" width="64" height="64">
+  <img class="head" src="{{ avatar_url(user.uuid, user.avatar_version) }}" alt="" width="64" height="64">
   <div>
-    <h1 class="page-title">{{ user.name }}{{ user_badges(badges) }}</h1>
-    <p class="muted small"><code>{{ user.uuid }}</code>{% if user.is_admin %} &middot; admin{% endif %}</p>
+    <h1 class="page-title">{{ user.shown }}{% if user.display_tag %}<span class="tag muted" title="Only you and admins see your tag">#{{ user.display_tag }}</span>{% endif %}{{ user_badges(badges) }}</h1>
+    <p class="muted small">Minecraft: <strong>{{ user.name }}</strong> &middot; <code>{{ user.uuid }}</code>{% if user.is_admin %} &middot; admin{% endif %} &middot; <a href="{{ base }}/u/{{ user.uuid }}">Your public profile</a></p>
   </div>
 </section>
+
+{% if member %}
+<section class="panel identity">
+  <h2>Profile</h2>
+  <form class="post-form" data-display-form novalidate>
+    <div class="field-row">
+      <label class="field"><span class="label">Display name <span class="muted">({{ min_display }} to {{ max_display }} characters)</span></span>
+        <input type="text" name="name" value="{{ user.shown }}" minlength="{{ min_display }}" maxlength="{{ max_display }}" autocomplete="nickname" required></label>
+      <label class="field tag-field"><span class="label">Tag</span>
+        <input type="text" name="tag" value="{{ user.display_tag or '' }}" maxlength="5" pattern="[A-Za-z0-9]{3,5}" placeholder="none" spellcheck="false" autocomplete="off"></label>
+    </div>
+    <p class="muted small">Shown on the board and your profile instead of your Minecraft name. If someone already has the name, yours gets a tag (3 to 5 letters or digits) that tells you apart; only you and admins see it.</p>
+    <p class="form-msg" role="status"></p>
+    <div class="form-actions start">
+      <button type="submit" class="btn">Save name</button>
+      {% if user.shown != user.name %}<button type="button" class="btn ghost" data-display-reset>Use my Minecraft name</button>{% endif %}
+    </div>
+  </form>
+  <form class="post-form avatar-form" data-avatar-form novalidate>
+    <span class="label">Picture</span>
+    <div class="avatar-row">
+      <img class="head" src="{{ avatar_url(user.uuid, user.avatar_version) }}" alt="Your picture" width="48" height="48">
+      <input type="file" name="icon" accept="image/png,image/jpeg" aria-label="Picture (PNG or JPEG)">
+      <button type="submit" class="btn ghost small">Upload</button>
+      {% if user.avatar %}<button type="button" class="btn ghost small" data-avatar-reset>Reset to Minecraft face</button>{% endif %}
+    </div>
+    <p class="muted small">{% if user.avatar %}A custom picture.{% else %}Your Minecraft face, from your skin.{% endif %} A PNG or JPEG of at most {{ max_avatar_kb }} KB and {{ max_avatar_side }} &times; {{ max_avatar_side }} pixels.</p>
+    <p class="form-msg" role="status"></p>
+  </form>
+</section>
+
+<section class="panel" id="discord">
+  <h2>Discord</h2>
+  {% if discord_msg %}<p class="notice small{{ ' warn' if discord_msg[1] else '' }}">{{ discord_msg[0] }}</p>{% endif %}
+  {% if not discord_enabled %}
+  <p class="small muted">Discord linking isn&rsquo;t set up yet.</p>
+  {% elif user.discord_id %}
+  <p class="small">Linked to <strong>{{ user.discord_name }}</strong>.</p>
+  <div class="form-actions start"><button type="button" class="btn ghost danger" data-discord-unlink>Unlink Discord</button></div>
+  <p class="form-msg small" data-discord-msg role="status"></p>
+  {% else %}
+  <p class="small">Link your Discord account so admins and other members can recognise you.</p>
+  <div class="form-actions start"><a class="btn" href="{{ base }}/account/discord/link">Link Discord</a></div>
+  {% endif %}
+</section>
+{% endif %}
 
 {% if not member %}
 <section class="panel notice-panel">

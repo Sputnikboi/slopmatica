@@ -96,7 +96,7 @@ def test_post_public(client, ppl, data_dir):
     assert re.fullmatch(r"[A-Za-z0-9_-]{10}", p["id"])
     assert p["title"] == "Castle" and p["description"] == "Line one\nLine two"
     assert p["visibility"] == "public"
-    assert p["author"] == {"uuid": ppl.alice.uuid, "name": "Alice", "badges": []}
+    assert p["author"] == {"uuid": ppl.alice.uuid, "name": "Alice", "badges": [], "displayName": "Alice"}
     # stored as .slopmatic, converted from the .litematic
     assert p["filename"] == "Castle.slopmatic" and p["format"] == "slopmatic"
     stored = (data_dir / "posts" / p["id"] / "Castle.slopmatic").read_bytes()
@@ -704,7 +704,7 @@ def test_pages(client, ppl):
     assert "Barn &lt;b&gt;&amp;&lt;/b&gt;" in board.text
     assert f'href="/board/{pid}"' in board.text
     assert f"/api/board/{pid}/thumbnail?v=" in board.text
-    assert f"https://mc-heads.net/avatar/{ppl.alice.uuid}/16" in board.text
+    assert f'src="/avatar/{ppl.alice.uuid}"' in board.text  # 0.8.0: our own avatar endpoint, not mc-heads.net
     assert "My posts" not in board.text  # login-only tabs are hidden when logged out
 
     page = anon.get(f"/board/{pid}").text
@@ -838,7 +838,8 @@ def test_migrates_a_0_3_0_database(make_client, mojang, data_dir):
     h = bearer(token)
     me = c.get("/api/me", headers=h).json()
     assert me == {"uuid": uuid, "name": "Veteran", "usedBytes": len(body), "quotaBytes": 1073741824,
-                  "whitelisted": True, "badges": []}
+                  "whitelisted": True, "badges": [], "displayName": "Veteran", "tag": None,
+                  "avatar": f"http://127.0.0.1:8095/avatar/{uuid}"}
     listing = c.get("/api/files", headers=h).json()["files"]
     assert listing == [{"path": "builds/Old.litematic", "size": len(body), "sha256": hashlib.sha256(body).hexdigest(),
                         "modified": 1_700_000_000_000, "hasThumbnail": True, "source": None}]

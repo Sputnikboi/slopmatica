@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% from "_badges.html" import user_badges %}
 {% block title %}Admin &middot; Slopmatica Cloud{% endblock %}
-{% macro person(u, size=24) %}{% if u %}<span class="person"><img class="head" src="https://mc-heads.net/avatar/{{ u.uuid }}/{{ size }}" alt="" width="{{ size }}" height="{{ size }}"> <a href="{{ base }}/admin?tab=users&amp;q={{ u.uuid }}">{{ u.name or u.uuid }}</a></span>{% else %}<span class="muted">nobody</span>{% endif %}{% endmacro %}
+{# A player for admins: the display name with its tag (which tells people apart), and the Minecraft name when different. #}
+{% macro person(u, size=24) %}{% if u %}<span class="person"><img class="head" src="{{ avatar_url(u.uuid, u.avatarVersion or 0) }}" alt="" width="{{ size }}" height="{{ size }}" loading="lazy"> <a href="{{ base }}/admin?tab=users&amp;q={{ u.uuid }}">{{ u.displayName or u.name or u.uuid }}{% if u.tag %}<span class="tag">#{{ u.tag }}</span>{% endif %}</a>{% if u.displayName and u.name and u.displayName != u.name %} <span class="muted small">({{ u.name }})</span>{% endif %}</span>{% else %}<span class="muted">nobody</span>{% endif %}{% endmacro %}
 {% macro status_tabs(tab) %}
 <nav class="tabs fb-tabs" aria-label="Status">
   {% for key in statuses + ("all",) %}
@@ -79,8 +80,8 @@
     <span class="small grow">
       {% if r.kind == "post" %}Post
         {% if r.post %}<a href="{{ base }}/board/{{ r.target.id }}">{{ r.target.label }}</a>{% else %}<strong>{{ r.target.label }}</strong> <span class="muted">(deleted)</span>{% endif %}
-        by {{ person({"uuid": r.target.uuid, "name": r.target.name or "?"}, 16) }}
-      {% else %}User {{ person({"uuid": r.target.uuid, "name": r.target.name or r.target.label}, 16) }}{% endif %}
+        by {{ person({"uuid": r.target.uuid, "name": r.target.name or "?", "displayName": r.target.displayName, "tag": r.target.tag}, 16) }}
+      {% else %}User {{ person({"uuid": r.target.uuid, "name": r.target.name or r.target.label, "displayName": r.target.displayName, "tag": r.target.tag}, 16) }}{% endif %}
     </span>
     <span class="badge st-{{ r.status }}">{{ r.status|capitalize }}</span>
   </div>
@@ -134,7 +135,7 @@
   <ul class="wl-list" data-wl-list>
     {% for e in entries %}
     <li data-wl-row data-search="{{ e.name|lower }} {{ e.uuid }} {{ (e.accountName or '')|lower }}">
-      <img class="head" src="https://mc-heads.net/avatar/{{ e.uuid }}/16" alt="" width="16" height="16" loading="lazy">
+      <img class="head" src="{{ avatar_url(e.uuid) }}" alt="" width="16" height="16" loading="lazy">
       <span class="wl-name">{{ e.name }}{% if e.accountName and e.accountName != e.name %} <span class="muted">(now {{ e.accountName }})</span>{% endif %}</span>
       <code class="wl-uuid muted">{{ e.uuid }}</code>
       <span class="badge src-{{ e.source }}" title="Source: {{ e.source }}">{{ e.source }}</span>
@@ -171,10 +172,65 @@
 <p class="muted empty">Nobody has a badge yet.</p>
 {% endfor %}
 
+{% elif admin_tab == "telemetry" %}
+{% macro table(rows, cols, empty="No reports yet.") %}
+{% if rows %}
+<div class="table-wrap"><table class="stat-table">
+  <thead><tr>{% for key, label in cols %}<th scope="col"{% if not loop.first %} class="num"{% endif %}>{{ label }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for r in rows %}<tr>{% for key, label in cols %}<td{% if not loop.first %} class="num"{% endif %}>{{ r[key] if r[key] is not none else "–" }}</td>{% endfor %}</tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% else %}<p class="muted small">{{ empty }}</p>{% endif %}
+{% endmacro %}
+<p class="muted small">Opt-in usage reports from the mod (&ldquo;Share Usage Data&rdquo;). Reports carry a random id per install and nothing about the player; board posts are named only while public. Kept for 180 days.</p>
+<section class="panel">
+  <h2>Reports</h2>
+  <dl class="facts tele-facts">
+    <div><dt>Last 7 days</dt><dd>{{ t.reports7|num }} reports &middot; {{ t.installs7|num }} installs</dd></div>
+    <div><dt>Last 30 days</dt><dd>{{ t.reports30|num }} reports &middot; {{ t.installs30|num }} installs</dd></div>
+  </dl>
+</section>
+<section class="panel">
+  <h2>Frame times while builds are shown</h2>
+  <p class="muted small">Medians of each report&rsquo;s 50th and 99th percentile frame time, in milliseconds (last 30 days).</p>
+  <h3>By GPU vendor</h3>
+  {{ table(t.byGpuVendor, (("key", "Vendor"), ("reports", "Reports"), ("installs", "Installs"), ("p50", "p50 ms"), ("p99", "p99 ms"))) }}
+  <h3>By mod version</h3>
+  {{ table(t.byModVersion, (("key", "Version"), ("reports", "Reports"), ("installs", "Installs"), ("p50", "p50 ms"), ("p99", "p99 ms"))) }}
+</section>
+<section class="panel">
+  <h2>Most changed settings</h2>
+  <p class="muted small">Installs whose latest report has the setting changed from its default.</p>
+  {{ table(t.settings, (("name", "Setting"), ("count", "Installs"))) }}
+</section>
+<section class="panel">
+  <h2>Keys</h2>
+  {{ table(t["keys"], (("name", "Key"), ("uses", "Uses"), ("installs", "Installs"))) }}
+</section>
+<section class="panel">
+  <h2>Where loaded builds came from</h2>
+  <p class="muted small">Reports that loaded at least one build from each source.</p>
+  {{ table(t.sources, (("name", "Source"), ("count", "Reports"))) }}
+  <h3>Most used public board posts</h3>
+  {% if t.topPosts %}
+  <ol class="top-posts">{% for p in t.topPosts %}<li><a href="{{ base }}/board/{{ p.id }}">{{ p.title }}</a> <span class="muted small">&middot; {{ p.installs }} install{{ "" if p.installs == 1 else "s" }}</span></li>{% endfor %}</ol>
+  {% else %}<p class="muted small">None yet.</p>{% endif %}
+</section>
+<section class="panel">
+  <h2>Computers</h2>
+  <p class="muted small">Per install, from its latest report.</p>
+  <h3>Operating system</h3>
+  {{ table(t.os, (("name", "System"), ("count", "Installs"))) }}
+  <h3>Memory for the game</h3>
+  {{ table(t.memory, (("name", "Max heap"), ("count", "Installs"))) }}
+</section>
+
 {% else %}
 <form class="toolbar" method="get" action="{{ base }}/admin" role="search">
   <input type="hidden" name="tab" value="users">
-  <input type="search" name="q" value="{{ q }}" placeholder="Name or uuid" aria-label="Search users" maxlength="100">
+  <input type="search" name="q" value="{{ q }}" placeholder="Minecraft, display or Discord name, or uuid" aria-label="Search users" maxlength="100">
   <button class="btn ghost" type="submit">Search</button>
 </form>
 <p class="muted result-note">{{ total }} account{{ "" if total == 1 else "s" }}{% if q %} matching &ldquo;{{ q }}&rdquo; &middot; <a href="{{ base }}/admin?tab=users">all</a>{% endif %} &middot; most recently seen first</p>
@@ -189,6 +245,7 @@
     <div><dt>Whitelisted</dt><dd>{% if u.whitelisted %}Yes <span class="muted small">({{ u.whitelistSource }})</span>{% elif u.admin %}Admin{% else %}<span class="neg">No</span>{% endif %}</dd></div>
     <div><dt>Board posts</dt><dd>{% if u.posts %}<a href="{{ base }}/board?q={{ u.name|urlencode }}">{{ u.posts }}</a>{% else %}0{% endif %}</dd></div>
     <div><dt>Last seen</dt><dd>{% if u.lastSeen %}<time datetime="{{ u.lastSeen|iso_utc }}">{{ u.lastSeen|pretty_utc }}</time>{% else %}<span class="muted">never</span>{% endif %}</dd></div>
+    <div><dt>Discord</dt><dd>{% if u.discord %}{{ u.discord.name }} <span class="muted small">({{ u.discord.id }})</span>{% else %}<span class="muted">not linked</span>{% endif %}</dd></div>
   </dl>
   <details class="edit">
     <summary>Manage</summary>

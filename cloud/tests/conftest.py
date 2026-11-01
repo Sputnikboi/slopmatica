@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import gzip
 import http.server
 import json
@@ -16,8 +17,9 @@ from slopmatica_cloud.app import Settings, create_app
 
 
 class FakeMojang:
-    """Minimal stand-in for sessionserver.mojang.com/session/minecraft/hasJoined and
-    api.mojang.com/users/profiles/minecraft/<name>."""
+    """Minimal stand-in for sessionserver.mojang.com/session/minecraft/hasJoined,
+    api.mojang.com/users/profiles/minecraft/<name>, and (0.8.0, for avatars) the session server's
+    profile/<uuid> with its textures property and the skin files it points at (/texture/<uuid>)."""
 
     def __init__(self) -> None:
         self.accounts: dict[str, tuple[str, str]] = {}  # lower name -> (hex uuid, canonical name)
@@ -27,6 +29,10 @@ class FakeMojang:
         self.url = ""
         self.profile_url = ""
         self.profile_lookups: list[str] = []
+        self.skins: dict[str, bytes | None] = {}  # hex uuid -> skin PNG (None: no skin set)
+        self.skin_lookups: list[str] = []
+        self.session_profile_url = ""
+        self.port = 0
 
     def reset(self) -> None:
         self.accounts.clear()
@@ -34,6 +40,8 @@ class FakeMojang:
         self.status_override = None
         self.calls.clear()
         self.profile_lookups.clear()
+        self.skins.clear()
+        self.skin_lookups.clear()
 
     def account(self, name: str) -> str:
         key = name.lower()
@@ -66,6 +74,27 @@ def _mojang_server():
                 self.send_response(fake.status_override)
                 self.end_headers()
                 return
+            if parsed.path.startswith(("/session/minecraft/profile/", "/texture/")):
+                hexid = parsed.path.rsplit("/", 1)[1]
+                if parsed.path.startswith("/texture/"):
+                    body, ctype = fake.skins.get(hexid) or b"", "image/png"
+                else:
+                    fake.skin_lookups.append(hexid)
+                    if hexid not in fake.skins:
+                        self.send_response(204)
+                        self.end_headers()
+                        return
+                    url = f"http://127.0.0.1:{fake.port}/texture/{hexid}"
+                    textures = {"textures": {"SKIN": {"url": url}} if fake.skins[hexid] else {}}
+                    value = base64.b64encode(json.dumps(textures).encode()).decode()
+                    body = json.dumps({"id": hexid, "name": "x", "properties": [{"name": "textures", "value": value}]}).encode()
+                    ctype = "application/json"
+                self.send_response(200 if body else 404)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if parsed.path.startswith("/users/profiles/minecraft/"):
                 name = urllib.parse.unquote(parsed.path.rsplit("/", 1)[1])
                 fake.profile_lookups.append(name)
@@ -97,6 +126,8 @@ def _mojang_server():
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     fake.url = f"http://127.0.0.1:{server.server_port}/session/minecraft/hasJoined"
     fake.profile_url = f"http://127.0.0.1:{server.server_port}/users/profiles/minecraft"
+    fake.session_profile_url = f"http://127.0.0.1:{server.server_port}/session/minecraft/profile"
+    fake.port = server.server_port
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield fake
@@ -121,6 +152,9 @@ def make_client(data_dir, mojang):
             kw.setdefault("data_dir", data_dir)
             kw.setdefault("mojang_has_joined_url", mojang.url)
             kw.setdefault("mojang_profile_url", mojang.profile_url)
+            # avatars: skins come from the fake too, so no test ever reaches the real Mojang
+            kw.setdefault("mojang_session_profile_url", mojang.session_profile_url)
+            kw.setdefault("skin_hosts", frozenset({"127.0.0.1"}))
             # The tests from before 0.7.0 cover what members can do; test_v070 turns the whitelist gate on.
             kw.setdefault("whitelist_enforced", False)
             settings = Settings(**kw)

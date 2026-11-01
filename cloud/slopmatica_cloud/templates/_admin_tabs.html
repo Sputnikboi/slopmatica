@@ -3,7 +3,7 @@
   <h1 class="page-title">Admin</h1>
 </div>
 <nav class="tabs adm-tabs" aria-label="Admin">
-  {% for key, label in (("applications", "Applications"), ("storage", "Storage"), ("reports", "Reports"), ("feedback", "Feedback"), ("whitelist", "Whitelist"), ("badges", "Badges"), ("users", "Users")) %}
+  {% for key, label in (("applications", "Applications"), ("storage", "Storage"), ("reports", "Reports"), ("feedback", "Feedback"), ("whitelist", "Whitelist"), ("badges", "Badges"), ("users", "Users"), ("telemetry", "Telemetry")) %}
   {% set href = base ~ "/admin/feedback" if key == "feedback" else base ~ "/admin" ~ ("" if key == "applications" else "?tab=" ~ key) %}
   <a class="tab{{ ' on' if admin_tab == key else '' }}" href="{{ href }}"{% if admin_tab == key %} aria-current="page"{% endif %}>{{ label }}{% if tab_counts.get(key) %} <span class="count">{{ tab_counts[key] }}</span>{% endif %}</a>
   {% endfor %}

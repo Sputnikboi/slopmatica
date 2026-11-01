@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% from "_post_card.html" import post_card %}
+{% from "_badges.html" import user_badges %}
+{% block title %}{{ person.shown }} &middot; Slopmatica Cloud{% endblock %}
+{% block head %}
+<meta property="og:type" content="profile">
+<meta property="og:site_name" content="Slopmatica Cloud">
+<meta property="og:title" content="{{ person.shown }}">
+<meta property="og:description" content="{{ total }} public schematic{{ '' if total == 1 else 's' }} on Slopmatica Cloud">
+<meta property="og:image" content="{{ avatar_url(person.uuid, person.avatar_version, absolute=True) }}">
+<meta name="twitter:card" content="summary">
+{% endblock %}
+{% block main %}
+<section class="panel account-id profile-id">
+  <img class="head" src="{{ avatar_url(person.uuid, person.avatar_version) }}" alt="" width="96" height="96">
+  <div>
+    <h1 class="page-title">{{ person.shown }}{{ user_badges(badges) }}</h1>
+    <p class="muted small">{{ total }} public post{{ "" if total == 1 else "s" }} on the board{% if user and user.uuid == person.uuid %} &middot; <a href="{{ base }}/account">Edit your profile</a>{% endif %}</p>
+  </div>
+</section>
+
+{% if posts %}
+<section class="grid">
+  {% for p in posts %}{{ post_card(p, base, all_tags=all_tags, size_classes=size_classes) }}{% endfor %}
+</section>
+{% if pages > 1 %}
+<nav class="pager" aria-label="Pages">
+  {% if page > 1 %}<a class="btn ghost small" href="{{ base }}/u/{{ person.uuid }}?page={{ page - 1 }}" rel="prev">&larr; Previous</a>{% else %}<span></span>{% endif %}
+  <span class="muted">Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a class="btn ghost small" href="{{ base }}/u/{{ person.uuid }}?page={{ page + 1 }}" rel="next">Next &rarr;</a>{% else %}<span></span>{% endif %}
+</nav>
+{% endif %}
+{% else %}
+<p class="empty muted">No public posts yet.</p>
+{% endif %}
+{% endblock %}

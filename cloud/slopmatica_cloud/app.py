@@ -6,6 +6,7 @@ server does), so there are no passwords. See README.md for the API.
 
 from __future__ import annotations
 
+import base64
 import gzip
 import hashlib
 import hmac
@@ -40,7 +41,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import convert, model3d, nbt, textfilter
+from . import __version__ as VERSION, convert, images, model3d, nbt, textfilter
 
 log = logging.getLogger("slopmatica_cloud")
 
@@ -48,6 +49,7 @@ PKG_DIR = Path(__file__).resolve().parent
 CLOUD_DIR = PKG_DIR.parent
 
 DAY = 86400
+USER_AGENT = f"SlopmaticaCloud/{VERSION} (+https://github.com/Sputnikboi/slopmatica)"
 CHALLENGE_TTL = 120
 API_TOKEN_TTL = 180 * DAY
 WEBLOGIN_TTL = 300
@@ -180,6 +182,54 @@ REPORT_USER_LIMIT = 10  # reports per account per LOGIN_WINDOW, counted in login
 ADMIN_PAGE_SIZE = 50
 LAST_SEEN_EVERY = 300  # seconds: users.last_seen is written at most this often per account
 
+# ---- settings profiles (the mod's named sets of settings)
+PROFILE_LIMIT = 6  # per account; admins have no limit
+MAX_PROFILE_NAME_LEN = 40
+MAX_PROFILE_SETTINGS = 64 * 1024  # bytes of the settings object as compact JSON
+PROFILE_ID_RE = POST_ID_RE  # same shape as post ids
+
+# ---- telemetry (the mod's opt-in usage reports)
+MAX_TELEMETRY_BYTES = 32 * 1024
+TELEMETRY_WINDOW = 15 * 60  # seconds over which reports are counted for the rate limits
+TELEMETRY_IP_LIMIT = 60  # reports per address per window (the mod sends up to 20 queued ones at once)
+TELEMETRY_INSTALL_LIMIT = 30  # reports per install per window
+TELEMETRY_KEEP_DAYS = 180  # older reports are deleted at startup
+SOURCE_RE = re.compile(r"^(?:local|cloud|shared|board:[A-Za-z0-9_-]{1,32})$")
+SETTING_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
+
+# ---- identity: display names, avatars, Discord
+MIN_DISPLAY_NAME_LEN = 3
+MAX_DISPLAY_NAME_LEN = 24
+DISPLAY_TAG_RE = re.compile(r"^[A-Za-z0-9]{3,5}$")
+TAG_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # random tags: 4 of these (no 0/O or 1/I)
+MAX_AVATAR_BYTES = 256 * 1024
+MAX_AVATAR_SIDE = 512
+AVATAR_TYPES = {"png": "image/png", "jpeg": "image/jpeg"}
+SKIN_TTL = DAY  # a cached skin is fetched again after this
+SKIN_RETRY = 600  # seconds before trying Mojang again after a failed fetch
+SKIN_MAX_BYTES = 64 * 1024
+DISCORD_AUTHORIZE = "https://discord.com/oauth2/authorize"
+DISCORD_TOKEN = "https://discord.com/api/oauth2/token"
+DISCORD_ME = "https://discord.com/api/users/@me"
+DISCORD_STATE_TTL = 600
+
+# ---- board: authors, links, versions, downloads, complexity
+MAX_COAUTHORS = 10
+MAX_AUTHOR_NAME_LEN = 40
+MAX_LINKS = 4
+MAX_LINK_LEN = 300
+MAX_VERSION_LABEL_LEN = 60
+VERSION_DIR_RE = re.compile(r"^v(\d{1,6})$")  # posts/<id>/v<n>/: an earlier version's snapshot, thumbnail and 3D cache
+# Complexity by distinct block types plus entity types: (key, label, exclusive upper bound or None). Fixed for
+# now; complexity_classes() is where they would come from the distribution of real uploads (as planned for size).
+COMPLEXITY_CLASSES: tuple[tuple[str, str, int | None], ...] = (
+    ("simple", "Simple", 10),
+    ("moderate", "Moderate", 30),
+    ("complex", "Complex", 80),
+    ("very-complex", "Very complex", None),
+)
+COMPLEXITY_LABELS = {key: label for key, label, _ in COMPLEXITY_CLASSES}
+
 
 # --------------------------------------------------------------------------- settings
 
@@ -210,6 +260,18 @@ class Settings:
     whitelist_enforced: bool = True
     # A whitelist.json read once, when the database migrates to schema 5. None: start empty.
     whitelist_seed: Path | None = None
+    # Skins for avatars: the profile (+ "/<uuid without dashes>") and the hosts a skin URL may point at.
+    mojang_session_profile_url: str = "https://sessionserver.mojang.com/session/minecraft/profile"
+    skin_hosts: frozenset[str] = frozenset({"textures.minecraft.net"})
+    skin_timeout: float = 5.0
+    # Discord account linking (OAuth2); off unless all three are set.
+    discord_client_id: str = ""
+    discord_client_secret: str = ""
+    discord_redirect: str = ""  # the callback URL registered with Discord: <site>/account/discord/callback
+
+    @property
+    def discord_enabled(self) -> bool:
+        return bool(self.discord_client_id and self.discord_client_secret and self.discord_redirect)
 
     def __post_init__(self) -> None:
         self.data_dir = Path(self.data_dir).resolve()
@@ -247,6 +309,13 @@ class Settings:
             kw["whitelist_enforced"] = env["SLOPMATICA_WHITELIST_ENFORCED"].strip().lower() not in ("0", "false", "no", "off")
         if env.get("SLOPMATICA_WHITELIST_SEED"):
             kw["whitelist_seed"] = Path(env["SLOPMATICA_WHITELIST_SEED"]).expanduser()
+        if env.get("SLOPMATICA_MOJANG_SESSION_PROFILE"):
+            kw["mojang_session_profile_url"] = env["SLOPMATICA_MOJANG_SESSION_PROFILE"]
+        for key, attr in (("SLOPMATICA_DISCORD_CLIENT_ID", "discord_client_id"),
+                          ("SLOPMATICA_DISCORD_CLIENT_SECRET", "discord_client_secret"),
+                          ("SLOPMATICA_DISCORD_REDIRECT", "discord_redirect")):
+            if env.get(key):
+                kw[attr] = env[key].strip()
         return cls(**kw)
 
 
@@ -355,6 +424,72 @@ def size_class_sql(column: str) -> str:
     return f"CASE WHEN {column} IS NULL THEN NULL {cases} ELSE '{SIZE_CLASSES[-1][0]}' END"
 
 
+def complexity_classes() -> tuple[tuple[str, str, int | None], ...]:
+    """The complexity thresholds. Fixed for now; this is the one place to derive them from the distribution of
+    posts.distinct_count later (posts store the raw count, and the class is worked out when read)."""
+    return COMPLEXITY_CLASSES
+
+
+def complexity_class(distinct: int | None) -> str | None:
+    """The complexity category of a snapshot with distinct block and entity types, None if unknown."""
+    if distinct is None:
+        return None
+    for key, _, below in complexity_classes():
+        if below is None or distinct < below:
+            return key
+    raise AssertionError("unreachable")
+
+
+def complexity_sql(column: str) -> str:
+    """complexity_class() as an SQL expression (the board's filter)."""
+    classes = complexity_classes()
+    cases = " ".join(f"WHEN {column} < {int(below)} THEN '{key}'" for key, _, below in classes if below is not None)
+    return f"CASE WHEN {column} IS NULL THEN NULL {cases} ELSE '{classes[-1][0]}' END"
+
+
+def link_domain(url: str) -> str:
+    """The host a post's link points at, as shown next to it (without www.)."""
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return host.removeprefix("www.")
+
+
+# Telemetry summaries group free-form report fields into a few buckets.
+MEMORY_BUCKETS = ("under 2 GB", "2 to 4 GB", "4 to 8 GB", "8 to 16 GB", "16 GB or more", "unknown")
+
+
+def memory_bucket(mb: int | None) -> str:
+    """The game's maximum heap (maxMemoryMb) as a bucket."""
+    if mb is None:
+        return "unknown"
+    for limit, name in zip((2048, 4096, 8192, 16384), MEMORY_BUCKETS):
+        if mb < limit:
+            return name
+    return MEMORY_BUCKETS[4]
+
+
+def os_family(os_name: str | None) -> str:
+    """'Windows 11 10.0' -> 'Windows 11', 'Mac OS X 14.5' -> 'macOS', 'Linux 6.8.0-45' -> 'Linux'."""
+    words = (os_name or "").split()
+    if not words:
+        return "unknown"
+    low = words[0].lower()
+    if low == "windows":
+        return " ".join(words[:2])
+    if low in ("mac", "macos", "darwin"):
+        return "macOS"
+    return words[0]
+
+
+def gpu_vendor(vendor: str | None) -> str:
+    """A GPU vendor name as reported by the driver, folded to the usual few."""
+    low = (vendor or "").lower()
+    for needle, name in (("nvidia", "NVIDIA"), ("amd", "AMD"), ("ati ", "AMD"), ("advanced micro", "AMD"),
+                         ("intel", "Intel"), ("apple", "Apple"), ("mesa", "Mesa"), ("microsoft", "Microsoft")):
+        if needle in low + " ":
+            return name
+    return (vendor or "unknown").strip()[:40] or "unknown"
+
+
 # --------------------------------------------------------------------------- storage
 
 
@@ -364,6 +499,29 @@ class User:
     name: str
     is_admin: bool
     quota_bytes: int | None = None  # a per-account quota set by an admin; None: the default (admins: unlimited)
+    display_name: str = ""  # shown on the site; the Minecraft name until the player picks another
+    display_tag: str | None = None  # tells apart players with the same display name; None for its first holder
+    avatar: str | None = None  # a custom icon's type (AVATAR_TYPES), None for the Minecraft face
+    avatar_version: int = 0  # changes with the icon, for cache-busting URLs
+    discord_id: str | None = None
+    discord_name: str | None = None
+
+    @property
+    def shown(self) -> str:
+        """The name on public pages (no tag)."""
+        return self.display_name or self.name
+
+    @property
+    def tagged(self) -> str:
+        """The name with its tag, for the player and admins."""
+        return self.shown + (f"#{self.display_tag}" if self.display_tag else "")
+
+    @classmethod
+    def from_row(cls, r: sqlite3.Row) -> "User":
+        return cls(
+            r["uuid"], r["name"], bool(r["is_admin"]), r["quota_bytes"], r["display_name"] or "", r["display_tag"],
+            r["avatar"], r["avatar_version"] or 0, r["discord_id"], r["discord_name"],
+        )
 
 
 @dataclass
@@ -432,22 +590,104 @@ class PostRow:
     author_badges: list[str] = field(default_factory=list)  # in BADGES order
     hidden: int | None = None  # unix ms when an admin hid it (only the author and admins see it then)
     hidden_reason: str = ""
+    author_display: str = ""  # the author's display name (no tag)
+    author_avatar_v: int = 0
+    version: int = 1  # the current snapshot's version number; earlier ones are in post_versions
+    version_label: str = ""
+    mc: str | None = None  # the Minecraft version the current snapshot is for
+    distinct_count: int | None = None  # distinct block and entity types, None if unknown
+    links: list[str] = field(default_factory=list)
+    downloads: int = 0
+    version_count: int = 1
+    coauthors: list["Coauthor"] = field(default_factory=list)  # filled by Store.attach_coauthors
 
     @property
     def score(self) -> int:
         return self.ups - self.downs
 
+    @property
+    def complexity(self) -> str | None:
+        return complexity_class(self.distinct_count)
+
+    @property
+    def author_shown(self) -> str:
+        return self.author_display or self.author_name
+
     @classmethod
     def from_row(cls, r: sqlite3.Row) -> "PostRow":
         dims = (r["size_x"], r["size_y"], r["size_z"])
         tags = set((r["tags"] or "").split(","))
+        try:
+            links = [u for u in json.loads(r["links"] or "[]") if isinstance(u, str)]
+        except ValueError:
+            links = []
         return cls(
             r["id"], r["uuid"], r["author_name"], r["title"], r["description"], r["visibility"],
             r["source_path"], r["filename"], r["format"], r["size"], r["sha256"], bool(r["has_thumb"]),
             dims if None not in dims else None, r["block_count"], r["created"], r["updated"],
             r["ups"], r["downs"], [t for t in TAGS if t in tags], r["size_class"],
             badge_list(r["author_badges"]), r["hidden"], r["hidden_reason"] or "",
+            r["author_display"] or "", r["author_avatar_v"] or 0, r["version"], r["version_label"] or "",
+            r["mc_version"], r["distinct_count"], links, r["downloads"], r["version_count"],
         )
+
+
+@dataclass
+class Coauthor:
+    """Someone else credited on a post: an account here (uuid set) or a name without an account."""
+    uuid: str | None
+    name: str  # the account's Minecraft name, or the free-text name
+    display: str  # the account's display name now, else name
+
+    def api(self) -> dict[str, Any]:
+        return {"uuid": self.uuid, "name": self.name, "displayName": self.display}
+
+
+@dataclass
+class VersionRow:
+    """One snapshot of a post: the current one (from posts) or an earlier one (post_versions)."""
+    num: int
+    label: str
+    mc: str | None
+    filename: str
+    format: str
+    size: int
+    sha256: str
+    has_thumb: bool
+    dims: tuple[int, int, int] | None
+    block_count: int | None
+    distinct_count: int | None
+    created: int  # unix ms
+    current: bool
+
+    @property
+    def size_class(self) -> str | None:
+        return size_class(self.block_count)
+
+    @property
+    def complexity(self) -> str | None:
+        return complexity_class(self.distinct_count)
+
+    def api(self) -> dict[str, Any]:
+        return {
+            "version": self.num, "label": self.label, "mc": self.mc, "filename": self.filename, "format": self.format,
+            "size": self.size, "sha256": self.sha256, "hasThumbnail": self.has_thumb,
+            "dimensions": list(self.dims) if self.dims else None, "blockCount": self.block_count,
+            "sizeClass": self.size_class, "distinctTypes": self.distinct_count, "complexity": self.complexity,
+            "created": self.created, "current": self.current,
+        }
+
+    @classmethod
+    def of_post(cls, p: PostRow) -> "VersionRow":
+        return cls(p.version, p.version_label, p.mc, p.filename, p.format, p.size, p.sha256, p.has_thumb, p.dims,
+                   p.block_count, p.distinct_count, p.updated, True)
+
+    @classmethod
+    def from_row(cls, r: sqlite3.Row) -> "VersionRow":
+        dims = (r["size_x"], r["size_y"], r["size_z"])
+        return cls(r["num"], r["label"] or "", r["mc_version"], r["filename"], r["format"], r["size"], r["sha256"],
+                   bool(r["has_thumb"]), dims if None not in dims else None, r["block_count"], r["distinct_count"],
+                   r["created"], False)
 
 
 def badge_list(joined: str | None) -> list[str]:
@@ -657,17 +897,119 @@ CREATE TABLE IF NOT EXISTS reports (
 CREATE UNIQUE INDEX IF NOT EXISTS reports_one_open ON reports(reporter, kind, target) WHERE status = 'open';
 CREATE INDEX IF NOT EXISTS reports_status ON reports(status, created);
 """,
+    # 0.8.0: settings profiles, telemetry, display names, avatars, Discord, and on the board co-authors, links,
+    # versions, download counts and complexity. Store.fill_display_names runs right after, in the same transaction.
+    6: """
+ALTER TABLE users ADD COLUMN display_name TEXT;     -- filled with the Minecraft name, then the player's choice
+ALTER TABLE users ADD COLUMN display_key TEXT;      -- display_name case-folded (unique together with the tag)
+ALTER TABLE users ADD COLUMN display_tag TEXT;      -- NULL for the first holder of a name, else 3-5 letters or digits
+ALTER TABLE users ADD COLUMN display_custom INTEGER NOT NULL DEFAULT 0;  -- 1: chosen (else it follows Minecraft renames)
+ALTER TABLE users ADD COLUMN avatar TEXT;           -- NULL: the Minecraft face; 'png' | 'jpeg': users/<uuid>/avatar.<type>
+ALTER TABLE users ADD COLUMN avatar_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN discord_id TEXT;
+ALTER TABLE users ADD COLUMN discord_name TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS users_discord ON users(discord_id) WHERE discord_id IS NOT NULL;
+ALTER TABLE posts ADD COLUMN version INTEGER NOT NULL DEFAULT 1;  -- the current snapshot's number
+ALTER TABLE posts ADD COLUMN version_label TEXT NOT NULL DEFAULT '';
+ALTER TABLE posts ADD COLUMN mc_version TEXT;       -- the Minecraft version the current snapshot is for
+ALTER TABLE posts ADD COLUMN distinct_count INTEGER;  -- distinct block + entity types, NULL until read
+ALTER TABLE posts ADD COLUMN links TEXT NOT NULL DEFAULT '[]';  -- JSON list of http(s) URLs
+ALTER TABLE posts ADD COLUMN downloads INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS post_versions (       -- earlier snapshots, in posts/<id>/v<num>/
+    post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    num INTEGER NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    mc_version TEXT,
+    filename TEXT NOT NULL,
+    format TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    has_thumb INTEGER NOT NULL DEFAULT 0,
+    size_x INTEGER,
+    size_y INTEGER,
+    size_z INTEGER,
+    block_count INTEGER,
+    distinct_count INTEGER,
+    created INTEGER NOT NULL,      -- unix ms, when this snapshot was taken
+    PRIMARY KEY (post_id, num)
+);
+CREATE INDEX IF NOT EXISTS post_versions_mc ON post_versions(mc_version);
+CREATE TABLE IF NOT EXISTS post_authors (        -- co-authors besides the owner, in order
+    post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    pos INTEGER NOT NULL,
+    uuid TEXT,                     -- an account here, NULL for a name without one
+    name TEXT NOT NULL,            -- the Minecraft name when added, or the free-text name
+    PRIMARY KEY (post_id, pos)
+);
+CREATE INDEX IF NOT EXISTS post_authors_uuid ON post_authors(uuid);
+CREATE TABLE IF NOT EXISTS post_downloads (      -- who has been counted in posts.downloads
+    post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    who TEXT NOT NULL,             -- 'u:<uuid>', or 'ip:<day>:<keyed hash of the address>' when logged out
+    at INTEGER NOT NULL,           -- unix s
+    PRIMARY KEY (post_id, who)
+);
+CREATE TABLE IF NOT EXISTS profiles (            -- the mod's settings profiles
+    id TEXT PRIMARY KEY,
+    uuid TEXT NOT NULL REFERENCES users(uuid),
+    name TEXT NOT NULL,
+    settings TEXT NOT NULL,        -- a JSON object
+    created INTEGER NOT NULL,      -- unix s
+    updated INTEGER NOT NULL       -- unix s
+);
+CREATE INDEX IF NOT EXISTS profiles_uuid ON profiles(uuid, created);
+CREATE TABLE IF NOT EXISTS telemetry (           -- the mod's usage reports; nothing about the player
+    id INTEGER PRIMARY KEY,
+    received INTEGER NOT NULL,     -- unix s
+    install TEXT NOT NULL,         -- sha256 of the install's random id
+    mod_version TEXT,
+    mc_version TEXT,
+    loader TEXT,
+    started INTEGER,               -- unix s, as the mod reports them
+    ended INTEGER,
+    os TEXT,
+    cpu_cores INTEGER,
+    max_memory_mb INTEGER,
+    gpu TEXT,
+    gpu_vendor TEXT,
+    backend TEXT,
+    render_distance INTEGER,
+    width INTEGER,
+    height INTEGER,
+    frames INTEGER,
+    avg_ms REAL,
+    p50_ms REAL,
+    p99_ms REAL,
+    over33_ms INTEGER,
+    max_sections INTEGER,
+    schematics TEXT NOT NULL DEFAULT '[]',        -- JSON list; board:<id> only for public posts
+    settings_changed TEXT NOT NULL DEFAULT '[]',  -- JSON list of setting names
+    keys TEXT NOT NULL DEFAULT '{}'               -- JSON {key name: uses}
+);
+CREATE INDEX IF NOT EXISTS telemetry_received ON telemetry(received);
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+""",
 }
 SCHEMA_VERSION = max(MIGRATIONS)
+# Created by Store.fill_display_names once every account has a display name (migration 6).
+DISPLAY_INDEX = "CREATE UNIQUE INDEX IF NOT EXISTS users_display ON users(display_key, lower(COALESCE(display_tag, '')))"
 
 POST_SELECT = """
-SELECT p.*, u.name AS author_name,
+SELECT p.*, u.name AS author_name, u.display_name AS author_display, u.avatar_version AS author_avatar_v,
     (SELECT COUNT(*) FROM votes v WHERE v.post_id = p.id AND v.value = 1) AS ups,
     (SELECT COUNT(*) FROM votes v WHERE v.post_id = p.id AND v.value = -1) AS downs,
     (SELECT group_concat(t.tag, ',') FROM post_tags t WHERE t.post_id = p.id) AS tags,
-    (SELECT group_concat(b.badge, ',') FROM badges b WHERE b.uuid = p.uuid) AS author_badges
+    (SELECT group_concat(b.badge, ',') FROM badges b WHERE b.uuid = p.uuid) AS author_badges,
+    1 + (SELECT COUNT(*) FROM post_versions pv WHERE pv.post_id = p.id) AS version_count
 FROM posts p JOIN users u ON u.uuid = p.uuid
 """
+# Bytes of an account's board snapshots, every version: the quota counts them all.
+POST_BYTES_SQL = (
+    "((SELECT COALESCE(SUM(size),0) FROM posts WHERE uuid={owner})"
+    " + (SELECT COALESCE(SUM(pv.size),0) FROM post_versions pv JOIN posts pp ON pp.id = pv.post_id WHERE pp.uuid={owner}))"
+)
 FILE_SELECT = """
 SELECT f.*, a.name AS source_author_now
 FROM files f LEFT JOIN users a ON a.uuid = f.source_author_uuid
@@ -751,11 +1093,16 @@ class Store:
         self.posts_root.mkdir(exist_ok=True)
         self.releases_dir = self.root / RELEASES_DIR
         self.releases_dir.mkdir(exist_ok=True)
+        self.skins_dir = self.root / "skins"  # <uuid>.png (the skin) and <uuid>.face.png, refreshed daily
+        self.skins_dir.mkdir(exist_ok=True)
         self.migrate()
+        # keys anonymous downloads by address without storing the address
+        self.ip_salt = self.meta_secret("ip_salt")
         self.prune()
         self.reconcile()
         self.reconcile_posts()
         self.reconcile_releases()
+        self.backfill_complexity()
 
     def migrate(self) -> None:
         """Create the 0.3.0 tables if missing, then apply MIGRATIONS past PRAGMA user_version, in place."""
@@ -778,6 +1125,8 @@ class Store:
                         [(uuid, name, t) for uuid, name in seed],
                     )
                     log.info("seeded the whitelist with %d players from %s", len(seed), self.settings.whitelist_seed)
+                if target == 6:
+                    self.fill_display_names()
                 # single statements: executescript would commit the open transaction first
                 self.db.execute(f"PRAGMA user_version = {target}")
                 self.db.execute("COMMIT")
@@ -785,6 +1134,17 @@ class Store:
                 if self.db.in_transaction:
                     self.db.execute("ROLLBACK")
                 raise
+
+    def fill_display_names(self) -> None:
+        """Migration 6: every account's display name starts as its Minecraft name. Where several accounts
+        share one (a stale row after renames), the oldest keeps it plain and the others get a tag."""
+        rows = self.db.execute("SELECT uuid, name FROM users ORDER BY created, uuid").fetchall()
+        for r in rows:
+            name = r["name"]
+            tag = None if not self._display_taken(name.casefold(), None, r["uuid"]) else self._free_tag(name.casefold())
+            self.db.execute("UPDATE users SET display_name=?, display_key=?, display_tag=? WHERE uuid=?",
+                            (name, name.casefold(), tag, r["uuid"]))
+        self.db.execute(DISPLAY_INDEX)
 
     def read_whitelist_seed(self) -> list[tuple[str, str]]:
         """SLOPMATICA_WHITELIST_SEED's players for migration 5, or [] if it isn't set.
@@ -884,6 +1244,38 @@ class Store:
             self.db.execute("DELETE FROM tokens WHERE expires < ?", (t,))
             self.db.execute("DELETE FROM challenges WHERE expires < ?", (t,))
             self.db.execute("DELETE FROM login_failures WHERE at < ?", (t - LOGIN_WINDOW,))
+            self.db.execute("DELETE FROM telemetry WHERE received < ?", (t - TELEMETRY_KEEP_DAYS * DAY,))
+            # an address counts once per post and day: older keys are no longer needed (the counts stay)
+            self.db.execute("DELETE FROM post_downloads WHERE who LIKE 'ip:%' AND at < ?", (t - 2 * DAY,))
+
+    def meta_secret(self, key: str) -> bytes:
+        """A random secret kept in the meta table, made on first use."""
+        with self.lock:
+            self.db.execute("INSERT OR IGNORE INTO meta(key, value) VALUES(?, ?)", (key, secrets.token_hex(32)))
+            (value,) = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return bytes.fromhex(value)
+
+    def backfill_complexity(self) -> None:
+        """Posts and versions from before 0.8.0 have no distinct type count: read their snapshots once."""
+        with self.lock:
+            todo = [(r["id"], None, r["filename"]) for r in self.db.execute(
+                "SELECT id, filename FROM posts WHERE distinct_count IS NULL AND block_count IS NOT NULL")]
+            todo += [(r["post_id"], r["num"], r["filename"]) for r in self.db.execute(
+                "SELECT post_id, num, filename FROM post_versions WHERE distinct_count IS NULL AND block_count IS NOT NULL")]
+        for post_id, num, filename in todo:
+            pdir = self.posts_root / post_id / (f"v{num}" if num is not None else "")
+            try:
+                n = read_schematic(self._under(pdir, filename), filename, self.settings.max_export_volume).distinct_types()
+            except (OSError, ValueError, ApiError) as e:
+                log.warning("could not count the block types of board post %s: %s", post_id, e)
+                continue
+            with self.lock:
+                if num is None:
+                    self.db.execute("UPDATE posts SET distinct_count=? WHERE id=? AND filename=?", (n, post_id, filename))
+                else:
+                    self.db.execute("UPDATE post_versions SET distinct_count=? WHERE post_id=? AND num=?", (n, post_id, num))
+        if todo:
+            log.info("counted the block types of %d board snapshots", len(todo))
 
     def reconcile(self) -> None:
         """Disk is the source of truth for bytes: make the metadata match it."""
@@ -946,10 +1338,32 @@ class Store:
                 # anything else in the folder is left over from an interrupted refresh or conversion,
                 # or a 3D view cache of an older snapshot
                 cache = f"{MODEL_CACHE_PREFIX}{digest[:16]}."
+                versions = {v["num"]: v for v in self.db.execute(
+                    "SELECT num, filename, sha256, has_thumb FROM post_versions WHERE post_id=?", (post_id,))}
                 for f in pdir.iterdir():
-                    if f.name not in (r["filename"], POST_THUMB) and not f.name.startswith(cache) and f.is_file():
+                    m = VERSION_DIR_RE.match(f.name)
+                    if f.is_dir():
+                        if m is None or int(m.group(1)) not in versions:
+                            log.info("removing stale folder from board post %s: %s", post_id, f.name)
+                            shutil.rmtree(f, ignore_errors=True)
+                    elif f.name not in (r["filename"], POST_THUMB) and not f.name.startswith(cache):
                         log.info("removing stale file from board post %s: %s", post_id, f.name)
                         f.unlink(missing_ok=True)
+                for num, v in versions.items():  # earlier versions: the same, inside v<num>/
+                    vdir = pdir / f"v{num}"
+                    if not (vdir / v["filename"]).is_file():
+                        log.warning("removing version %d of board post %s: its snapshot is missing", num, post_id)
+                        self.db.execute("DELETE FROM post_versions WHERE post_id=? AND num=?", (post_id, num))
+                        shutil.rmtree(vdir, ignore_errors=True)
+                        continue
+                    vcache = f"{MODEL_CACHE_PREFIX}{v['sha256'][:16]}."
+                    for f in vdir.iterdir():
+                        if f.name not in (v["filename"], POST_THUMB) and not f.name.startswith(vcache):
+                            (shutil.rmtree(f, ignore_errors=True) if f.is_dir() else f.unlink(missing_ok=True))
+                    vthumb = (vdir / POST_THUMB).is_file()
+                    if vthumb != bool(v["has_thumb"]):
+                        self.db.execute("UPDATE post_versions SET has_thumb=? WHERE post_id=? AND num=?",
+                                        (int(vthumb), post_id, num))
                 has_thumb = (pdir / POST_THUMB).is_file()
                 if has_thumb != bool(r["has_thumb"]):
                     self.db.execute("UPDATE posts SET has_thumb=? WHERE id=?", (int(has_thumb), post_id))
@@ -972,19 +1386,82 @@ class Store:
     def upsert_user(self, uuid: str, name: str, admin_by_name: bool) -> User:
         with self.lock:
             t = now_s()
+            old = self.db.execute("SELECT name, display_custom FROM users WHERE uuid=?", (uuid,)).fetchone()
             self.db.execute(
                 """INSERT INTO users(uuid,name,is_admin,created,last_login,last_seen) VALUES(?,?,?,?,?,?)
                    ON CONFLICT(uuid) DO UPDATE SET name=excluded.name, last_login=excluded.last_login,
                    last_seen=excluded.last_seen, is_admin=MAX(users.is_admin, excluded.is_admin)""",
                 (uuid, name, int(admin_by_name), t, t, t),
             )
+            if old is None or (not old["display_custom"] and old["name"] != name):
+                # a new account, or a Minecraft rename that a display name nobody chose follows
+                self.set_display(uuid, name, custom=False)
             self._seen[uuid] = t
             return self.get_user(uuid)  # type: ignore[return-value]
 
     def get_user(self, uuid: str) -> User | None:
         with self.lock:
             r = self.db.execute("SELECT * FROM users WHERE uuid=?", (uuid,)).fetchone()
-        return User(r["uuid"], r["name"], bool(r["is_admin"]), r["quota_bytes"]) if r else None
+        return User.from_row(r) if r else None
+
+    # ---- display names: unique by (case-folded name, tag); the first holder of a name needs no tag
+
+    def _display_taken(self, key: str, tag: str | None, uuid: str) -> bool:
+        """Whether another account than uuid has display name key (case-folded) with tag (None: untagged)."""
+        return self.db.execute(
+            "SELECT 1 FROM users WHERE display_key=? AND lower(COALESCE(display_tag, ''))=? AND uuid != ?",
+            (key, (tag or "").lower(), uuid),
+        ).fetchone() is not None
+
+    def _free_tag(self, key: str) -> str:
+        while True:
+            tag = "".join(secrets.choice(TAG_ALPHABET) for _ in range(4))
+            if not self._display_taken(key, tag, ""):
+                return tag
+
+    def set_display(self, uuid: str, name: str, tag: Any = ..., custom: bool = True) -> str | None:
+        """Give the account a display name. tag ... (the default) picks one: none if nobody else uses the
+        name plainly, else the account's current tag when only the case changes, else a random free one.
+        An explicit tag (None: untagged) must be free with that name, or 409. Returns the tag."""
+        key = name.casefold()
+        with self.lock:
+            cur = self.db.execute("SELECT display_key, display_tag FROM users WHERE uuid=?", (uuid,)).fetchone()
+            if tag is ...:
+                if cur is not None and cur["display_key"] == key:
+                    tag = cur["display_tag"]
+                else:
+                    tag = None if not self._display_taken(key, None, uuid) else self._free_tag(key)
+            elif self._display_taken(key, tag, uuid):
+                raise ApiError(409, f"someone already uses the name {name}" + (f" with the tag {tag}" if tag else
+                               " without a tag") + "; pick another tag", code="taken")
+            self.db.execute(
+                "UPDATE users SET display_name=?, display_key=?, display_tag=?, display_custom=? WHERE uuid=?",
+                (name, key, tag, int(custom), uuid),
+            )
+        return tag
+
+    def set_avatar(self, uuid: str, kind: str | None) -> None:
+        with self.lock:
+            self.db.execute("UPDATE users SET avatar=?, avatar_version=avatar_version + 1 WHERE uuid=?", (kind, uuid))
+
+    def avatar_path(self, uuid: str, kind: str) -> Path:
+        assert DASHED_UUID_RE.match(uuid) and kind in AVATAR_TYPES
+        return self.root / "users" / uuid / f"avatar.{kind}"
+
+    def known_player(self, uuid: str) -> bool:
+        """An account here or a whitelisted player: the uuids whose skins may be fetched for avatars."""
+        with self.lock:
+            return self.db.execute(
+                "SELECT 1 FROM users WHERE uuid=:u UNION SELECT 1 FROM whitelist WHERE uuid=:u", {"u": uuid}
+            ).fetchone() is not None
+
+    def set_discord(self, uuid: str, discord_id: str | None, discord_name: str | None) -> None:
+        """409 if that Discord account is linked to another account already."""
+        with self.lock:
+            try:
+                self.db.execute("UPDATE users SET discord_id=?, discord_name=? WHERE uuid=?", (discord_id, discord_name, uuid))
+            except sqlite3.IntegrityError:
+                raise ApiError(409, "that Discord account is already linked to another Slopmatica account")
 
     def issue_token(self, uuid: str, kind: str, ttl: int, next_path: str | None = None) -> str:
         token = secrets.token_urlsafe(32)
@@ -1136,16 +1613,17 @@ class Store:
         """Bytes counted against the quota: the account's files plus its board snapshots."""
         with self.lock:
             (n,) = self.db.execute(
-                "SELECT (SELECT COALESCE(SUM(size),0) FROM files WHERE uuid=:u)"
-                " + (SELECT COALESCE(SUM(size),0) FROM posts WHERE uuid=:u)",
+                "SELECT (SELECT COALESCE(SUM(size),0) FROM files WHERE uuid=:u) + " + POST_BYTES_SQL.format(owner=":u"),
                 {"u": uuid},
             ).fetchone()
         return int(n)
 
     def post_usage(self, uuid: str) -> tuple[int, int]:
-        """(number of posts, bytes of their snapshots)."""
+        """(number of posts, bytes of their snapshots, every version)."""
         with self.lock:
-            n, size = self.db.execute("SELECT COUNT(*), COALESCE(SUM(size),0) FROM posts WHERE uuid=?", (uuid,)).fetchone()
+            n, size = self.db.execute(
+                "SELECT (SELECT COUNT(*) FROM posts WHERE uuid=:u), " + POST_BYTES_SQL.format(owner=":u"), {"u": uuid}
+            ).fetchone()
         return int(n), int(size)
 
     def put_file_row(self, uuid: str, row: FileRow) -> None:
@@ -1182,19 +1660,23 @@ class Store:
     def get_post(self, post_id: str) -> PostRow | None:
         with self.lock:
             r = self.db.execute(POST_SELECT + " WHERE p.id=?", (post_id,)).fetchone()
-        return PostRow.from_row(r) if r else None
+        return self.attach_coauthors([PostRow.from_row(r)])[0] if r else None
 
-    def insert_post(self, values: dict[str, Any], allowed: list[tuple[str, str]], tags: list[str] = ()) -> None:
+    def insert_post(
+        self, values: dict[str, Any], allowed: list[tuple[str, str]], tags: list[str] = (),
+        coauthors: list[tuple[str | None, str]] = (),
+    ) -> None:
         cols = ", ".join(values)
         marks = ", ".join(":" + k for k in values)
         with self.transaction():
             self.db.execute(f"INSERT INTO posts({cols}) VALUES({marks})", values)
             self._set_allowed(values["id"], allowed)
             self._set_tags(values["id"], tags)
+            self._set_coauthors(values["id"], coauthors)
 
     def update_post(
         self, post_id: str, values: dict[str, Any], allowed: list[tuple[str, str]] | None = None,
-        tags: list[str] | None = None,
+        tags: list[str] | None = None, coauthors: list[tuple[str | None, str]] | None = None,
     ) -> None:
         with self.transaction():
             if values:
@@ -1204,6 +1686,111 @@ class Store:
                 self._set_allowed(post_id, allowed)
             if tags is not None:
                 self._set_tags(post_id, tags)
+            if coauthors is not None:
+                self._set_coauthors(post_id, coauthors)
+
+    def _set_coauthors(self, post_id: str, coauthors: list[tuple[str | None, str]]) -> None:
+        self.db.execute("DELETE FROM post_authors WHERE post_id=?", (post_id,))
+        self.db.executemany("INSERT INTO post_authors(post_id, pos, uuid, name) VALUES(?,?,?,?)",
+                            [(post_id, i, uuid, name) for i, (uuid, name) in enumerate(coauthors)])
+
+    def attach_coauthors(self, posts: list[PostRow]) -> list[PostRow]:
+        """Fill each post's coauthors (one query for the lot), with accounts' current display names."""
+        if not posts:
+            return posts
+        marks = ",".join("?" * len(posts))
+        with self.lock:
+            rows = self.db.execute(
+                f"""SELECT a.post_id, a.uuid, COALESCE(u.name, a.name) AS name, u.display_name FROM post_authors a
+                    LEFT JOIN users u ON u.uuid = a.uuid WHERE a.post_id IN ({marks}) ORDER BY a.post_id, a.pos""",
+                [p.id for p in posts],
+            ).fetchall()
+        by_post: dict[str, list[Coauthor]] = {}
+        for r in rows:  # an account's current Minecraft and display names
+            by_post.setdefault(r["post_id"], []).append(Coauthor(r["uuid"], r["name"], r["display_name"] or r["name"]))
+        for p in posts:
+            p.coauthors = by_post.get(p.id, [])
+        return posts
+
+    # ---- earlier versions of a post (posts/<id>/v<num>/)
+
+    def list_versions(self, post_id: str) -> list[VersionRow]:
+        """Earlier versions, newest first (the current one is the post itself)."""
+        with self.lock:
+            rows = self.db.execute("SELECT * FROM post_versions WHERE post_id=? ORDER BY num DESC", (post_id,)).fetchall()
+        return [VersionRow.from_row(r) for r in rows]
+
+    def get_version(self, post_id: str, num: int) -> VersionRow | None:
+        with self.lock:
+            r = self.db.execute("SELECT * FROM post_versions WHERE post_id=? AND num=?", (post_id, num)).fetchone()
+        return VersionRow.from_row(r) if r else None
+
+    def archive_current(self, post: PostRow) -> None:
+        """Record the post's current snapshot as an earlier version (its files are moved by the caller)."""
+        dims = post.dims or (None, None, None)
+        self.db.execute(
+            """INSERT INTO post_versions(post_id, num, label, mc_version, filename, format, size, sha256, has_thumb,
+                   size_x, size_y, size_z, block_count, distinct_count, created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (post.id, post.version, post.version_label, post.mc, post.filename, post.format, post.size, post.sha256,
+             int(post.has_thumb), *dims, post.block_count, post.distinct_count, post.updated),
+        )
+
+    def delete_version(self, post_id: str, num: int) -> bool:
+        with self.lock:
+            return self.db.execute("DELETE FROM post_versions WHERE post_id=? AND num=?", (post_id, num)).rowcount == 1
+
+    def mc_versions(self) -> list[str]:
+        """The Minecraft versions public posts are (or were) for, newest first: the board's filter."""
+        with self.lock:
+            rows = self.db.execute(
+                """SELECT mc_version AS mc FROM posts WHERE visibility='public' AND hidden IS NULL AND mc_version IS NOT NULL
+                   UNION SELECT v.mc_version FROM post_versions v JOIN posts p ON p.id = v.post_id
+                   WHERE p.visibility='public' AND p.hidden IS NULL AND v.mc_version IS NOT NULL"""
+            ).fetchall()
+        return sorted((r["mc"] for r in rows), key=mc_version_key, reverse=True)
+
+    # ---- download counts
+
+    def count_post_download(self, post_id: str, who: str) -> bool:
+        """Count a download or save of the post once per who. True if it counted."""
+        with self.lock:
+            cur = self.db.execute("INSERT OR IGNORE INTO post_downloads(post_id, who, at) VALUES(?,?,?)",
+                                  (post_id, who, now_s()))
+            if cur.rowcount != 1:
+                return False
+            self.db.execute("UPDATE posts SET downloads = downloads + 1 WHERE id=?", (post_id,))
+            return True
+
+    # ---- settings profiles
+
+    def list_profiles(self, uuid: str) -> list[sqlite3.Row]:
+        with self.lock:
+            return self.db.execute(
+                "SELECT id, name, updated FROM profiles WHERE uuid=? ORDER BY created, rowid", (uuid,)).fetchall()
+
+    def get_profile(self, uuid: str, profile_id: str) -> sqlite3.Row | None:
+        """The account's profile, or None (also for another account's id)."""
+        with self.lock:
+            return self.db.execute("SELECT * FROM profiles WHERE id=? AND uuid=?", (profile_id, uuid)).fetchone()
+
+    def new_profile_id(self) -> str:
+        with self.lock:
+            while True:
+                pid = secrets.token_urlsafe(8)[:POST_ID_LEN]
+                if PROFILE_ID_RE.match(pid) and not self.db.execute("SELECT 1 FROM profiles WHERE id=?", (pid,)).fetchone():
+                    return pid
+
+    # ---- telemetry
+
+    def add_telemetry(self, values: dict[str, Any]) -> None:
+        cols = ", ".join(values)
+        marks = ", ".join(":" + k for k in values)
+        with self.lock:
+            self.db.execute(f"INSERT INTO telemetry({cols}) VALUES({marks})", values)
+
+    def telemetry_since(self, t: int) -> list[sqlite3.Row]:
+        with self.lock:
+            return self.db.execute("SELECT * FROM telemetry WHERE received >= ? ORDER BY received", (t,)).fetchall()
 
     def _set_tags(self, post_id: str, tags: list[str]) -> None:
         self.db.execute("DELETE FROM post_tags WHERE post_id=?", (post_id,))
@@ -1250,11 +1837,14 @@ class Store:
 
     def list_posts(
         self, tab: str, viewer: str | None, sort: str, query: str, page: int, page_size: int,
-        tags: list[str] = (), size: str | None = None,
+        tags: list[str] = (), size: str | None = None, complexity: str | None = None, mc: str | None = None,
+        author: str | None = None,
     ) -> tuple[list[PostRow], int]:
         """One page of a board tab and the total number of matching posts.
         'public' lists public posts only; 'shared' private posts whose access list has viewer;
-        'mine' every post by viewer. Posts an admin hid are only listed in 'mine'. Every tag in tags must be on the post; size is a size class."""
+        'mine' every post by viewer. Posts an admin hid are only listed in 'mine'. Every tag in tags must be on the post;
+        size is a size class, complexity a complexity class; mc a Minecraft version any version of the post is for;
+        author a uuid that owns the post or is a co-author of it."""
         params: dict[str, Any] = {"viewer": viewer, "now": int(time.time() * 1000)}
         if tab == "public":
             where = ["p.visibility = 'public'", "p.hidden IS NULL"]
@@ -1271,13 +1861,26 @@ class Store:
             raise ValueError(tab)
         for i, term in enumerate(query.casefold().split()[:10]):
             params[f"t{i}"] = term
-            where.append(f"instr(slop_fold(p.title || char(10) || p.description || char(10) || u.name), :t{i}) > 0")
+            where.append(
+                f"instr(slop_fold(p.title || char(10) || p.description || char(10) || u.name || char(10)"
+                f" || COALESCE(u.display_name, '') || char(10) || COALESCE((SELECT group_concat(COALESCE(cu.display_name, a.name),"
+                f" char(10)) FROM post_authors a LEFT JOIN users cu ON cu.uuid = a.uuid WHERE a.post_id = p.id), '')), :t{i}) > 0"
+            )
         for i, tag in enumerate(tags):
             params[f"tag{i}"] = tag
             where.append(f"EXISTS (SELECT 1 FROM post_tags g WHERE g.post_id = p.id AND g.tag = :tag{i})")
         if size is not None:
             params["size"] = size
             where.append("p.size_class = :size")
+        if complexity is not None:
+            params["complexity"] = complexity
+            where.append(f"{complexity_sql('p.distinct_count')} = :complexity")
+        if mc is not None:
+            params["mc"] = mc
+            where.append("(p.mc_version = :mc OR EXISTS (SELECT 1 FROM post_versions v WHERE v.post_id = p.id AND v.mc_version = :mc))")
+        if author is not None:
+            params["author"] = author
+            where.append("(p.uuid = :author OR EXISTS (SELECT 1 FROM post_authors a WHERE a.post_id = p.id AND a.uuid = :author))")
         clause = " WHERE " + " AND ".join(where)
         with self.lock:
             (total,) = self.db.execute(
@@ -1287,7 +1890,7 @@ class Store:
                 POST_SELECT + clause + f" ORDER BY {BOARD_ORDER[sort]} LIMIT :limit OFFSET :offset",
                 {**params, "limit": page_size, "offset": (page - 1) * page_size},
             ).fetchall()
-        return [PostRow.from_row(r) for r in rows], int(total)
+        return self.attach_coauthors([PostRow.from_row(r) for r in rows]), int(total)
 
     # ---- releases
 
@@ -1522,18 +2125,20 @@ class Store:
         return {r["n"] for r in rows}
 
     def list_users(self, query: str, page: int, page_size: int) -> tuple[list[sqlite3.Row], int]:
-        """Accounts matching query (part of the name or uuid), most recently seen first, with usage,
+        """Accounts matching query (part of the Minecraft, display or Discord name, or the uuid), most recently
+        seen first, with usage,
         badges and whitelist entry."""
         where, params = "", {}
         if query:
-            where = " WHERE instr(lower(u.name), :q) > 0 OR instr(u.uuid, :q) > 0 OR instr(replace(u.uuid, '-', ''), :q) > 0"
-            params["q"] = query.lower()
+            where = (" WHERE instr(lower(u.name), :q) > 0 OR instr(u.uuid, :q) > 0 OR instr(replace(u.uuid, '-', ''), :q) > 0"
+                     " OR instr(slop_fold(u.display_name), :qf) > 0 OR instr(lower(COALESCE(u.discord_name, '')), :q) > 0")
+            params["q"], params["qf"] = query.lower(), query.casefold()
         with self.lock:
             (total,) = self.db.execute("SELECT COUNT(*) FROM users u" + where, params).fetchone()
             rows = self.db.execute(
                 """SELECT u.*, w.source AS wl_source,
                        (SELECT COALESCE(SUM(size),0) FROM files f WHERE f.uuid = u.uuid)
-                       + (SELECT COALESCE(SUM(size),0) FROM posts p WHERE p.uuid = u.uuid) AS used,
+                       + """ + POST_BYTES_SQL.format(owner="u.uuid") + """ AS used,
                        (SELECT COUNT(*) FROM posts p WHERE p.uuid = u.uuid) AS posts,
                        (SELECT group_concat(b.badge, ',') FROM badges b WHERE b.uuid = u.uuid) AS badges
                    FROM users u LEFT JOIN whitelist w ON w.uuid = u.uuid""" + where
@@ -1627,6 +2232,86 @@ def mojang_has_joined(settings: Settings, username: str, server_id: str) -> tupl
     if not isinstance(uid, str) or not UUID_HEX_RE.match(uid.replace("-", "")) or not isinstance(name, str):
         return None
     return dash_uuid(uid.replace("-", "")), name
+
+
+def _get(url: str, timeout: float, cap: int, headers: dict[str, str] | None = None) -> bytes | None:
+    """GET url: the body (at most cap bytes), None for 204/404, MojangUnavailable for anything else."""
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, **(headers or {})})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if resp.status == 204:
+                return None
+            body = resp.read(cap + 1)
+    except urllib.error.HTTPError as e:
+        e.close()
+        if e.code in (400, 404):
+            return None
+        raise MojangUnavailable(f"HTTP {e.code}") from e
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise MojangUnavailable(str(e)) from e
+    if len(body) > cap:
+        raise MojangUnavailable("response too large")
+    return body
+
+
+def fetch_skin(settings: Settings, uuid: str) -> bytes | None:
+    """The player's skin PNG through Mojang's session server (profile -> textures -> SKIN url), or None if they
+    have none (the default skins). MojangUnavailable if it can't be fetched. The skin URL must be on a host in
+    settings.skin_hosts (textures.minecraft.net), so a strange answer can't make us fetch anything else."""
+    body = _get(f"{settings.mojang_session_profile_url.rstrip('/')}/{uuid.replace('-', '')}", settings.skin_timeout, 1 << 16)
+    if body is None:
+        return None
+    try:
+        props = json.loads(body).get("properties") or []
+        value = next(p["value"] for p in props if p.get("name") == "textures")
+        textures = json.loads(base64.b64decode(value)).get("textures") or {}
+        url = (textures.get("SKIN") or {}).get("url")
+    except StopIteration:
+        return None
+    except (ValueError, TypeError, KeyError, AttributeError) as e:
+        raise MojangUnavailable("unexpected profile response") from e
+    if not isinstance(url, str):
+        return None
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ("http", "https") or parts.hostname not in settings.skin_hosts:
+        raise MojangUnavailable(f"unexpected skin host {parts.hostname}")
+    return _get(url, settings.skin_timeout, SKIN_MAX_BYTES)
+
+
+class DiscordError(Exception):
+    pass
+
+
+def discord_token(settings: Settings, code: str) -> str:
+    """Trade an authorization code for an access token (scope identify). DiscordError if refused."""
+    form = urllib.parse.urlencode({
+        "client_id": settings.discord_client_id, "client_secret": settings.discord_client_secret,
+        "grant_type": "authorization_code", "code": code, "redirect_uri": settings.discord_redirect,
+    }).encode()
+    req = urllib.request.Request(DISCORD_TOKEN, data=form, headers={
+        "User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            token = json.loads(resp.read(1 << 16)).get("access_token")
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError, AttributeError) as e:
+        raise DiscordError(str(e)) from e
+    if not isinstance(token, str) or not token:
+        raise DiscordError("no access token")
+    return token
+
+
+def discord_user(settings: Settings, token: str) -> tuple[str, str]:
+    """(Discord id, username) of the token's user. DiscordError if that fails."""
+    req = urllib.request.Request(DISCORD_ME, headers={"User-Agent": USER_AGENT, "Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read(1 << 16))
+        uid, name = data["id"], data["username"]  # the unique handle (global_name is a free display name)
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError, KeyError, TypeError) as e:
+        raise DiscordError(str(e)) from e
+    if not isinstance(uid, str) or not uid.isdigit() or not isinstance(name, str):
+        raise DiscordError("unexpected user")
+    return uid, name[:100]
 
 
 # --------------------------------------------------------------------------- formatting
@@ -1934,6 +2619,10 @@ class PostIn(BaseModel):
     visibility: str
     allowed: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+    coauthors: Any = None  # [{"player": Minecraft name} | {"name": free text}]
+    links: Any = None  # [http(s) URL]
+    versionLabel: Any = None
+    mc: Any = None  # the Minecraft version the build is for
 
 
 class PostPatchIn(BaseModel):
@@ -1942,6 +2631,21 @@ class PostPatchIn(BaseModel):
     visibility: str | None = None
     allowed: list[str] | None = None
     tags: list[str] | None = None
+    coauthors: Any = None
+    links: Any = None
+    versionLabel: Any = None  # of the current version
+    mc: Any = None
+
+
+class VersionIn(BaseModel):
+    path: Any = None  # one of the owner's cloud files
+    label: Any = None
+    mc: Any = None
+
+
+class DisplayNameIn(BaseModel):
+    name: Any = None  # omitted: keep the name and change only the tag; null: back to the Minecraft name
+    tag: Any = None  # omitted: picked for you; null or "": no tag (if nobody else has the name without one)
 
 
 class VoteIn(BaseModel):
@@ -2107,7 +2811,7 @@ class CompressedStaticFiles(StaticFiles):
 
 
 CSP = (
-    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' https://mc-heads.net data:; "
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
     "connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 )
 
@@ -2133,6 +2837,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     templates.filters["num"] = lambda n: f"{n:,}"
     templates.filters["changelog"] = render_changelog
     templates.globals["badge_labels"] = BADGES  # for the badge macro, which imported macros call without context
+    templates.globals["complexity_labels"] = COMPLEXITY_LABELS
+    templates.filters["domain"] = link_domain
     static_dir = PKG_DIR / "static"
     static_version = str(max(int(p.stat().st_mtime) for p in static_dir.iterdir()))
     try:  # block id -> map colour; null for blocks that are clear on maps (glass, panes, ...)
@@ -2209,10 +2915,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """authenticate(), then 403 not_whitelisted for players without access."""
         return require_member(authenticate(request, mutating=mutating))
 
+    def avatar_url(uuid: str, version: int = 0, absolute: bool = False) -> str:
+        """The player's picture (custom icon or Minecraft face), from our own /avatar endpoint."""
+        return f"{settings.site_url if absolute else base}/avatar/{uuid}" + (f"?v={version}" if version else "")
+
+    templates.globals["avatar_url"] = avatar_url
+
     def account_api(user: User) -> dict[str, Any]:
         """The caller's account, for the mod (/api/auth/verify and /api/me)."""
         out = {"uuid": user.uuid, "name": user.name, **usage(user), "whitelisted": is_member(user),
-               "badges": store.badges_of(user.uuid)}
+               "badges": store.badges_of(user.uuid), "displayName": user.shown, "tag": user.display_tag,
+               "avatar": avatar_url(user.uuid, user.avatar_version, absolute=True)}
         if not out["whitelisted"]:
             out["apply"] = apply_url()
         return out
@@ -2750,6 +3463,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sha256: str
         dims: tuple[int, int, int] | None = None
         blocks: int | None = None
+        distinct: int | None = None  # distinct block and entity types (complexity)
         extra: list[Path] = field(default_factory=list)  # other temporary files to remove
 
         def cleanup(self) -> None:
@@ -2791,22 +3505,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if row.has_thumb and thumb.is_file():
                     snap.thumb = tmp.with_suffix(".png")
                     shutil.copyfile(thumb, snap.thumb)
-            src_fmt = convert.format_of(name)
-            with conversion_slot():
-                try:
-                    schem = read_schematic(tmp, name, settings.max_export_volume)
-                    modded = modded_error(schem)
-                    if modded is not None:
-                        raise modded
-                    if src_fmt != "slopmatic":
-                        snap.extra.append(tmp)
-                        snap.file = tmp.with_suffix(".slopmatic")
-                        snap.size, snap.sha256 = write_slopmatic(schem, snap.file)
-                except ValueError as e:  # ConversionError, NBTError: not a readable schematic
-                    what = "read" if src_fmt == "slopmatic" else "convert"
-                    raise ApiError(400, f"cannot {what} {name}" + ("" if what == "read" else " to .slopmatic") + f": {e}")
+            read_snapshot(snap, tmp, name)
+        except BaseException:
+            snap.cleanup()
+            raise
+        return snap
+
+    def read_snapshot(snap: Snapshot, tmp: Path, name: str) -> None:
+        """Read the temporary copy tmp of the schematic name into snap: converted to .slopmatic if it is in another
+        format, with its size, block count and distinct types. 400 if it can't be read or is modded."""
+        src_fmt = convert.format_of(name)
+        with conversion_slot():
+            try:
+                schem = read_schematic(tmp, name, settings.max_export_volume)
+                modded = modded_error(schem)
+                if modded is not None:
+                    raise modded
+                if src_fmt != "slopmatic":
+                    snap.extra.append(tmp)
+                    snap.file = tmp.with_suffix(".slopmatic")
+                    snap.size, snap.sha256 = write_slopmatic(schem, snap.file)
+            except ValueError as e:  # ConversionError, NBTError: not a readable schematic
+                what = "read" if src_fmt == "slopmatic" else "convert"
+                raise ApiError(400, f"cannot {what} {name}" + ("" if what == "read" else " to .slopmatic") + f": {e}")
             _, snap.dims = schem.bounds()
             snap.blocks = schem.block_count()
+            snap.distinct = schem.distinct_types()
+
+    async def upload_snapshot(request: Request, name: str) -> Snapshot:
+        """A snapshot of a schematic sent as the request body (gzip, at most the upload limit)."""
+        fd, tmp_name = tempfile.mkstemp(dir=store.tmp, suffix=".snap")
+        tmp = Path(tmp_name)
+        snap = Snapshot(tmp, None, slopmatic_name(name), "slopmatic", 0, "")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                head, snap.size, snap.sha256 = await read_capped(request, settings.max_upload_bytes, f)
+            if not head.startswith(GZIP_MAGIC):
+                raise ApiError(400, "not a gzip file (every schematic format is gzipped NBT)")
+            await run_in_threadpool(read_snapshot, snap, tmp, name)
         except BaseException:
             snap.cleanup()
             raise
@@ -2817,7 +3553,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "filename": snap.filename, "format": snap.fmt, "size": snap.size, "sha256": snap.sha256,
             "has_thumb": int(snap.thumb is not None), "size_x": dims[0], "size_y": dims[1], "size_z": dims[2],
-            "block_count": snap.blocks, "size_class": size_class(snap.blocks), "updated": int(time.time() * 1000),
+            "block_count": snap.blocks, "size_class": size_class(snap.blocks), "distinct_count": snap.distinct,
+            "updated": int(time.time() * 1000),
         }
 
     def install_snapshot(pdir: Path, snap: Snapshot, old_filename: str | None = None) -> None:
@@ -2833,12 +3570,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             (pdir / POST_THUMB).unlink(missing_ok=True)
 
+    def archive_snapshot(pdir: Path, post: PostRow) -> None:
+        """Move the current snapshot, its thumbnail and 3D cache into posts/<id>/v<version>/ and record it as an
+        earlier version. Call inside store.transaction(); a failure moves the files back."""
+        vdir = pdir / f"v{post.version}"
+        vdir.mkdir()
+        moved: list[tuple[Path, Path]] = []
+        try:
+            for f in [store._under(pdir, post.filename), pdir / POST_THUMB,
+                      *pdir.glob(f"{MODEL_CACHE_PREFIX}{post.sha256[:16]}.*")]:
+                if f.is_file():
+                    os.replace(f, vdir / f.name)
+                    moved.append((vdir / f.name, f))
+            store.archive_current(post)
+        except BaseException:
+            for src, back in moved:
+                os.replace(src, back)
+            shutil.rmtree(vdir, ignore_errors=True)
+            raise
+
     def post_api(post: PostRow, viewer: User | None, detail: bool = False) -> dict[str, Any]:
         out: dict[str, Any] = {
             "id": post.id,
             "title": post.title,
             "visibility": post.visibility,
-            "author": {"uuid": post.uuid, "name": post.author_name, "badges": post.author_badges},
+            "author": {"uuid": post.uuid, "name": post.author_name, "badges": post.author_badges,
+                       "displayName": post.author_shown},
             "filename": post.filename,
             "format": post.format,
             "size": post.size,
@@ -2854,6 +3611,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "ups": post.ups,
             "downs": post.downs,
             "hidden": post.hidden is not None,  # by an admin; only the author and admins see such a post
+            "coauthors": [a.api() for a in post.coauthors],
+            "links": post.links,
+            "version": post.version,
+            "versionLabel": post.version_label,
+            "mc": post.mc,
+            "versionCount": post.version_count,
+            "distinctTypes": post.distinct_count,
+            "complexity": post.complexity,
+            "downloads": post.downloads,
+            "shareUrl": f"{settings.site_url}/b/{post.id}",
         }
         if detail:
             out["description"] = post.description
@@ -2873,18 +3640,101 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                            + " (known: " + ", ".join(TAGS) + ")")
         return [t for t in TAGS if t in value]
 
-    def board_filters(params: Any, strict: bool) -> tuple[list[str], str | None]:
-        """(tags, size class) from ?tag=&size=; strict raises 400 for unknown values instead of ignoring them."""
+    def clean_coauthors(user: User, value: Any) -> list[tuple[str | None, str]]:
+        """[{"player": Minecraft name of an account here} | {"name": a name without an account}] ->
+        [(uuid or None, name)]. The owner is left out (they are always the author); repeats are dropped."""
+        if value is None:
+            return []
+        if not isinstance(value, list) or len(value) > MAX_COAUTHORS * 2:
+            raise ApiError(400, f"coauthors must be a list of at most {MAX_COAUTHORS} entries")
+        out: list[tuple[str | None, str]] = []
+        seen: set[str] = set()
+        for entry in value:
+            player = entry.get("player") if isinstance(entry, dict) else None
+            name = entry.get("name") if isinstance(entry, dict) else None
+            if isinstance(player, str) and player.strip():
+                found = store.find_user(player.strip()) if USERNAME_RE.match(player.strip()) else None
+                if found is None:
+                    raise ApiError(400, f"nobody called {player.strip()} has an account here; add them as a name instead",
+                                   code="unknown_player", player=player.strip())
+                if found.uuid == user.uuid or found.uuid in seen:
+                    continue
+                seen.add(found.uuid)
+                out.append((found.uuid, found.name))
+            elif isinstance(name, str) and name.strip():
+                text = " ".join(name.split())
+                if len(text) > MAX_AUTHOR_NAME_LEN or TITLE_BAD_CHARS.search(text):
+                    raise ApiError(400, f"co-author names must be 1 to {MAX_AUTHOR_NAME_LEN} characters on one line")
+                filtered(user, text, "co-author name")
+                if text.casefold() in seen:
+                    continue
+                seen.add(text.casefold())
+                out.append((None, text))
+            else:
+                raise ApiError(400, 'each co-author must be {"player": Minecraft name} or {"name": text}')
+        if len(out) > MAX_COAUTHORS:
+            raise ApiError(400, f"at most {MAX_COAUTHORS} co-authors")
+        return out
+
+    def clean_links(user: User, value: Any) -> list[str]:
+        """Up to MAX_LINKS http(s) URLs (videos, a world download, a forum thread...)."""
+        if value is None:
+            return []
+        if not isinstance(value, list) or not all(isinstance(u, str) for u in value):
+            raise ApiError(400, "links must be a list of URLs")
+        links: list[str] = []
+        for raw in value:
+            url = raw.strip()
+            if not url or url in links:
+                continue
+            parts = urllib.parse.urlsplit(url) if len(url) <= MAX_LINK_LEN and not re.search(r"[\x00-\x20\x7f\\]", url) else None
+            if (parts is None or parts.scheme.lower() not in ("http", "https") or not parts.hostname
+                    or parts.username is not None or parts.password is not None):
+                raise ApiError(400, f"links must be http:// or https:// addresses of at most {MAX_LINK_LEN} characters")
+            filtered(user, url, "link")
+            links.append(url)
+        if len(links) > MAX_LINKS:
+            raise ApiError(400, f"at most {MAX_LINKS} links")
+        return links
+
+    def clean_version_label(user: User, value: Any) -> str:
+        label = clean_short(value, "version label", MAX_VERSION_LABEL_LEN) or ""
+        return filtered(user, label, "version label") or ""
+
+    def clean_mc(value: Any) -> str | None:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        if not isinstance(value, str) or not MC_VERSION_RE.match(value.strip()):
+            raise ApiError(400, "mc must be a Minecraft version such as 26.3")
+        return value.strip()
+
+    def board_filters(params: Any, strict: bool) -> dict[str, Any]:
+        """{tags, size, complexity, mc, author} from ?tag=&size=&complexity=&mc=&author=; strict raises 400 for
+        unknown values instead of ignoring them."""
         raw = params.getlist("tag")
         tags = [t for t in TAGS if t in raw]
         if strict and len(tags) < len({t for t in raw if t}):
             clean_tags([t for t in raw if t])  # raises, naming the unknown ones
-        size = params.get("size") or None
-        if size is not None and size not in SIZE_LABELS:
+        out: dict[str, Any] = {"tags": tags}
+        for key, known in (("size", SIZE_LABELS), ("complexity", COMPLEXITY_LABELS)):
+            value = params.get(key) or None
+            if value is not None and value not in known:
+                if strict:
+                    raise ApiError(400, f"{key} must be one of " + ", ".join(known))
+                value = None
+            out[key] = value
+        mc = (params.get("mc") or "").strip() or None
+        if mc is not None and not MC_VERSION_RE.match(mc):
             if strict:
-                raise ApiError(400, "size must be one of " + ", ".join(SIZE_LABELS))
-            size = None
-        return tags, size
+                raise ApiError(400, "mc must be a Minecraft version such as 26.3")
+            mc = None
+        author = params.get("author") or None
+        if author is not None and parse_uuid(author) is None:
+            if strict:
+                raise ApiError(400, "author must be a uuid")
+            author = None
+        out["mc"], out["author"] = mc, parse_uuid(author) if author else None
+        return out
 
     def board_query(params: Any, strict: bool) -> tuple[str, str, str, int]:
         """(tab, sort, query, page) from query parameters; strict raises 400 instead of defaulting."""
@@ -2910,13 +3760,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/board")
     def board_list(request: Request) -> dict[str, Any]:
         tab, sort, query, page = board_query(request.query_params, strict=True)
-        tags, size_filter = board_filters(request.query_params, strict=True)
+        filters = board_filters(request.query_params, strict=True)
         user = optional_user(request) if tab == "public" else authenticate(request, mutating=False)
         size = settings.board_page_size
-        posts, total = store.list_posts(tab, user.uuid if user else None, sort, query, page, size, tags, size_filter)
+        posts, total = store.list_posts(tab, user.uuid if user else None, sort, query, page, size, **filters)
         out: dict[str, Any] = {
             "posts": [post_api(p, user) for p in posts],
-            "tab": tab, "sort": sort, "q": query, "tags": tags, "size": size_filter, "page": page,
+            "tab": tab, "sort": sort, "q": query, **filters, "page": page,
             "pageSize": size, "total": total, "pages": max(1, -(-total // size)),
         }
         if tab == "mine" and user is not None:
@@ -2931,6 +3781,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         description = filtered(user, clean_description(body.description), "description")
         visibility = clean_visibility(body.visibility)
         tags = clean_tags(body.tags)
+        coauthors = clean_coauthors(user, body.coauthors)
+        links = clean_links(user, body.links)
+        label, mc = clean_version_label(user, body.versionLabel), clean_mc(body.mc)
         limit = settings.max_posts_per_user
         if store.post_usage(user.uuid)[0] >= limit:
             raise ApiError(409, f"you already have {limit} posts on the board, which is the limit")
@@ -2951,8 +3804,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     store.insert_post({
                         "id": post_id, "uuid": user.uuid, "title": title, "description": description,
                         "visibility": visibility, "source_path": path, "created": int(time.time() * 1000),
+                        "links": json.dumps(links), "version_label": label, "mc_version": mc,
                         **snapshot_columns(snap),
-                    }, allowed, tags)
+                    }, allowed, tags, coauthors)
                 except BaseException:
                     shutil.rmtree(pdir, ignore_errors=True)
                     store.delete_post_row(post_id)
@@ -2979,20 +3833,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             values["description"] = filtered(user, clean_description(body.description), "description")
         if "visibility" in given:
             values["visibility"] = clean_visibility(body.visibility)
+        if "links" in given:
+            values["links"] = json.dumps(clean_links(user, body.links))
+        if "versionLabel" in given:  # of the current version
+            values["version_label"] = clean_version_label(user, body.versionLabel)
+        if "mc" in given:
+            values["mc_version"] = clean_mc(body.mc)
         allowed = None
         if "allowed" in given:
             if body.allowed is None:
                 raise ApiError(400, "allowed must be a list of Minecraft usernames")
             allowed = resolve_names(body.allowed, store.get_allowed(post.id))
         tags = clean_tags(body.tags) if "tags" in given else None
-        store.update_post(post.id, values, allowed, tags)
+        coauthors = clean_coauthors(user, body.coauthors) if "coauthors" in given else None
+        store.update_post(post.id, values, allowed, tags, coauthors)
         return post_api(store.get_post(post.id), user, detail=True)  # type: ignore[arg-type]
 
     @app.post("/api/board/{post_id}/refresh")
     def board_refresh(post_id: str, request: Request) -> dict[str, Any]:
+        """Re-take the current version's snapshot from the same cloud file (no new version)."""
         post, user = acting_on_post(request, post_id, owner_only=True)
-        if store.get_file(user.uuid, post.source_path) is None:
-            raise ApiError(409, f"{post.source_path} is no longer in your cloud files")
+        if not post.source_path or store.get_file(user.uuid, post.source_path) is None:
+            raise ApiError(409, f"{post.source_path} is no longer in your cloud files" if post.source_path
+                           else "this version was uploaded directly, not from your cloud files")
         try:
             snap = take_snapshot(user, post.source_path)
         except ApiError as e:
@@ -3010,6 +3873,112 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             snap.cleanup()
         return post_api(store.get_post(post.id), user, detail=True)  # type: ignore[arg-type]
+
+    # ---- versions: a new snapshot keeps the old ones in posts/<id>/v<n>/ (the quota counts them all)
+
+    def post_version(post: PostRow, request: Request) -> tuple[VersionRow, Path]:
+        """The version ?version=<n> asks for (the current one without it) and its folder; 404 if there is none."""
+        raw = request.query_params.get("version") or ""
+        pdir = store.post_dir(post.id)
+        if not raw or raw == str(post.version):
+            return VersionRow.of_post(post), pdir
+        ver = store.get_version(post.id, int(raw)) if raw.isdigit() and len(raw) <= 6 else None
+        if ver is None:
+            raise ApiError(404, "no such version")
+        return ver, pdir / f"v{ver.num}"
+
+    @app.get("/api/board/{post_id}/versions")
+    def board_versions(post_id: str, request: Request) -> dict[str, Any]:
+        post, _ = visible_post(request, post_id)
+        return {"versions": [v.api() for v in (VersionRow.of_post(post), *store.list_versions(post.id))]}
+
+    @app.post("/api/board/{post_id}/versions")
+    async def board_new_version(post_id: str, request: Request) -> JSONResponse:
+        """A new version: JSON {"path", "label"?, "mc"?} snapshots one of the owner's cloud files (its thumbnail comes
+        along); any other body is the schematic itself, named by ?filename= (plus ?label=&mc=)."""
+        post, user = acting_on_post(request, post_id, owner_only=True)
+        if request.headers.get("content-type", "").split(";")[0].strip().lower() == "application/json":
+            raw, _, _ = await read_capped(request, 64 * 1024)
+            try:
+                data = json.loads(raw or b"{}")
+            except ValueError:
+                raise ApiError(400, "invalid request body")
+            if not isinstance(data, dict):
+                raise ApiError(400, "invalid request body")
+            body = VersionIn(**{k: data.get(k) for k in ("path", "label", "mc")})
+            if not isinstance(body.path, str):
+                raise ApiError(400, "path is required")
+            path = validate_path(body.path)
+            label, mc = clean_version_label(user, body.label), clean_mc(body.mc)
+            with store.lock:
+                require_file(user, path)
+                check_quota(user, 1)
+            snap = await run_in_threadpool(take_snapshot, user, path)
+            source = path
+        else:
+            q = request.query_params
+            name = (q.get("filename") or "").strip()
+            if "/" in name:
+                raise ApiError(400, "filename must be a plain file name")
+            validate_path(name)
+            label, mc = clean_version_label(user, q.get("label")), clean_mc(q.get("mc"))
+            with store.lock:
+                check_quota(user, 1)
+            snap = await upload_snapshot(request, name)
+            source = ""  # not one of the cloud files: refresh has nothing to re-read
+        try:
+            await run_in_threadpool(install_version, post.id, user, snap, label, mc, source)
+        finally:
+            snap.cleanup()
+        log.info("%s uploaded version %d of board post %s", user.name, post.version_count + 1, post.id)
+        return JSONResponse(post_api(store.get_post(post.id), user, detail=True), status_code=201)  # type: ignore[arg-type]
+
+    def install_version(post_id: str, user: User, snap: Snapshot, label: str, mc: str | None, source: str) -> None:
+        """Archive the current snapshot as an earlier version and install snap as the next one."""
+        with store.lock:
+            current = store.get_post(post_id)
+            if current is None:
+                raise ApiError(404, "no such post")
+            check_quota(user, snap.size)
+            pdir = store.post_dir(post_id)
+            vdir = pdir / f"v{current.version}"
+            with store.transaction():
+                archive_snapshot(pdir, current)
+                try:
+                    install_snapshot(pdir, snap)
+                    values = {**snapshot_columns(snap), "version": current.version + 1, "version_label": label,
+                              "mc_version": mc, "source_path": source}
+                    sets = ", ".join(f"{k}=:{k}" for k in values)
+                    store.db.execute(f"UPDATE posts SET {sets} WHERE id=:id", {**values, "id": post_id})
+                except BaseException:  # put the old snapshot back where it was
+                    for f in vdir.iterdir():
+                        os.replace(f, pdir / f.name)
+                    shutil.rmtree(vdir, ignore_errors=True)
+                    raise
+
+    @app.delete("/api/board/{post_id}/versions/{num}")
+    def board_delete_version(post_id: str, num: int, request: Request) -> Response:
+        """Delete an earlier version (frees its bytes). The current one goes only with the post."""
+        post, _ = acting_on_post(request, post_id, owner_only=True)
+        if num == post.version:
+            raise ApiError(409, "this is the current version; upload a newer one first, or delete the post")
+        with store.lock:
+            if not store.delete_version(post.id, num):
+                raise ApiError(404, "no such version")
+            shutil.rmtree(store.post_dir(post.id) / f"v{num}", ignore_errors=True)
+        return Response(status_code=204)
+
+    # ---- download counts: website downloads, exports and "Add to my cloud", once per account (never the
+    # author's own), or once per address and day logged out. The address is only kept as a keyed hash.
+
+    def count_download(post: PostRow, request: Request, user: User | None) -> None:
+        if user is not None:
+            if user.uuid != post.uuid:
+                store.count_post_download(post.id, "u:" + user.uuid)
+            return
+        day = time.strftime("%Y%m%d", time.gmtime())
+        digest = hmac.new(store.ip_salt, f"{day}:{client_ip(request)}".encode(), hashlib.sha256).hexdigest()[:24]
+        store.count_post_download(post.id, f"ip:{day}:{digest}")
 
     @app.delete("/api/board/{post_id}")
     def board_delete(post_id: str, request: Request) -> Response:
@@ -3035,14 +4004,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/board/{post_id}/save")
     def board_save(post_id: str, request: Request) -> JSONResponse:
         post, user = acting_on_post(request, post_id, owner_only=False)
-        ext = "." + post.format if post.format else post.filename[post.filename.rfind("."):]
+        ver, vdir = post_version(post, request)
+        ext = "." + ver.format if ver.format else ver.filename[ver.filename.rfind("."):]
         stem = board_file_stem(post.title, ext)
         fd, tmp_name = tempfile.mkstemp(dir=store.tmp, suffix=".save")
         tmp = Path(tmp_name)
         try:
             with os.fdopen(fd, "wb") as f:
                 try:
-                    size, digest = copy_hashed(store.post_file(post), f)
+                    size, digest = copy_hashed(store._under(vdir, ver.filename), f)
                 except FileNotFoundError:
                     raise ApiError(404, "no such post")
             with store.lock:
@@ -3060,9 +4030,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     os.replace(tmp, dest)
                 except (NotADirectoryError, IsADirectoryError, FileExistsError):
                     raise ApiError(409, "path conflicts with an existing file or folder")
-                thumb = store.post_dir(post.id) / POST_THUMB
+                thumb = vdir / POST_THUMB
                 has_thumb = False
-                if post.has_thumb and thumb.is_file():
+                if ver.has_thumb and thumb.is_file():
                     dest_thumb = store.thumb_path(user.uuid, path)
                     dest_thumb.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(thumb, dest_thumb)
@@ -3072,37 +4042,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 row = store.get_file(user.uuid, path)
         finally:
             tmp.unlink(missing_ok=True)
+        count_download(post, request, user)
         return JSONResponse(row.api(), status_code=201)  # type: ignore[union-attr]
 
     @app.get("/api/board/{post_id}/file")
     def board_file(post_id: str, request: Request) -> FileResponse:
-        post, _ = visible_post(request, post_id)
-        disk = store.post_file(post)
+        post, user = visible_post(request, post_id)
+        ver, vdir = post_version(post, request)
+        disk = store._under(vdir, ver.filename)
         if not disk.is_file():
             raise ApiError(404, "no such post")
+        count_download(post, request, user)
         return FileResponse(
             disk,
             media_type="application/octet-stream",
-            filename=post.filename,
-            headers={"X-Sha256": post.sha256, "Cache-Control": "private, no-cache"},
+            filename=ver.filename,
+            headers={"X-Sha256": ver.sha256, "Cache-Control": "private, no-cache"},
         )
 
     @app.get("/api/board/{post_id}/thumbnail")
     def board_thumbnail(post_id: str, request: Request) -> FileResponse:
         post, _ = visible_post(request, post_id)
-        thumb = store.post_dir(post.id) / POST_THUMB
-        if not post.has_thumb or not thumb.is_file():
+        ver, vdir = post_version(post, request)
+        thumb = vdir / POST_THUMB
+        if not ver.has_thumb or not thumb.is_file():
             raise ApiError(404, "no thumbnail")
         return FileResponse(thumb, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
 
     @app.get("/api/board/{post_id}/export")
     def board_export(post_id: str, request: Request) -> FileResponse:
-        post, _ = visible_post(request, post_id)
+        post, user = visible_post(request, post_id)
+        ver, vdir = post_version(post, request)
         fmt = export_format(request)
-        disk = store.post_file(post)
+        disk = store._under(vdir, ver.filename)
         if not disk.is_file():
             raise ApiError(404, "no such post")
-        return export_response(disk, post.filename, fmt)
+        resp = export_response(disk, ver.filename, fmt)
+        count_download(post, request, user)
+        return resp
 
     def too_big(visible: int) -> ApiError:
         return ApiError(
@@ -3115,16 +4092,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """The visible blocks of the snapshot for the 3D view (model3d.visible_blocks), gzip JSON.
         Cached next to the snapshot under its sha256; a refresh removes the cache."""
         post, _ = visible_post(request, post_id)
-        disk = store.post_file(post)
+        ver, vdir = post_version(post, request)
+        disk = store._under(vdir, ver.filename)
         if not disk.is_file():
             raise ApiError(404, "no such post")
-        pdir = store.post_dir(post.id)
-        key = MODEL_CACHE_PREFIX + post.sha256[:16]
-        cache, big = pdir / f"{key}.json.gz", pdir / f"{key}.toobig"
+        key = MODEL_CACHE_PREFIX + ver.sha256[:16]
+        cache, big = vdir / f"{key}.json.gz", vdir / f"{key}.toobig"
         if not cache.is_file() and not big.is_file():
             with conversion_slot():
                 if not cache.is_file() and not big.is_file():  # another request may have built it meanwhile
-                    build_model(post, disk, cache, big)
+                    build_model(post.id, ver, disk, cache, big)
         try:
             if big.is_file():
                 text = big.read_text().strip()
@@ -3137,9 +4114,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return Response(data, media_type="application/json", headers={**headers, "Content-Encoding": "gzip"})
         return Response(gzip.decompress(data), media_type="application/json", headers=headers)
 
-    def build_model(post: PostRow, disk: Path, cache: Path, big: Path) -> None:
+    def build_model(post_id: str, ver: VersionRow, disk: Path, cache: Path, big: Path) -> None:
         try:
-            schem = read_schematic(disk, post.filename, settings.max_export_volume)
+            schem = read_schematic(disk, ver.filename, settings.max_export_volume)
             model = model3d.visible_blocks(schem, transparent_blocks, model3d.MAX_VISIBLE, settings.max_export_volume)
             payload = gzip.compress(json.dumps(model, separators=(",", ":")).encode(), compresslevel=6, mtime=0)
             dest = cache
@@ -3151,13 +4128,518 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with os.fdopen(fd, "wb") as f:
             f.write(payload)
         with store.lock:
-            current = store.get_post(post.id)
-            if current is None or current.sha256 != post.sha256:
-                Path(tmp_name).unlink(missing_ok=True)  # refreshed or deleted meanwhile: don't cache
+            if ver.current:
+                current = store.get_post(post_id)
+                stale = current is None or current.sha256 != ver.sha256 or current.version != ver.num
+            else:
+                stale = store.get_version(post_id, ver.num) is None
+            if stale:
+                Path(tmp_name).unlink(missing_ok=True)  # refreshed, replaced or deleted meanwhile: don't cache
                 if dest is big:
                     raise too_big(int(payload))
                 raise ApiError(409, "the post changed while its 3D view was built, try again")
             os.replace(tmp_name, dest)
+
+    @app.get("/b/{post_id}")
+    def share_link(post_id: str, request: Request) -> Response:
+        """The short share link: redirects to the post page (which answers 404 to those who can't see it)."""
+        if not POST_ID_RE.match(post_id):
+            return not_found_page(request)
+        return RedirectResponse(f"{base}/board/{post_id}", status_code=302)
+
+    # ---- settings profiles: named sets of the mod's settings, per account
+
+    def profile_api(r: sqlite3.Row) -> dict[str, Any]:
+        return {"id": r["id"], "name": r["name"], "updated": r["updated"]}
+
+    def profile_limit(user: User) -> int | None:
+        return None if user.is_admin else PROFILE_LIMIT
+
+    def find_profile(user: User, profile_id: str) -> sqlite3.Row:
+        r = store.get_profile(user.uuid, profile_id) if PROFILE_ID_RE.match(profile_id) else None
+        if r is None:
+            raise ApiError(404, "no such profile")
+        return r
+
+    async def json_object_body(request: Request, cap: int) -> dict[str, Any]:
+        raw, _, _ = await read_capped(request, cap)
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            raise ApiError(400, "invalid request body")
+        if not isinstance(data, dict):
+            raise ApiError(400, "invalid request body")
+        return data
+
+    def clean_profile_name(user: User, value: Any) -> str:
+        if not isinstance(value, str):
+            raise ApiError(400, "name is required")
+        name = value.strip()
+        if not 1 <= len(name) <= MAX_PROFILE_NAME_LEN:
+            raise ApiError(400, f"name must be 1 to {MAX_PROFILE_NAME_LEN} characters")
+        if TITLE_BAD_CHARS.search(name):
+            raise ApiError(400, "name may not contain control characters or line breaks")
+        return filtered(user, name, "profile name")  # type: ignore[return-value]
+
+    def clean_settings(value: Any) -> str:
+        if not isinstance(value, dict):
+            raise ApiError(400, "settings must be a JSON object")
+        text = json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+        if len(text.encode()) > MAX_PROFILE_SETTINGS:
+            raise ApiError(413, f"settings must be at most {MAX_PROFILE_SETTINGS // 1024} KiB", maxBytes=MAX_PROFILE_SETTINGS)
+        return text
+
+    PROFILE_BODY_CAP = MAX_PROFILE_SETTINGS + 4096  # room for the name and the JSON around the settings
+
+    @app.get("/api/profiles")
+    def profiles_list(request: Request) -> dict[str, Any]:
+        user = member_auth(request, mutating=False)
+        return {"profiles": [profile_api(r) for r in store.list_profiles(user.uuid)], "limit": profile_limit(user)}
+
+    @app.get("/api/profiles/{profile_id}")
+    def profile_get(profile_id: str, request: Request) -> dict[str, Any]:
+        user = member_auth(request, mutating=False)
+        r = find_profile(user, profile_id)
+        return {**profile_api(r), "settings": json.loads(r["settings"])}
+
+    @app.post("/api/profiles")
+    async def profile_create(request: Request) -> JSONResponse:
+        user = member_auth(request, mutating=True)
+        data = await json_object_body(request, PROFILE_BODY_CAP)
+        name = clean_profile_name(user, data.get("name"))
+        text = clean_settings(data.get("settings"))
+        limit = profile_limit(user)
+        with store.lock:
+            if limit is not None and len(store.list_profiles(user.uuid)) >= limit:
+                raise ApiError(409, f"you can keep at most {limit} settings profiles; delete one first", code="limit")
+            t = now_s()
+            pid = store.new_profile_id()
+            store.insert_row("profiles", {"id": pid, "uuid": user.uuid, "name": name, "settings": text,
+                                          "created": t, "updated": t})
+        return JSONResponse({"id": pid, "name": name, "updated": t}, status_code=201)
+
+    @app.put("/api/profiles/{profile_id}")
+    async def profile_update(profile_id: str, request: Request) -> dict[str, Any]:
+        user = member_auth(request, mutating=True)
+        find_profile(user, profile_id)
+        data = await json_object_body(request, PROFILE_BODY_CAP)
+        values: dict[str, Any] = {}
+        if "settings" in data:
+            values["settings"] = clean_settings(data["settings"])
+        if data.get("name") is not None:
+            values["name"] = clean_profile_name(user, data["name"])
+        if not values:
+            raise ApiError(400, "send settings (and optionally a name)")
+        values["updated"] = now_s()
+        with store.lock:
+            find_profile(user, profile_id)  # deleted meanwhile?
+            sets = ", ".join(f"{k}=:{k}" for k in values)
+            store.db.execute(f"UPDATE profiles SET {sets} WHERE id=:id", {**values, "id": profile_id})
+            return profile_api(find_profile(user, profile_id))
+
+    @app.delete("/api/profiles/{profile_id}")
+    def profile_delete(profile_id: str, request: Request) -> Response:
+        user = member_auth(request, mutating=True)
+        with store.lock:
+            find_profile(user, profile_id)
+            store.db.execute("DELETE FROM profiles WHERE id=?", (profile_id,))
+        return Response(status_code=204)
+
+    # ---- telemetry: anonymous usage reports from the mod. Nothing that identifies a player is stored: not the
+    # address (rate limits are counted in memory, under a keyed hash), and board post ids only of public posts.
+
+    telemetry_hits: dict[str, list[float]] = {}  # rate-limit key -> times of recent reports (monotonic)
+    telemetry_lock = threading.Lock()
+
+    def telemetry_allowed(limits: list[tuple[str, int]]) -> bool:
+        """Count a report against every (key, limit); False (and nothing counted) if one is full."""
+        now = time.monotonic()
+        with telemetry_lock:
+            if len(telemetry_hits) > 10000:
+                for k in [k for k, v in telemetry_hits.items() if not v or v[-1] < now - TELEMETRY_WINDOW]:
+                    del telemetry_hits[k]
+            recent = {k: [t for t in telemetry_hits.get(k, []) if t > now - TELEMETRY_WINDOW] for k, _ in limits}
+            telemetry_hits.update(recent)
+            if any(len(recent[k]) >= limit for k, limit in limits):
+                return False
+            for k, _ in limits:
+                telemetry_hits[k].append(now)
+            return True
+
+    def tele_str(d: dict[str, Any], key: str, limit: int) -> str | None:
+        v = d.get(key)
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ApiError(400, f"{key} must be text")
+        return TITLE_BAD_CHARS.sub("", v).strip()[:limit] or None
+
+    def tele_num(d: dict[str, Any], key: str, hi: float, integer: bool = True) -> Any:
+        v = d.get(key)
+        if v is None:
+            return None
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= hi:
+            raise ApiError(400, f"{key} must be a number from 0 to {hi:g}")
+        return int(v) if integer else round(float(v), 2)
+
+    def tele_obj(d: dict[str, Any], key: str) -> dict[str, Any]:
+        v = d.get(key)
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            raise ApiError(400, f"{key} must be an object")
+        return v
+
+    def tele_list(d: dict[str, Any], key: str) -> list[Any]:
+        v = d.get(key)
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise ApiError(400, f"{key} must be a list")
+        return v
+
+    def public_source(source: str) -> str:
+        """board:<id> stays only for a public post; else board:private, board:unlisted or board:gone."""
+        if not source.startswith("board:"):
+            return source
+        post = store.get_post(source[6:]) if POST_ID_RE.match(source[6:]) else None
+        if post is None:
+            return "board:gone"
+        if post.hidden is not None or post.visibility == "private":
+            return "board:private"
+        return "board:unlisted" if post.visibility == "unlisted" else source
+
+    @app.post("/api/telemetry")
+    async def telemetry_ingest(request: Request) -> Response:
+        """The mod deletes a report on 2xx or 400 and keeps it (to retry) on anything else."""
+        try:
+            data = await json_object_body(request, MAX_TELEMETRY_BYTES)
+        except ApiError as e:
+            if e.status == 413:  # never acceptable: 400 so the mod drops it instead of retrying forever
+                raise ApiError(400, f"a report must be at most {MAX_TELEMETRY_BYTES // 1024} KiB")
+            raise
+        install = data.get("install")
+        if not isinstance(install, str) or not 1 <= len(install.strip()) <= 100:
+            raise ApiError(400, "install is required")
+        specs, render_ = tele_obj(data, "specs"), tele_obj(data, "render")
+        far = 4_102_444_800  # 2100-01-01
+        values: dict[str, Any] = {
+            "install": hashlib.sha256(install.strip().encode()).hexdigest(),
+            "mod_version": tele_str(data, "mod", 40), "mc_version": tele_str(data, "mc", 40),
+            "loader": tele_str(data, "loader", 20),
+            "started": tele_num(data, "start", far), "ended": tele_num(data, "end", far),
+            "os": tele_str(specs, "os", 100), "cpu_cores": tele_num(specs, "cpuCores", 4096),
+            "max_memory_mb": tele_num(specs, "maxMemoryMb", 1 << 24), "gpu": tele_str(specs, "gpu", 200),
+            "gpu_vendor": tele_str(specs, "gpuVendor", 100), "backend": tele_str(specs, "backend", 60),
+            "render_distance": tele_num(specs, "renderDistance", 512), "width": tele_num(specs, "width", 1 << 16),
+            "height": tele_num(specs, "height", 1 << 16),
+            "frames": tele_num(render_, "frames", 1e12), "avg_ms": tele_num(render_, "avgMs", 1e6, False),
+            "p50_ms": tele_num(render_, "p50Ms", 1e6, False), "p99_ms": tele_num(render_, "p99Ms", 1e6, False),
+            "over33_ms": tele_num(render_, "over33Ms", 1e12), "max_sections": tele_num(render_, "maxSections", 1e9),
+        }
+        sources: list[str] = []
+        for src in tele_list(data, "schematics")[:100]:
+            if isinstance(src, str) and SOURCE_RE.match(src):
+                src = public_source(src) if src not in ("board:private", "board:unlisted", "board:gone") else src
+                if src not in sources:
+                    sources.append(src)
+        changed = sorted({n for n in tele_list(data, "settingsChanged")[:300] if isinstance(n, str) and SETTING_NAME_RE.match(n)})
+        keys: dict[str, int] = {}
+        for k, n in list(tele_obj(data, "keys").items())[:200]:
+            if SETTING_NAME_RE.match(k) and type(n) is int and 0 <= n <= 10**9:
+                keys[k] = n
+        values.update(received=now_s(), schematics=json.dumps(sources), settings_changed=json.dumps(changed),
+                      keys=json.dumps(keys))
+        ip_key = hmac.new(store.ip_salt, client_ip(request).encode(), hashlib.sha256).hexdigest()[:24]
+        if not telemetry_allowed([("ip:" + ip_key, TELEMETRY_IP_LIMIT), ("install:" + values["install"], TELEMETRY_INSTALL_LIMIT)]):
+            raise ApiError(429, "too many reports for now, try again later")
+        store.add_telemetry(values)
+        return Response(status_code=204)
+
+    def telemetry_summary() -> dict[str, Any]:
+        """What the admin page's Telemetry tab shows: the last 30 days, mostly counted per install."""
+        t = now_s()
+        rows = store.telemetry_since(t - 30 * DAY)
+        week = [r for r in rows if r["received"] >= t - 7 * DAY]
+        latest = {r["install"]: r for r in rows}  # rows come oldest first
+
+        def median(values: list[float]) -> float | None:
+            values = sorted(values)
+            if not values:
+                return None
+            mid = len(values) // 2
+            return values[mid] if len(values) % 2 else round((values[mid - 1] + values[mid]) / 2, 2)
+
+        def frame_stats(key: Any) -> list[dict[str, Any]]:
+            groups: dict[str, list[sqlite3.Row]] = {}
+            for r in rows:
+                if r["frames"] and r["p50_ms"] is not None:
+                    groups.setdefault(key(r), []).append(r)
+            out = [{"key": k, "reports": len(g), "installs": len({r["install"] for r in g}),
+                    "p50": median([r["p50_ms"] for r in g]), "p99": median([r["p99_ms"] for r in g if r["p99_ms"] is not None])}
+                   for k, g in groups.items()]
+            return sorted(out, key=lambda x: (-x["reports"], x["key"]))
+
+        settings_count: dict[str, int] = {}
+        for r in latest.values():
+            for name in json.loads(r["settings_changed"]):
+                settings_count[name] = settings_count.get(name, 0) + 1
+        keys: dict[str, list[int]] = {}  # name -> [uses, installs]
+        key_installs: dict[str, set[str]] = {}
+        sources: dict[str, int] = {}
+        posts: dict[str, set[str]] = {}
+        for r in rows:
+            for name, n in json.loads(r["keys"]).items():
+                keys.setdefault(name, [0, 0])[0] += n
+                key_installs.setdefault(name, set()).add(r["install"])
+            for src in json.loads(r["schematics"]):
+                bucket = "board (public)" if src.startswith("board:") and src not in (
+                    "board:private", "board:unlisted", "board:gone") else src
+                sources[bucket] = sources.get(bucket, 0) + 1
+                if bucket == "board (public)":
+                    posts.setdefault(src[6:], set()).add(r["install"])
+        for name, installs in key_installs.items():
+            keys[name][1] = len(installs)
+        top_posts = []
+        for pid, installs in sorted(posts.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            post = store.get_post(pid)
+            if post is not None and post.visibility == "public" and post.hidden is None:  # still public now
+                top_posts.append({"id": pid, "title": post.title, "installs": len(installs)})
+            if len(top_posts) == 10:
+                break
+        oses: dict[str, int] = {}
+        memory: dict[str, int] = {}
+        for r in latest.values():
+            oses[os_family(r["os"])] = oses.get(os_family(r["os"]), 0) + 1
+            memory[memory_bucket(r["max_memory_mb"])] = memory.get(memory_bucket(r["max_memory_mb"]), 0) + 1
+
+        def ranked(d: dict[str, int], limit: int = 30) -> list[dict[str, Any]]:
+            return [{"name": k, "count": v} for k, v in sorted(d.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]]
+
+        return {
+            "reports7": len(week), "installs7": len({r["install"] for r in week}),
+            "reports30": len(rows), "installs30": len(latest),
+            "byGpuVendor": frame_stats(lambda r: gpu_vendor(r["gpu_vendor"])),
+            "byModVersion": frame_stats(lambda r: r["mod_version"] or "unknown"),
+            "settings": ranked(settings_count),
+            "keys": [{"name": k, "uses": v[0], "installs": v[1]} for k, v in sorted(keys.items(), key=lambda kv: (-kv[1][0], kv[0]))],
+            "sources": ranked(sources), "topPosts": top_posts,
+            "os": ranked(oses), "memory": [{"name": b, "count": memory.get(b, 0)} for b in MEMORY_BUCKETS if memory.get(b)],
+        }
+
+    @app.get("/api/admin/telemetry")
+    def admin_telemetry(request: Request) -> dict[str, Any]:
+        admin_only(request, mutating=False)
+        return telemetry_summary()
+
+    # ---- identity: display names, pictures, Discord
+
+    def clean_display_name(user: User, value: Any) -> str:
+        if not isinstance(value, str):
+            raise ApiError(400, "name must be text")
+        name = " ".join(value.split())
+        if not MIN_DISPLAY_NAME_LEN <= len(name) <= MAX_DISPLAY_NAME_LEN:
+            raise ApiError(400, f"a display name is {MIN_DISPLAY_NAME_LEN} to {MAX_DISPLAY_NAME_LEN} characters")
+        if TITLE_BAD_CHARS.search(name) or "#" in name or not any(c.isalnum() for c in name):
+            raise ApiError(400, "a display name needs a letter or digit, and may not contain # or control characters")
+        return filtered(user, name, "display name")  # type: ignore[return-value]
+
+    @app.put("/api/account/display-name")
+    def set_display_name(request: Request, body: DisplayNameIn) -> dict[str, Any]:
+        """{"name"?, "tag"?}: name null goes back to the Minecraft name; a tag is chosen when the name is taken
+        (and the answer warns), unless one is given (null or "": none, if nobody else uses the name plainly)."""
+        user = member_auth(request, mutating=True)
+        given = body.model_fields_set
+        if not given & {"name", "tag"}:
+            raise ApiError(400, "send a name, a tag or both")
+        if "name" in given and body.name is None:
+            name, custom = user.name, False  # follows Minecraft renames again
+        elif "name" in given:
+            name, custom = clean_display_name(user, body.name), True
+        else:
+            name, custom = user.shown, True
+        if "tag" in given:
+            tag = body.tag.strip() if isinstance(body.tag, str) else body.tag
+            if tag in (None, ""):
+                tag = None
+            elif not isinstance(tag, str) or not DISPLAY_TAG_RE.match(tag):
+                raise ApiError(400, "a tag is 3 to 5 letters or digits")
+            else:
+                filtered(user, tag, "tag")
+            tag = store.set_display(user.uuid, name, tag, custom=custom)
+        else:
+            tag = store.set_display(user.uuid, name, custom=custom)
+        out: dict[str, Any] = {"displayName": name, "tag": tag}
+        if tag and "tag" not in given:
+            out["warning"] = (f"Someone else already uses the name {name}, so yours carries the tag #{tag}. Only you and "
+                              "admins see it; you can change it to another 3 to 5 letters or digits.")
+        return out
+
+    def minecraft_face(uuid: str) -> bytes:
+        """The player's face from their skin, cached in skins/ for a day (a failed fetch is retried after
+        SKIN_RETRY, meanwhile the old face or the placeholder is shown). Only accounts and whitelisted players
+        are looked up, so the endpoint can't be used to make us query Mojang for anyone."""
+        face, fail = store.skins_dir / f"{uuid}.face.png", store.skins_dir / f"{uuid}.fail"
+
+        def fresh(p: Path, ttl: int) -> bool:
+            try:
+                return time.time() - p.stat().st_mtime < ttl
+            except OSError:
+                return False
+
+        def fallback() -> bytes:
+            try:
+                return face.read_bytes()
+            except OSError:
+                return images.placeholder_face()
+
+        if fresh(face, SKIN_TTL):
+            return fallback()
+        if not store.known_player(uuid) or fresh(fail, SKIN_RETRY):
+            return fallback()
+        with skin_locks.setdefault(uuid, threading.Lock()):
+            if fresh(face, SKIN_TTL):  # fetched by another request meanwhile
+                return fallback()
+            try:
+                skin = fetch_skin(settings, uuid)
+            except MojangUnavailable as e:
+                log.info("could not fetch the skin of %s: %s", uuid, e)
+                fail.touch()
+                return fallback()
+            data = images.placeholder_face()
+            if skin is not None:
+                atomic_write(store.skins_dir / f"{uuid}.png", skin)
+                try:
+                    data = images.face_png(skin)
+                except ValueError as e:
+                    log.info("could not read the skin of %s: %s", uuid, e)
+            atomic_write(face, data)
+            fail.unlink(missing_ok=True)
+            return data
+
+    skin_locks: dict[str, threading.Lock] = {}
+
+    def atomic_write(dest: Path, data: bytes) -> None:
+        fd, tmp_name = tempfile.mkstemp(dir=store.tmp, suffix=".part")
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp_name, dest)
+
+    @app.get("/avatar/{uuid}")
+    def avatar(uuid: str) -> Response:
+        """A player's picture: their custom icon, else their Minecraft face. Served from here so the pages need
+        no image hosts but their own."""
+        dashed = parse_uuid(uuid)
+        if dashed is None:
+            raise ApiError(404, "no such player")
+        headers = {"Cache-Control": "public, max-age=3600"}
+        user = store.get_user(dashed)
+        if user is not None and user.avatar in AVATAR_TYPES:
+            icon = store.avatar_path(dashed, user.avatar)
+            if icon.is_file():
+                return FileResponse(icon, media_type=AVATAR_TYPES[user.avatar], headers=headers)
+        return Response(minecraft_face(dashed), media_type="image/png", headers=headers)
+
+    @app.put("/api/account/avatar")
+    async def avatar_upload(request: Request) -> dict[str, Any]:
+        """A custom icon: the raw PNG or JPEG, at most MAX_AVATAR_BYTES and MAX_AVATAR_SIDE pixels a side."""
+        user = member_auth(request, mutating=True)
+        data, _, _ = await read_capped(request, MAX_AVATAR_BYTES)
+        kind, dims = "png", images.png_size(data)
+        if dims is None:
+            kind, dims = "jpeg", images.jpeg_size(data)
+        if dims is None:
+            raise ApiError(400, "the icon must be a PNG or JPEG image")
+        w, h = dims
+        if not (0 < w <= MAX_AVATAR_SIDE and 0 < h <= MAX_AVATAR_SIDE):
+            raise ApiError(400, f"the icon must be at most {MAX_AVATAR_SIDE} x {MAX_AVATAR_SIDE} pixels (this one is {w} x {h})")
+        with store.lock:
+            dest = store.avatar_path(user.uuid, kind)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write(dest, data)
+            for other in AVATAR_TYPES:
+                if other != kind:
+                    store.avatar_path(user.uuid, other).unlink(missing_ok=True)
+            store.set_avatar(user.uuid, kind)
+            user = store.get_user(user.uuid)  # type: ignore[assignment]
+        return {"avatar": avatar_url(user.uuid, user.avatar_version, absolute=True), "custom": True}
+
+    @app.delete("/api/account/avatar")
+    def avatar_reset(request: Request) -> dict[str, Any]:
+        """Back to the Minecraft face."""
+        user = member_auth(request, mutating=True)
+        with store.lock:
+            for kind in AVATAR_TYPES:
+                store.avatar_path(user.uuid, kind).unlink(missing_ok=True)
+            store.set_avatar(user.uuid, None)
+            user = store.get_user(user.uuid)  # type: ignore[assignment]
+        return {"avatar": avatar_url(user.uuid, user.avatar_version, absolute=True), "custom": False}
+
+    def account_redirect(result: str) -> RedirectResponse:
+        return RedirectResponse(f"{base}/account?discord={result}#discord", status_code=303)
+
+    @app.get("/account/discord/link")
+    def discord_link(request: Request) -> Response:
+        """Start linking: off to Discord with a state tied to this browser session (checked by the callback)."""
+        user = session_user(request)
+        if user is None:
+            return RedirectResponse(f"{base}/", status_code=303)
+        if not settings.discord_enabled:
+            return account_redirect("off")
+        if not is_member(user):
+            return RedirectResponse(f"{base}/apply", status_code=303)
+        session = request.cookies.get(SESSION_COOKIE, "")
+        state = store.issue_token(user.uuid, "discord", DISCORD_STATE_TTL, sha256_hex(session))
+        query = urllib.parse.urlencode({
+            "response_type": "code", "client_id": settings.discord_client_id, "scope": "identify",
+            "state": state, "redirect_uri": settings.discord_redirect, "prompt": "consent",
+        })
+        return RedirectResponse(f"{DISCORD_AUTHORIZE}?{query}", status_code=303)
+
+    @app.get("/account/discord/callback")
+    def discord_callback(request: Request) -> Response:
+        user = session_user(request)
+        if user is None:
+            return RedirectResponse(f"{base}/", status_code=303)
+        if not settings.discord_enabled:
+            return account_redirect("off")
+        q = request.query_params
+        state = q.get("state") or ""
+        found = store.consume_token(state, "discord") if state else None  # single use either way
+        session = request.cookies.get(SESSION_COOKIE, "")
+        if found is None or found[0].uuid != user.uuid or found[1] != sha256_hex(session):
+            log.info("Discord callback for %s with a missing, expired or foreign state", user.name)
+            return account_redirect("state")
+        if q.get("error") or not q.get("code"):
+            return account_redirect("cancelled")
+        try:
+            discord_id, discord_name = discord_user(settings, discord_token(settings, q["code"]))
+        except DiscordError as e:
+            log.warning("Discord linking failed for %s: %s", user.name, e)
+            return account_redirect("failed")
+        try:
+            store.set_discord(user.uuid, discord_id, discord_name)
+        except ApiError:
+            return account_redirect("taken")
+        log.info("%s linked the Discord account %s (%s)", user.name, discord_name, discord_id)
+        return account_redirect("linked")
+
+    @app.delete("/api/account/discord")
+    def discord_unlink(request: Request) -> dict[str, Any]:
+        user = member_auth(request, mutating=True)
+        store.set_discord(user.uuid, None, None)
+        return {"discord": None}
+
+    @app.get("/api/users/{uuid}")
+    def public_user(uuid: str) -> dict[str, Any]:
+        """A player's public face: display name (no tag), badges and picture."""
+        dashed = parse_uuid(uuid)
+        target = store.get_user(dashed) if dashed else None
+        if target is None:
+            raise ApiError(404, "no such user")
+        return {"uuid": target.uuid, "displayName": target.shown, "badges": store.badges_of(target.uuid),
+                "avatar": avatar_url(target.uuid, target.avatar_version, absolute=True),
+                "page": f"{settings.site_url}/u/{target.uuid}"}
 
     # ---- mod releases
 
@@ -3375,7 +4857,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return seconds * 1000 if seconds is not None else None
 
     def who(uuid: str | None, name: str | None) -> dict[str, Any] | None:
-        return {"uuid": uuid, "name": name or ""} if uuid else None
+        """A player in an admin answer: the Minecraft name, and the display name and tag that tell people apart."""
+        if not uuid:
+            return None
+        u = store.get_user(uuid)
+        return {"uuid": uuid, "name": name or "", "displayName": u.shown if u else (name or ""),
+                "tag": u.display_tag if u else None}
 
     def application_api(r: sqlite3.Row, admin: bool = False) -> dict[str, Any]:
         out = {
@@ -3413,6 +4900,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             out["decidedBy"] = r["decided_by"]
             target_user = store.get_user(r["target_uuid"])
             out["target"]["name"] = target_user.name if target_user else None  # the reported user / the author now
+            out["target"]["displayName"] = target_user.shown if target_user else None
+            out["target"]["tag"] = target_user.display_tag if target_user else None
             if r["kind"] == "post":
                 post = store.get_post(r["target"]) if POST_ID_RE.match(r["target"]) else None
                 out["post"] = {"visibility": post.visibility, "hidden": post.hidden is not None} if post else None
@@ -3554,9 +5043,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return user
 
     def user_admin_api(r: sqlite3.Row) -> dict[str, Any]:
-        u = User(r["uuid"], r["name"], bool(r["is_admin"]), r["quota_bytes"])
+        u = User.from_row(r)
         return {
-            "uuid": u.uuid, "name": u.name, "admin": u.is_admin, "usedBytes": int(r["used"]), "quotaBytes": quota_for(u),
+            "uuid": u.uuid, "name": u.name, "displayName": u.shown, "tag": u.display_tag,
+            "discord": {"id": u.discord_id, "name": u.discord_name} if u.discord_id else None,
+            "avatarVersion": u.avatar_version, "customAvatar": u.avatar is not None,
+            "admin": u.is_admin, "usedBytes": int(r["used"]), "quotaBytes": quota_for(u),
             "quotaOverride": u.quota_bytes, "badges": badge_list(r["badges"]), "whitelisted": r["wl_source"] is not None,
             "whitelistSource": r["wl_source"], "posts": r["posts"], "created": ms_or_none(r["created"]),
             "lastSeen": ms_or_none(r["last_seen"] if r["last_seen"] is not None else r["last_login"]),
@@ -3859,11 +5351,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             entries=entries,
             post_count=post_count,
             post_bytes=post_bytes,
-            visibilities=VISIBILITIES,
-            max_title=MAX_TITLE_LEN,
-            max_description=MAX_DESCRIPTION_LEN,
-            all_tags=TAGS,
             folders=folders,
+            **post_form_ctx(),
             used=used,
             quota=quota,
             pct=f"{pct:.2f}",
@@ -3872,7 +5361,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def board_url(
         tab: str = "public", sort: str | None = None, q: str = "", page: int = 1,
-        tags: Any = (), size: str | None = None,
+        tags: Any = (), size: str | None = None, complexity: str | None = None, mc: str | None = None,
+        author: str | None = None,
     ) -> str:
         """A link to a board page, leaving out parameters at their defaults."""
         params: list[tuple[str, Any]] = []
@@ -3883,35 +5373,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if q:
             params.append(("q", q))
         params.extend(("tag", t) for t in TAGS if t in tags)
-        if size:
-            params.append(("size", size))
+        for key, value in (("size", size), ("complexity", complexity), ("mc", mc), ("author", author)):
+            if value:
+                params.append((key, value))
         if page > 1:
             params.append(("page", page))
         return f"{base}/board" + ("?" + urllib.parse.urlencode(params) if params else "")
+
+    def post_form_ctx() -> dict[str, Any]:
+        """What the post form (_post_form.html) needs, on the files page and a post's page."""
+        newest = store.list_releases()
+        return {
+            "visibilities": VISIBILITIES, "max_title": MAX_TITLE_LEN, "max_description": MAX_DESCRIPTION_LEN,
+            "all_tags": TAGS, "max_coauthors": MAX_COAUTHORS, "max_author_name": MAX_AUTHOR_NAME_LEN,
+            "max_links": MAX_LINKS, "max_link": MAX_LINK_LEN, "max_version_label": MAX_VERSION_LABEL_LEN,
+            "default_mc": newest[0].mc if newest else "",  # the newest release's Minecraft version
+        }
 
     @app.get("/board", response_class=HTMLResponse)
     def board_page(request: Request) -> HTMLResponse:
         user = session_user(request)
         tab, sort, query, page = board_query(request.query_params, strict=False)
-        tags, size_filter = board_filters(request.query_params, strict=False)
+        filters = board_filters(request.query_params, strict=False)
+        tags, size_filter = filters["tags"], filters["size"]
         size = settings.board_page_size
         posts: list[PostRow] = []
         total = 0
         if tab == "public" or user is not None:
-            posts, total = store.list_posts(tab, user.uuid if user else None, sort, query, page, size, tags, size_filter)
+            posts, total = store.list_posts(tab, user.uuid if user else None, sort, query, page, size, **filters)
+        author = store.get_user(filters["author"]) if filters["author"] else None
 
         def link(**change: Any) -> str:
-            """This board page with some of tab, sort, q, page, tags and size changed (page resets to 1)."""
-            state = {"tab": tab, "sort": sort, "q": query, "page": 1, "tags": tags, "size": size_filter}
+            """This board page with some of tab, sort, q, page and the filters changed (page resets to 1)."""
+            state = {"tab": tab, "sort": sort, "q": query, "page": 1, **filters}
             return board_url(**{**state, **change})
 
         def toggle_tag(tag: str) -> str:
             return link(tags=[t for t in tags if t != tag] if tag in tags else [*tags, tag])
 
-        def chip_url(tag: str | None = None, size: str | None = None) -> str:
-            """A card's chip: add its tag (or set its size) to the current filters."""
+        def chip_url(tag: str | None = None, size: str | None = None, complexity: str | None = None,
+                     mc: str | None = None) -> str:
+            """A card's chip: add its tag (or set its size, complexity or Minecraft version) to the current filters."""
             if tag is not None:
                 return link(tags=tags if tag in tags else [*tags, tag])
+            if complexity is not None:
+                return link(complexity=complexity)
+            if mc is not None:
+                return link(mc=mc)
             return link(size=size)
 
         return render(
@@ -3929,6 +5437,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             sorts=BOARD_SORTS,
             tags=tags,
             size=size_filter,
+            complexity=filters["complexity"],
+            mc=filters["mc"],
+            author=author,
+            filtered_by=any(filters[k] for k in ("tags", "size", "complexity", "mc", "author")),
+            mc_versions=store.mc_versions(),
             link=link,
             toggle_tag=toggle_tag,
             chip_url=chip_url,
@@ -3936,37 +5449,95 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             size_classes=SIZE_LABELS,
         )
 
+    def og_tags(post: PostRow) -> dict[str, str]:
+        """OpenGraph / Twitter card values for a post, so a pasted link previews (Discord, YouTube, ...)."""
+        text = " ".join(post.description.split())
+        if len(text) > 200:
+            text = text[:197].rstrip() + "..."
+        if not text:
+            facts = [f"by {post.author_shown}"]
+            if post.dims:
+                facts.append(f"{post.dims[0]} x {post.dims[1]} x {post.dims[2]}")
+            if post.block_count is not None:
+                facts.append(f"{post.block_count:,} blocks")
+            text = "A Minecraft schematic " + ", ".join(facts) + "."
+        out = {"title": post.title, "description": text, "url": f"{settings.site_url}/board/{post.id}"}
+        if post.has_thumb:
+            out["image"] = f"{settings.site_url}/api/board/{post.id}/thumbnail?v={post.updated}"
+        return out
+
     @app.get("/board/{post_id}", response_class=HTMLResponse)
     def post_page(post_id: str, request: Request) -> HTMLResponse:
         user = session_user(request)
         try:
             post = find_post(post_id, user)
+            ver, _ = post_version(post, request)
         except ApiError:
             return render("not_found.html", status=404, user=user, nav="board")
         own = user is not None and user.uuid == post.uuid
         allowed = store.get_allowed(post.id) if user and (own or user.is_admin) else []
-        ext = "." + post.format if post.format else ""
+        ext = "." + ver.format if ver.format else ""
+        versions = [VersionRow.of_post(post), *store.list_versions(post.id)]
         return render(
             "post.html",
             user=user,
             nav="board",
             post=post,
+            ver=ver,
+            versions=versions,
+            version_q="" if ver.current else f"?version={ver.num}",
             own=own,
             my_vote=store.get_vote(post.id, user.uuid) if user else 0,
             allowed=allowed,
-            source_exists=own and store.get_file(post.uuid, post.source_path) is not None,
+            source_exists=own and bool(post.source_path) and store.get_file(post.uuid, post.source_path) is not None,
+            my_files=[f.path for f in store.list_files(user.uuid)] if own else [],
             exports=[e for e in SCHEMATIC_EXTENSIONS if e != ext] if ext else [],
-            visibilities=VISIBILITIES,
-            max_title=MAX_TITLE_LEN,
-            max_description=MAX_DESCRIPTION_LEN,
-            all_tags=TAGS,
             size_classes=SIZE_LABELS,
             board_url=board_url,
-            has_model=post.block_count is not None,
+            has_model=ver.block_count is not None,
             max_visible=model3d.MAX_VISIBLE,
             report_reasons=REPORT_REASONS,
             max_report=MAX_REPORT_LEN,
+            og=og_tags(post),
+            share_url=f"{settings.site_url}/b/{post.id}",
+            **post_form_ctx(),
         )
+
+    @app.get("/u/{uuid}", response_class=HTMLResponse)
+    def user_page(uuid: str, request: Request) -> HTMLResponse:
+        """A player's public profile: display name, badges, picture, and their public posts (own or co-authored)."""
+        viewer = session_user(request)
+        dashed = parse_uuid(uuid)
+        person = store.get_user(dashed) if dashed else None
+        if person is None:
+            return not_found_page(request)
+        raw_page = request.query_params.get("page") or "1"
+        page = int(raw_page) if raw_page.isdigit() and 0 < int(raw_page) <= 100000 else 1
+        size = settings.board_page_size
+        posts, total = store.list_posts("public", None, "new", "", page, size, author=person.uuid)
+        return render(
+            "user.html",
+            user=viewer,
+            nav="board",
+            person=person,
+            badges=store.badges_of(person.uuid),
+            posts=posts,
+            total=total,
+            page=page,
+            pages=max(1, -(-total // size)),
+            all_tags=TAGS,
+            size_classes=SIZE_LABELS,
+            board_url=board_url,
+        )
+
+    DISCORD_MESSAGES = {
+        "linked": ("Your Discord account is linked.", False),
+        "cancelled": ("Linking was cancelled on Discord.", True),
+        "state": ("That link request expired or came from another browser. Try again.", True),
+        "failed": ("Discord didn't confirm the account. Try again later.", True),
+        "taken": ("That Discord account is already linked to another Slopmatica account.", True),
+        "off": ("Discord linking isn't set up yet.", True),
+    }
 
     @app.get("/account", response_class=HTMLResponse)
     def account_page(request: Request) -> Response:
@@ -4004,6 +5575,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             password_set=password_set * 1000 if password_set else None,
             min_password=MIN_PASSWORD_LEN,
             max_password=MAX_PASSWORD_LEN,
+            min_display=MIN_DISPLAY_NAME_LEN,
+            max_display=MAX_DISPLAY_NAME_LEN,
+            max_avatar_kb=MAX_AVATAR_BYTES // 1024,
+            max_avatar_side=MAX_AVATAR_SIDE,
+            discord_enabled=settings.discord_enabled,
+            discord_msg=DISCORD_MESSAGES.get(request.query_params.get("discord") or ""),
         )
 
     @app.get("/releases", response_class=HTMLResponse)
@@ -4097,7 +5674,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "whitelist": store.whitelist_count(),
         }
 
-    ADMIN_TABS = ("applications", "storage", "reports", "whitelist", "badges", "users")
+    ADMIN_TABS = ("applications", "storage", "reports", "whitelist", "badges", "users", "telemetry")
 
     @app.get("/admin", response_class=HTMLResponse)
     def admin_page(request: Request) -> HTMLResponse:
@@ -4118,8 +5695,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         elif tab == "whitelist":
             ctx.update(entries=[whitelist_api(r) for r in store.whitelist_entries()])
         elif tab == "badges":
-            ctx.update(holders=[{"uuid": r["uuid"], "name": r["name"], "badges": badge_list(r["badges"])}
+            ctx.update(holders=[{**who(r["uuid"], r["name"]), "badges": badge_list(r["badges"])}  # type: ignore[dict-item]
                                 for r in store.badge_holders()])
+        elif tab == "telemetry":
+            ctx.update(t=telemetry_summary())
         else:
             query = (q.get("q") or "").strip()[:MAX_QUERY_LEN]
             raw_page = q.get("page") or "1"

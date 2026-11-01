@@ -1,5 +1,5 @@
 "use strict";
-// Password login (landing page) and the account page's password and session tools.
+// Password login (landing page), and the account page's profile, password, Discord and session tools.
 (function () {
   const base = document.body.dataset.base || "";
   const HDR = { "X-Requested-With": "slopmatica", "Content-Type": "application/json" };
@@ -67,6 +67,81 @@
       if (r) location.reload();
     });
   });
+
+  // ---- account page: display name and tag
+  const display = document.querySelector("form[data-display-form]");
+  if (display) {
+    const msg = display.querySelector(".form-msg");
+    const shown = async (body, button) => {
+      const r = await send("PUT", base + "/api/account/display-name", body, msg, button);
+      if (!r) return;
+      const j = await r.json();
+      if (j.warning) {
+        say(msg, j.warning, false);
+        display.elements.tag.value = j.tag || "";
+        setTimeout(() => location.reload(), 4000);
+      } else {
+        location.reload();
+      }
+    };
+    display.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const name = display.elements.name.value.trim();
+      const tag = display.elements.tag.value.trim();
+      if (name.length < 3) { say(msg, "Use at least 3 characters.", true); return; }
+      if (tag && !/^[A-Za-z0-9]{3,5}$/.test(tag)) { say(msg, "A tag is 3 to 5 letters or digits.", true); return; }
+      // An unchanged tag field is left to the server, so a taken name gets a tag picked (and a warning).
+      const body = { name };
+      if (tag !== (display.elements.tag.defaultValue || "")) body.tag = tag || null;
+      shown(body, display.querySelector("button[type=submit]"));
+    });
+    const reset = display.querySelector("[data-display-reset]");
+    if (reset) reset.addEventListener("click", () => shown({ name: null }, reset));
+  }
+
+  // ---- account page: picture
+  const avatar = document.querySelector("form[data-avatar-form]");
+  if (avatar) {
+    const msg = avatar.querySelector(".form-msg");
+    avatar.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const file = avatar.elements.icon.files[0];
+      if (!file) { say(msg, "Choose a PNG or JPEG first.", true); return; }
+      if (file.size > 256 * 1024) { say(msg, "That picture is larger than 256 KB.", true); return; }
+      const button = avatar.querySelector("button[type=submit]");
+      button.disabled = true;
+      say(msg, "Uploading…");
+      try {
+        const r = await fetch(base + "/api/account/avatar", {
+          method: "PUT", credentials: "same-origin",
+          headers: { "X-Requested-With": "slopmatica", "Content-Type": file.type || "application/octet-stream" }, body: file,
+        });
+        if (!r.ok) { say(msg, await errorText(r), true); return; }
+        location.reload();
+      } catch (_) {
+        say(msg, "Network error, try again.", true);
+      } finally {
+        button.disabled = false;
+      }
+    });
+    const reset = avatar.querySelector("[data-avatar-reset]");
+    if (reset) {
+      reset.addEventListener("click", async () => {
+        const r = await send("DELETE", base + "/api/account/avatar", {}, msg, reset);
+        if (r) location.reload();
+      });
+    }
+  }
+
+  // ---- account page: Discord
+  const unlink = document.querySelector("[data-discord-unlink]");
+  if (unlink) {
+    unlink.addEventListener("click", async () => {
+      if (!confirm("Unlink your Discord account?")) return;
+      const r = await send("DELETE", base + "/api/account/discord", {}, document.querySelector("[data-discord-msg]"), unlink);
+      if (r) location.href = base + "/account";
+    });
+  }
 
   const out = document.querySelector("[data-logout-all]");
   if (out) {

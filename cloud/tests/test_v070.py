@@ -67,7 +67,7 @@ def whitelist_file(tmp_path, entries, name="whitelist.json"):
 
 
 def test_version_bumped():
-    assert __version__ == "0.7.0" and SCHEMA_VERSION == 5
+    assert SCHEMA_VERSION >= 5  # 0.7.0; test_v080 checks the current version
 
 
 def test_settings_from_env(tmp_path):
@@ -217,7 +217,8 @@ def test_application_approve(gated, ppl):
     c = gated
     a = apply_(c, ppl.outsider, contact="  disc#42 ", reason="  Farms\r\nand more ")
     assert a["status"] == "pending" and a["reason"] == "Farms\nand more" and a["contact"] == "disc#42"
-    assert a["user"] == {"uuid": ppl.outsider.uuid, "name": "Outsider"} and a["note"] is None
+    assert a["user"] == {"uuid": ppl.outsider.uuid, "name": "Outsider", "displayName": "Outsider", "tag": None}
+    assert a["note"] is None
     assert apply_(c, ppl.outsider, status=409)["error"].startswith("you already have an open application")
     status = c.get("/api/application", headers=ppl.outsider.h).json()
     assert status["whitelisted"] is False and status["application"]["id"] == a["id"] and status["apply"] == APPLY
@@ -335,7 +336,8 @@ def test_badges_in_payloads_and_pages(gated, ppl):
     assert r.json()["badges"] == ["verified", "dev"]
     c.put(f"/api/admin/users/{ppl.member.uuid}/badges/mod", headers=ppl.admin.h)
     expect = ["verified", "mod", "dev"]  # display order, not the order given
-    assert c.get(f"/api/board/{post['id']}").json()["author"] == {"uuid": ppl.member.uuid, "name": "Member", "badges": expect}
+    assert c.get(f"/api/board/{post['id']}").json()["author"] == {"uuid": ppl.member.uuid, "name": "Member", "badges": expect,
+                                                              "displayName": "Member"}
     assert c.get("/api/board").json()["posts"][0]["author"]["badges"] == expect
     assert c.get("/api/me", headers=ppl.member.h).json()["badges"] == expect
     board = TestClient(c.app).get("/board").text
@@ -389,7 +391,7 @@ def test_reports(gated, ppl, mojang):
     listing = c.get("/api/admin/reports", headers=ppl.admin.h).json()
     assert listing["counts"] == {"open": 2}
     first = next(x for x in listing["reports"] if x["id"] == r["id"])
-    assert first["reporter"] == {"uuid": reporter.uuid, "name": "Reporter"}
+    assert first["reporter"] == {"uuid": reporter.uuid, "name": "Reporter", "displayName": "Reporter", "tag": None}
     assert first["post"] == {"visibility": "public", "hidden": False} and first["target"]["name"] == "Member"
     html = ppl.admin.cookie_client(c.app).get("/admin?tab=reports").text
     assert "Copied castle" in html and "Stolen / not their build" in html and f"/api/admin/posts/{post['id']}/hide" in html
@@ -791,9 +793,10 @@ def test_migrates_a_v4_database(make_client, data_dir):
     body = v4_data_dir(data_dir)
     c = make_client(whitelist_enforced=True)
     db = c.app.state.store.db
-    assert db.execute("PRAGMA user_version").fetchone()[0] == 5
-    assert columns(db, "users")[-2:] == ["quota_bytes", "last_seen"]
-    assert columns(db, "posts")[-2:] == ["hidden", "hidden_reason"]
+    assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    users, posts = columns(db, "users"), columns(db, "posts")
+    assert users[users.index("quota_bytes"):][:2] == ["quota_bytes", "last_seen"]
+    assert posts[posts.index("hidden"):][:2] == ["hidden", "hidden_reason"]
     assert columns(db, "whitelist") == ["uuid", "name", "source", "added", "added_by"]
     for table in ("applications", "storage_requests", "badges", "reports"):
         assert columns(db, table), table
@@ -804,7 +807,7 @@ def test_migrates_a_v4_database(make_client, data_dir):
     not_whitelisted(c.get("/api/files", headers=bearer("playertok")))
     assert (data_dir / "users" / PLAYER / "files" / "house.litematic").read_bytes() == body
     post = c.get("/api/board/HousePost1").json()
-    assert post["author"] == {"uuid": PLAYER, "name": "Player", "badges": []} and post["hidden"] is False
+    assert post["author"] == {"uuid": PLAYER, "name": "Player", "badges": [], "displayName": "Player"} and post["hidden"] is False
     assert c.get("/api/me", headers=bearer("admintok")).json()["quotaBytes"] is None
     assert c.get("/api/admin/whitelist", headers=bearer("admintok")).json()["count"] == 0
     assert c.get("/api/feedback", headers=bearer("admintok")).json()["open"] == 1
@@ -812,7 +815,7 @@ def test_migrates_a_v4_database(make_client, data_dir):
     c.post("/api/admin/whitelist", headers=bearer("admintok"), json={"player": PLAYER})
     assert c.get("/api/files", headers=bearer("playertok")).status_code == 200
     c2 = make_client(whitelist_enforced=True)
-    assert c2.app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert c2.app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     assert c2.get("/api/files", headers=bearer("playertok")).json()["files"][0]["path"] == "house.litematic"
 
 
@@ -860,7 +863,7 @@ def test_migration_5_is_one_transaction(make_client, data_dir, tmp_path, monkeyp
     db.close()
     monkeypatch.undo()
     c = make_client(whitelist_seed=seed)
-    assert c.app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert c.app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     assert c.app.state.store.whitelist_count() == 1
 
 

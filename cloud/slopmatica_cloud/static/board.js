@@ -29,6 +29,12 @@
 
   // ---- the post form (create on the files page, edit on the post page)
   const names = (text) => text.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean);
+  const lines = (text) => text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+
+  // the board's Minecraft version filter applies as soon as one is picked
+  document.querySelectorAll("form[data-autosubmit] select").forEach((sel) => {
+    sel.addEventListener("change", () => sel.form.submit());
+  });
 
   function syncNames(form) {
     const vis = form.querySelector("input[name=visibility]:checked");
@@ -50,6 +56,13 @@
         tags: Array.from(form.querySelectorAll("input[name=tags]:checked")).map((i) => i.value),
       };
       if (!body.title) { say(msg, "Give it a title.", true); form.elements.title.focus(); return; }
+      if (form.elements.players) {
+        body.coauthors = names(form.elements.players.value).map((player) => ({ player }))
+          .concat(lines(form.elements.names.value).map((name) => ({ name })));
+        body.links = lines(form.elements.links.value);
+        body.versionLabel = form.elements.versionLabel.value.trim();
+        body.mc = form.elements.mc.value.trim() || null;
+      }
       // Names are only sent for private posts; an edit to another visibility keeps the stored list.
       if (body.visibility === "private") body.allowed = names(form.elements.allowed.value);
       const create = form.dataset.postForm === "create";
@@ -98,6 +111,82 @@
   const vote = post.querySelector(".vote");
   const ownerMsg = document.querySelector("[data-owner-msg]");
   const saveMsg = document.querySelector("[data-save-msg]");
+  const versionQ = post.dataset.versionQ || ""; // "?version=<n>" while an older version is shown
+  const withVersion = (url) => url + (versionQ ? (url.includes("?") ? "&" + versionQ.slice(1) : versionQ) : "");
+
+  // ---- versions: pick one to view, upload a new one, delete an old one
+  const versionSelect = post.querySelector("select[data-version-select]");
+  if (versionSelect) {
+    versionSelect.addEventListener("change", () => {
+      location.href = postPage(id) + (versionSelect.value ? "?version=" + encodeURIComponent(versionSelect.value) : "");
+    });
+  }
+
+  const versionForm = document.querySelector("form[data-version-form]");
+  if (versionForm) {
+    versionForm.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const msg = versionForm.querySelector(".form-msg");
+      const el = versionForm.elements;
+      const file = el.file.files[0];
+      const label = el.label.value.trim();
+      const mc = el.mc.value.trim();
+      if (!file && !el.path.value) { say(msg, "Pick one of your files or choose a file to upload.", true); return; }
+      if (file && !SCHEMATIC.test(file.name)) { say(msg, "Only .slopmatic, .nbt and .litematic files.", true); return; }
+      const submit = versionForm.querySelector("button[type=submit]");
+      submit.disabled = true;
+      say(msg, file ? "Uploading and converting…" : "Converting…");
+      try {
+        let r;
+        if (file) {
+          const q = new URLSearchParams({ filename: file.name });
+          if (label) q.set("label", label);
+          if (mc) q.set("mc", mc);
+          r = await fetch(apiPost(id) + "/versions?" + q.toString(), {
+            method: "POST", credentials: "same-origin",
+            headers: Object.assign({ "Content-Type": "application/octet-stream" }, HDR), body: file,
+          });
+        } else {
+          r = await send("POST", apiPost(id) + "/versions", { path: el.path.value, label, mc: mc || null });
+        }
+        if (!r.ok) { say(msg, await errorText(r), true); return; }
+        location.href = postPage(id);
+      } catch (_) {
+        say(msg, "Network error, try again.", true);
+      } finally {
+        submit.disabled = false;
+      }
+    });
+  }
+
+  document.querySelectorAll("[data-delete-version]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const num = btn.dataset.deleteVersion;
+      if (!confirm("Delete version " + num + "? Its file is gone for good.")) return;
+      btn.disabled = true;
+      const r = await send("DELETE", apiPost(id) + "/versions/" + encodeURIComponent(num));
+      if (r.ok || r.status === 404) { location.href = postPage(id); return; }
+      btn.disabled = false;
+      say(ownerMsg, "Delete failed: " + (await errorText(r)), true);
+    });
+  });
+
+  // ---- share link
+  const copy = post.querySelector("[data-copy-share]");
+  if (copy) {
+    const field = post.querySelector("[data-share-url]");
+    field.addEventListener("focus", () => field.select());
+    copy.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(field.value);
+        copy.textContent = "Copied";
+      } catch (_) {
+        field.select();
+        copy.textContent = "Press Ctrl+C";
+      }
+      setTimeout(() => { copy.textContent = "Copy"; }, 2000);
+    });
+  }
 
   function showVote(state) {
     vote.dataset.myVote = String(state.myVote);
@@ -134,7 +223,7 @@
       btn.disabled = true;
       say(saveMsg, "Copying…");
       try {
-        const r = await send("POST", apiPost(id) + "/save");
+        const r = await send("POST", withVersion(apiPost(id) + "/save"));
         if (r.ok) {
           const f = await r.json();
           saveMsg.textContent = "Added to your cloud as ";
@@ -215,7 +304,7 @@
       loading = true;
       say(modelMsg, "Loading the 3D model…");
       try {
-        const r = await fetch(apiPost(id) + "/model?v=" + encodeURIComponent(media.dataset.modelV), { credentials: "same-origin" });
+        const r = await fetch(withVersion(apiPost(id) + "/model?v=" + encodeURIComponent(media.dataset.modelV)), { credentials: "same-origin" });
         if (r.status === 413) {
           let detail = "";
           try {
@@ -259,7 +348,7 @@
       sel.disabled = true;
       label.textContent = "Converting…";
       try {
-        const r = await fetch(apiPost(id) + "/export?format=" + encodeURIComponent(fmt), { credentials: "same-origin" });
+        const r = await fetch(withVersion(apiPost(id) + "/export?format=" + encodeURIComponent(fmt)), { credentials: "same-origin" });
         if (!r.ok) { alert("Export failed: " + (await errorText(r))); return; }
         const url = URL.createObjectURL(await r.blob());
         const a = document.createElement("a");
