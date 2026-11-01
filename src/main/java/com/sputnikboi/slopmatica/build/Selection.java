@@ -37,10 +37,17 @@ public final class Selection {
             return;
         }
         BlockPos pos;
-        if (mc.hitResult instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK) {
-            pos = hit.getBlockPos();
-        } else {
-            pos = mc.player.blockPosition();
+        boolean looking = mc.hitResult instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK;
+        switch (com.sputnikboi.slopmatica.config.SlopmaticaConfig.get().cornerMode) {
+            case FEET -> pos = mc.player.blockPosition();
+            case LOOK -> {
+                if (!looking) {
+                    SlopmaticaActions.actionBar(Component.translatable("slopmatica.selection.look_at_block").withColor(SlopmaticaActions.ERROR));
+                    return;
+                }
+                pos = ((BlockHitResult) mc.hitResult).getBlockPos();
+            }
+            default -> pos = looking ? ((BlockHitResult) mc.hitResult).getBlockPos() : mc.player.blockPosition();
         }
         setCorner(pos, mc.level.dimension().identifier().toString());
     }
@@ -61,6 +68,55 @@ public final class Selection {
         BoundingBox box = box();
         String size = box == null ? "" : String.format("  (%d x %d x %d)", box.getXSpan(), box.getYSpan(), box.getZSpan());
         SlopmaticaActions.actionBar(Component.literal("Corner " + (nextIsFirst ? 2 : 1) + " at " + pos.toShortString() + size).withColor(SlopmaticaActions.ACCENT));
+    }
+
+    /** Everything about the selection, for undo. */
+    public record State(@Nullable BlockPos first, @Nullable BlockPos second, @Nullable String dimension, boolean nextIsFirst) {
+    }
+
+    public State state() {
+        return new State(first, second, dimension, nextIsFirst);
+    }
+
+    public void restore(State state) {
+        first = state.first();
+        second = state.second();
+        dimension = state.dimension();
+        nextIsFirst = state.nextIsFirst();
+    }
+
+    /**
+     * Shrinks the selection to the blocks in it: all-air layers at any side are trimmed off.
+     * Returns false if there is no selection or nothing but air in it.
+     */
+    public boolean fitToBlocks(net.minecraft.world.level.Level level) {
+        BoundingBox box = box();
+        if (box == null) {
+            return false;
+        }
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        for (int y = box.minY(); y <= box.maxY(); y++) {
+            for (int z = box.minZ(); z <= box.maxZ(); z++) {
+                for (int x = box.minX(); x <= box.maxX(); x++) {
+                    if (!level.getBlockState(pos.set(x, y, z)).isAir()) {
+                        minX = Math.min(minX, x);
+                        minY = Math.min(minY, y);
+                        minZ = Math.min(minZ, z);
+                        maxX = Math.max(maxX, x);
+                        maxY = Math.max(maxY, y);
+                        maxZ = Math.max(maxZ, z);
+                    }
+                }
+            }
+        }
+        if (minX == Integer.MAX_VALUE) {
+            return false;
+        }
+        first = new BlockPos(minX, minY, minZ);
+        second = new BlockPos(maxX, maxY, maxZ);
+        nextIsFirst = true;
+        return true;
     }
 
     /** Replaces the whole selection with a box (the Modify tool). */

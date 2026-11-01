@@ -72,6 +72,14 @@ public final class Clipboard {
     }
 
     public void copy(Minecraft mc) {
+        save(mc, null, SlopmaticaConfig.get().copyFormat, copiesDir());
+    }
+
+    /**
+     * Saves the selection as a schematic: named {@code name} (or "copy <time>") in {@code dir}.
+     * The copy key and the build view's Ctrl+S save screen both come here.
+     */
+    public void save(Minecraft mc, @Nullable String chosenName, SchematicFormats format, Path dir) {
         ClientLevel level = mc.level;
         BoundingBox box = Selection.INSTANCE.box();
         if (level == null || mc.player == null) {
@@ -125,9 +133,8 @@ public final class Clipboard {
         Map<Long, CompoundTag> tiles = nbt ? blockEntityData(mc, level, blockEntities, box) : Map.of();
         List<EntityData> entities = nbt ? entities(mc, level, box) : List.of();
 
-        String name = "copy " + LocalDateTime.now().format(STAMP);
-        SchematicFormats format = SlopmaticaConfig.get().copyFormat;
-        Path file = copiesDir().resolve(name.replace(' ', '_') + format.extension);
+        String name = chosenName != null && !chosenName.isBlank() ? chosenName.trim() : "copy " + LocalDateTime.now().format(STAMP);
+        Path file = dir.resolve((chosenName != null ? safeFileName(name) : name.replace(' ', '_')) + format.extension);
         BlockVolume blocks = new BlockVolume(name, mc.player.getGameProfile().name(), sx, sy, sz, palette, indices, tiles, entities);
         CompletableFuture.runAsync(() -> {
             try {
@@ -142,8 +149,9 @@ public final class Clipboard {
             }
             last = file;
             String extra = !nbt ? " (without NBT data)" : entities.isEmpty() ? "" : " with " + entities.size() + (entities.size() == 1 ? " entity" : " entities");
-            SlopmaticaActions.chat(SlopmaticaActions.prefix().append(String.format("Copied %d x %d x %d%s to schematics/copies/%s. Paste with %s",
-                sx, sy, sz, extra, file.getFileName(), PlacementViewKey.name(SlopmaticaKeys.PASTE))));
+            String where = SlopmaticaActions.schematicsDir().relativize(file).toString().replace('\\', '/');
+            SlopmaticaActions.chat(SlopmaticaActions.prefix().append(String.format("Saved %d x %d x %d%s to schematics/%s. Paste with %s",
+                sx, sy, sz, extra, where, PlacementViewKey.name(SlopmaticaKeys.PASTE))));
         }, mc);
     }
 
@@ -252,6 +260,12 @@ public final class Clipboard {
         } catch (IOException e) {
             return null;
         }
+    }
+
+    /** A file name from what the player typed: no path separators or characters Windows refuses. */
+    public static String safeFileName(String name) {
+        String safe = name.trim().replaceAll("[\\\\/:*?\"<>|]+", "_");
+        return safe.isEmpty() ? "schematic" : safe;
     }
 
     private static void error(String message) {

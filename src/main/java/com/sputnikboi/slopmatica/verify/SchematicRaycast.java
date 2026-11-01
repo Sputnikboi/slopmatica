@@ -46,10 +46,30 @@ public final class SchematicRaycast {
     }
 
     /**
-     * Steps through the cells along the ray (Amanatides and Woo) until one holds a schematic block,
-     * or a real block with no schematic block, which hides anything behind it.
+     * The first schematic block along the ray, or null if a real block without one is in the way.
+     * Thin blocks (torches, fences, flowers) only count where the ray actually touches them, so
+     * you can look past their edges at what is behind.
      */
     public static @Nullable Hit trace(ClientLevel level, List<Placement.Transform> transforms, Vec3 from, Vec3 dir, double reach) {
+        List<Hit> hits = new ArrayList<>(1);
+        walk(level, transforms, from, dir, reach, hits, 1);
+        return hits.isEmpty() ? null : hits.getFirst();
+    }
+
+    /** Every schematic block along the ray, nearest first, up to the first real block in the way. */
+    public static List<Hit> traceAll(ClientLevel level, List<Placement.Transform> transforms, Vec3 from, Vec3 dir, double reach) {
+        List<Hit> hits = new ArrayList<>();
+        walk(level, transforms, from, dir, reach, hits, Integer.MAX_VALUE);
+        return hits;
+    }
+
+    /**
+     * Steps through the cells along the ray (Amanatides and Woo). A cell counts where the ray
+     * touches the shape of the schematic's block or the real one; a real block the ray touches
+     * that the schematic doesn't want (or that is already right) ends the walk: nothing behind it
+     * can be seen or reached.
+     */
+    private static void walk(ClientLevel level, List<Placement.Transform> transforms, Vec3 from, Vec3 dir, double reach, List<Hit> out, int max) {
         int x = (int) Math.floor(from.x), y = (int) Math.floor(from.y), z = (int) Math.floor(from.z);
         int stepX = dir.x > 0 ? 1 : -1, stepY = dir.y > 0 ? 1 : -1, stepZ = dir.z > 0 ? 1 : -1;
         double tDeltaX = Math.abs(1 / dir.x), tDeltaY = Math.abs(1 / dir.y), tDeltaZ = Math.abs(1 / dir.z);
@@ -57,20 +77,25 @@ public final class SchematicRaycast {
         double tMaxX = dir.x == 0 ? Double.MAX_VALUE : (dir.x > 0 ? x + 1 - from.x : from.x - x) * tDeltaX;
         double tMaxY = dir.y == 0 ? Double.MAX_VALUE : (dir.y > 0 ? y + 1 - from.y : from.y - y) * tDeltaY;
         double tMaxZ = dir.z == 0 ? Double.MAX_VALUE : (dir.z > 0 ? z + 1 - from.z : from.z - z) * tDeltaZ;
+        Vec3 to = from.add(dir.scale(reach));
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         double t = 0;
-        while (t <= reach) {
+        while (t <= reach && out.size() < max) {
             pos.set(x, y, z);
             BlockState want = wantedAt(transforms, x, y, z);
             if (want != null && want.isAir()) {
                 want = null;
             }
             BlockState actual = level.getBlockState(pos);
-            if (want != null) {
-                return new Hit(pos.immutable(), want, actual, BlockMatcher.compare(want, actual), t);
-            }
-            if (!actual.isAir() && actual.getFluidState().isEmpty()) {
-                return null;
+            boolean actualHit = !actual.isAir() && touches(actual, level, pos, from, to, true);
+            if (want != null && (actualHit || touches(want, level, pos, from, to, false))) {
+                BlockStatus status = BlockMatcher.compare(want, actual);
+                out.add(new Hit(pos.immutable(), want, actual, status, t));
+                if (actualHit && status != BlockStatus.MISSING) {
+                    return; // A real block, right or wrong: it hides what is behind.
+                }
+            } else if (actualHit && actual.getFluidState().isEmpty()) {
+                return;
             }
             if (tMaxX < tMaxY && tMaxX < tMaxZ) {
                 x += stepX;
@@ -86,7 +111,17 @@ public final class SchematicRaycast {
                 tMaxZ += tDeltaZ;
             }
         }
-        return null;
     }
 
+    /**
+     * Whether the ray touches a block's outline shape in its cell. Shapeless blocks (fluids,
+     * light) count as filling the cell when they are ghosts, and never when they are real.
+     */
+    private static boolean touches(BlockState state, ClientLevel level, BlockPos pos, Vec3 from, Vec3 to, boolean real) {
+        var shape = state.getShape(level, pos);
+        if (shape.isEmpty()) {
+            return !real;
+        }
+        return shape.clip(from, to, pos) != null;
+    }
 }

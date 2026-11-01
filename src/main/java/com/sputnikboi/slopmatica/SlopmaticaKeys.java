@@ -94,6 +94,10 @@ public final class SlopmaticaKeys {
         return false;
     }
 
+    public static KeyMapping planKey() {
+        return PLAN_INVENTORY;
+    }
+
     public static KeyMapping openMenu() {
         return OPEN_MENU;
     }

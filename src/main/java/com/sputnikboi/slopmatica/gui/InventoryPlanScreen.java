@@ -92,6 +92,16 @@ public class InventoryPlanScreen extends Screen {
             .withValues(InventoryPlanner.Sort.values())
             .create(x, y, LEFT_W, 20, Component.translatable("slopmatica.plan.sort"), (b, v) -> changed(() -> c.planSort = v)));
         y += step;
+        if (c.showAdvanced) {
+            addRenderableWidget(CycleButton.onOffBuilder(c.planForgetOnLeave)
+                .withTooltip(v -> Tooltip.create(Component.translatable("slopmatica.plan.forget.tooltip")))
+                .create(x, y, LEFT_W, 20, Component.translatable("slopmatica.plan.forget"), (b, v) -> changed(() -> c.planForgetOnLeave = v)));
+            y += step;
+        }
+        addRenderableWidget(CycleButton.onOffBuilder(c.planSideList)
+            .withTooltip(v -> Tooltip.create(Component.translatable("slopmatica.plan.side.tooltip")))
+            .create(x, y, LEFT_W, 20, Component.translatable("slopmatica.plan.side"), (b, v) -> changed(() -> c.planSideList = v)));
+        y += step;
         addRenderableWidget(CycleButton.onOffBuilder(c.planShowInInventory)
             .withTooltip(v -> Tooltip.create(Component.translatable("slopmatica.plan.show.tooltip")))
             .create(x, y, LEFT_W, 20, Component.translatable("slopmatica.plan.show"), (b, v) -> changed(() -> c.planShowInInventory = v)));
@@ -165,10 +175,21 @@ public class InventoryPlanScreen extends Screen {
         InventoryPlan.Result<Item> r = plan.result();
         String header = Component.translatable("slopmatica.plan.header", r.stacks().size(), r.shulkers(), r.enderShulkers(), r.freeSlotsLeft()).getString();
         g.text(font, header, x, y, 0xFFFFFFFF);
+        int extraLines = 0;
         if (plan.truncated()) {
             g.text(font, Component.translatable("slopmatica.plan.truncated"), x, y + 10, 0xFFFFA030);
+            extraLines++;
         }
-        int top = y + (plan.truncated() ? 24 : 14), bottom = height - 32;
+        if (!plan.tools().isEmpty()) {
+            List<String> tools = new ArrayList<>();
+            for (InventoryPlanner.Tool t : plan.tools()) {
+                tools.add((t.uses() > 0 ? Component.translatable("slopmatica.plan.tool.uses", t.kind(), t.uses())
+                    : Component.translatable("slopmatica.plan.tool.variants", t.kind())).getString() + (t.carried() ? " ✔" : ""));
+            }
+            g.text(font, font.plainSubstrByWidth(Component.translatable("slopmatica.plan.tools").getString() + " " + String.join(", ", tools), w), x, y + 10 + extraLines * 10, 0xFFB0D0FF);
+            extraLines++;
+        }
+        int top = y + 14 + extraLines * 10, bottom = height - 32;
         int visible = Math.max(1, (bottom - top) / ROW);
         if (rows.isEmpty()) {
             g.text(font, Component.translatable("slopmatica.plan.nothing"), x, top + 4, 0xFF60E060);
@@ -218,7 +239,7 @@ public class InventoryPlanScreen extends Screen {
             return false;
         }
         InventoryPlanner.Plan plan = InventoryPlanner.INSTANCE.plan();
-        int x = LEFT_W + 24, top = 28 + (plan != null && plan.truncated() ? 24 : 14);
+        int x = LEFT_W + 24, top = 28 + 14 + (plan == null ? 0 : ((plan.truncated() ? 10 : 0) + (plan.tools().isEmpty() ? 0 : 10)));
         int index = scroll + (int) ((event.y() - top) / ROW);
         if (event.x() >= x && event.y() >= top && index >= 0 && index < rows.size()) {
             Item item = rows.get(index).item();

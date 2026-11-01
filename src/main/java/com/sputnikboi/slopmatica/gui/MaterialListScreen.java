@@ -125,7 +125,7 @@ public class MaterialListScreen extends Screen {
 
         ItemEntry(MaterialList.Entry entry) {
             this.entry = entry;
-            this.stack = new ItemStack(entry.item());
+            this.stack = entry.icon();
         }
 
         @Override

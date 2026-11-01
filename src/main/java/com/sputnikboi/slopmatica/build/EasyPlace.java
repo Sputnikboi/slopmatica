@@ -4,7 +4,6 @@ import com.sputnikboi.slopmatica.SlopmaticaActions;
 import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.mixin.BlockItemInvoker;
 import com.sputnikboi.slopmatica.placement.Placement;
-import com.sputnikboi.slopmatica.verify.BlockMatcher;
 import com.sputnikboi.slopmatica.verify.BlockStatus;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import com.sputnikboi.slopmatica.verify.SchematicRaycast;
@@ -30,6 +29,9 @@ import net.minecraft.world.level.block.FenceGateBlock;
 import net.minecraft.world.level.block.LeverBlock;
 import net.minecraft.world.level.block.TrapDoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BedPart;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -82,6 +84,12 @@ public final class EasyPlace {
     /**
      * Called instead of vanilla's right click while Easy Place is on. True when it handled the
      * click (placed, or refused a wrong placement), so vanilla must not act on it too.
+     *
+     * <p>Only blocks on the crosshair line are placed: the line goes through ghost blocks (they
+     * aren't really there) up to the first real block, and of the missing ones on it, the
+     * furthest or nearest that can be placed right now is. Nothing off the line, nothing through
+     * walls. A missing item doesn't stop it: the next block on the line is tried, and if none can
+     * be placed the click goes on to vanilla (to open a chest, say), after showing why.
      */
     public boolean tryUse(Minecraft mc) {
         LocalPlayer player = mc.player;
@@ -93,90 +101,72 @@ public final class EasyPlace {
         if (transforms.isEmpty()) {
             return false;
         }
-        SlopmaticaConfig.EasyPlaceOrder order = SlopmaticaConfig.get().easyPlaceOrder;
-        if (order != SlopmaticaConfig.EasyPlaceOrder.CROSSHAIR) {
-            List<BlockPos> candidates = reachableMissing(player, level, transforms, order);
-            if (!candidates.isEmpty()) {
-                // Try them in order; the first that can be placed right now wins. Report why the
-                // first one couldn't, if none could.
-                Component firstProblem = null;
-                for (BlockPos pos : candidates) {
-                    BlockState want = SchematicRaycast.wantedAt(transforms, pos.getX(), pos.getY(), pos.getZ());
-                    Component problem = attempt(mc, player, level, pos, want);
-                    if (problem == null) {
-                        return true;
-                    }
-                    if (firstProblem == null) {
-                        firstProblem = problem;
-                    }
-                }
-                fail(firstProblem);
-                return true;
+        List<SchematicRaycast.Hit> line = new java.util.ArrayList<>();
+        for (SchematicRaycast.Hit hit : SchematicRaycast.traceAll(level, transforms, player.getEyePosition(), player.getViewVector(1.0F), player.blockInteractionRange())) {
+            if (hit.status() == BlockStatus.MISSING && hit.actual().canBeReplaced()) {
+                line.add(hit);
             }
         }
-        SchematicRaycast.Hit target = SchematicRaycast.trace(level, transforms, player.getEyePosition(), player.getViewVector(1.0F), player.blockInteractionRange());
-        if (target != null && target.status() == BlockStatus.MISSING && target.actual().canBeReplaced()) {
-            Component problem = attempt(mc, player, level, target.pos(), target.want());
-            if (problem != null && problem != NOT_AN_ITEM) {
-                fail(problem);
+        if (SlopmaticaConfig.get().easyPlaceOrder == SlopmaticaConfig.EasyPlaceOrder.FURTHEST) {
+            java.util.Collections.reverse(line);
+        }
+        Component firstProblem = null;
+        if (DEBUG) {
+            org.slf4j.LoggerFactory.getLogger("Slopmatica/easyplace").info("ray {} line {}", SchematicRaycast.traceAll(level, transforms, player.getEyePosition(), player.getViewVector(1.0F), player.blockInteractionRange()), line);
+        }
+        for (SchematicRaycast.Hit hit : line) {
+            Component problem = attempt(mc, player, level, hit.pos(), hit.want());
+            if (DEBUG) {
+                org.slf4j.LoggerFactory.getLogger("Slopmatica/easyplace").info("attempt {} -> {}", hit.pos(), problem == null ? "placed" : problem.getString());
             }
-            return problem != NOT_AN_ITEM;
+            if (problem == null) {
+                holding = true;
+                return true;
+            }
+            if (firstProblem == null && problem != NOT_AN_ITEM) {
+                firstProblem = problem;
+            }
+        }
+        if (firstProblem != null) {
+            fail(firstProblem);
+        }
+        if (holding) {
+            // Still holding right click after placing ghosts: the line is done, but a held click
+            // must not fall through to vanilla and drop the held block wherever the crosshair is.
+            return true;
         }
         return SlopmaticaConfig.get().easyPlaceRestrict && refuseWrongPlacement(mc, player, level, transforms);
     }
 
-    /** At most this many reachable missing blocks are tried per click. */
-    private static final int MAX_TRIES = 48;
-    /** Only blocks roughly in front of the player count: within about 60 degrees of where they look. */
-    private static final double CONE_COS = 0.5;
-    private static final Component NOT_AN_ITEM = Component.empty();
+    private static final boolean DEBUG = Boolean.getBoolean("slopmatica.debug.easyplace");
 
-    /**
-     * Missing schematic blocks the player can reach (vanilla interaction range) in front of them,
-     * in the chosen order: furthest first by default, so blocks placed nearby never block the way
-     * to ones further off.
-     */
-    private static List<BlockPos> reachableMissing(LocalPlayer player, ClientLevel level, List<Placement.Transform> transforms,
-                                                   SlopmaticaConfig.EasyPlaceOrder order) {
-        Vec3 eye = player.getEyePosition();
-        Vec3 look = player.getViewVector(1.0F);
-        double reach = player.blockInteractionRange();
-        int r = (int) Math.ceil(reach) + 1;
-        BlockPos center = BlockPos.containing(eye);
-        List<BlockPos> found = new java.util.ArrayList<>();
-        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        for (int dx = -r; dx <= r; dx++) {
-            for (int dy = -r; dy <= r; dy++) {
-                for (int dz = -r; dz <= r; dz++) {
-                    pos.set(center.getX() + dx, center.getY() + dy, center.getZ() + dz);
-                    Vec3 mid = Vec3.atCenterOf(pos);
-                    Vec3 to = mid.subtract(eye);
-                    double dist = to.length();
-                    if (dist > reach || dist < 0.5 || to.scale(1 / dist).dot(look) < CONE_COS) {
-                        continue;
-                    }
-                    BlockState want = SchematicRaycast.wantedAt(transforms, pos.getX(), pos.getY(), pos.getZ());
-                    if (want == null || want.isAir()) {
-                        continue;
-                    }
-                    BlockState actual = level.getBlockState(pos);
-                    if (BlockMatcher.compare(want, actual) == BlockStatus.MISSING && actual.canBeReplaced()) {
-                        found.add(pos.immutable());
-                    }
-                }
-            }
+    /** Right click has been held since Easy Place last placed something. */
+    private boolean holding;
+
+    /** Client tick: letting go of right click ends a held Easy Place run. */
+    public void tick(Minecraft mc) {
+        if (holding && !mc.options.keyUse.isDown()) {
+            holding = false;
         }
-        java.util.Comparator<BlockPos> byDistance = java.util.Comparator.comparingDouble(p -> Vec3.atCenterOf(p).distanceToSqr(eye));
-        found.sort(switch (order) {
-            case NEAREST -> byDistance;
-            case BOTTOM_UP -> java.util.Comparator.<BlockPos>comparingInt(BlockPos::getY).thenComparing(byDistance.reversed());
-            default -> byDistance.reversed();
-        });
-        return found.size() > MAX_TRIES ? found.subList(0, MAX_TRIES) : found;
     }
+
+    private static final Component NOT_AN_ITEM = Component.empty();
 
     /** Places {@code want} at {@code pos}; null on success, otherwise why not. */
     private @Nullable Component attempt(Minecraft mc, LocalPlayer player, ClientLevel level, BlockPos pos, BlockState want) {
+        // Two-block things are placed from their base: a bed from its foot, a door or tall plant
+        // from its lower half; the item puts the other half in itself.
+        if (want.hasProperty(BlockStateProperties.BED_PART) && want.getValue(BlockStateProperties.BED_PART) == BedPart.HEAD
+            && want.hasProperty(BlockStateProperties.HORIZONTAL_FACING)) {
+            pos = pos.relative(want.getValue(BlockStateProperties.HORIZONTAL_FACING).getOpposite());
+            want = want.setValue(BlockStateProperties.BED_PART, BedPart.FOOT);
+        } else if (want.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF) && want.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.UPPER) {
+            pos = pos.below();
+            want = want.setValue(BlockStateProperties.DOUBLE_BLOCK_HALF, DoubleBlockHalf.LOWER);
+        }
+        if (!level.getBlockState(pos).canBeReplaced()) {
+            return Component.translatable("slopmatica.easy_place.no_support", want.getBlock().getName());
+        }
         if (!(want.getBlock().asItem() instanceof BlockItem item)) {
             return NOT_AN_ITEM; // Fluids, fire and the like: nothing to hold.
         }
@@ -252,8 +242,8 @@ public final class EasyPlace {
             for (Direction toNeighbour : Direction.values()) {
                 BlockPos neighbour = pos.relative(toNeighbour);
                 BlockState support = level.getBlockState(neighbour);
-                if (support.isAir() || support.canBeReplaced() || support.getCollisionShape(level, neighbour).isEmpty()) {
-                    continue;
+                if (support.isAir() || support.canBeReplaced() || support.getCollisionShape(level, neighbour).isEmpty() || interactable(support)) {
+                    continue; // Clicking a door, lever or chest would use it instead of placing.
                 }
                 if (search.tryFace(neighbour, toNeighbour.getOpposite(), toNeighbour)) {
                     return search.best;
@@ -332,6 +322,23 @@ public final class EasyPlace {
             }
             return false;
         }
+    }
+
+    /** Blocks a right click uses rather than places against: doors, levers, chests, anvils... */
+    static boolean interactable(BlockState state) {
+        var block = state.getBlock();
+        return state.hasBlockEntity() || block instanceof DoorBlock || block instanceof TrapDoorBlock || block instanceof FenceGateBlock
+            || block instanceof ButtonBlock || block instanceof LeverBlock || block instanceof net.minecraft.world.level.block.DiodeBlock
+            || block instanceof net.minecraft.world.level.block.NoteBlock || block instanceof net.minecraft.world.level.block.BedBlock
+            || block instanceof net.minecraft.world.level.block.CakeBlock || block instanceof net.minecraft.world.level.block.CandleCakeBlock
+            || block instanceof net.minecraft.world.level.block.CraftingTableBlock || block instanceof net.minecraft.world.level.block.AnvilBlock
+            || block instanceof net.minecraft.world.level.block.StonecutterBlock || block instanceof net.minecraft.world.level.block.GrindstoneBlock
+            || block instanceof net.minecraft.world.level.block.LoomBlock || block instanceof net.minecraft.world.level.block.CartographyTableBlock
+            || block instanceof net.minecraft.world.level.block.SmithingTableBlock || block instanceof net.minecraft.world.level.block.ComposterBlock
+            || block instanceof net.minecraft.world.level.block.AbstractCauldronBlock || block instanceof net.minecraft.world.level.block.RespawnAnchorBlock
+            || block instanceof net.minecraft.world.level.block.DragonEggBlock || block instanceof net.minecraft.world.level.block.FlowerPotBlock
+            || block instanceof net.minecraft.world.level.block.SweetBerryBushBlock || block instanceof net.minecraft.world.level.block.DaylightDetectorBlock
+            || block instanceof net.minecraft.world.level.block.BellBlock;
     }
 
     /** How alike two states are: same block first, then the number of equal properties. */

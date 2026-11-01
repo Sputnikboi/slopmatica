@@ -430,7 +430,7 @@ public final class HologramRenderer {
         // fade range, where an end at or before the start means "never fade"; z = 1 keeps lines
         // solid when they shrink below a pixel. Wrong and variant outlines use both, so they stay
         // findable from any distance.
-        Matrix4f fadeRange = new Matrix4f().m30(config.fadeOutlines ? config.fadeStart : 0).m31(config.fadeOutlines ? config.fadeEnd : 0);
+        Matrix4f fadeRange = new Matrix4f().m30(config.fadeOutlines ? config.fadeStartBlocks() : 0).m31(config.fadeOutlines ? config.fadeEndBlocks() : 0);
         Matrix4f alertStyle = new Matrix4f().m32(1);
         DynamicGpuData.Transform[] transforms = new DynamicGpuData.Transform[visible.size() * 3];
         for (int i = 0; i < visible.size(); i++) {

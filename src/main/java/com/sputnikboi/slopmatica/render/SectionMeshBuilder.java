@@ -209,6 +209,52 @@ final class SectionMeshBuilder {
         return null;
     }
 
+    /**
+     * Heads have no model and a standing head's hitbox doesn't turn, so they get their own: the
+     * 8x8x8 head box turned the way the head faces (16 steps), and an arrow on top pointing
+     * where the face looks.
+     */
+    private void skullOutline(BufferBuilder lines, float ox, float oy, float oz, BlockState state, int color) {
+        double yaw;
+        double cx = 0.5, cz = 0.5, y0 = 0, y1 = 0.5;
+        if (state.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.ROTATION_16)) {
+            yaw = Math.toRadians(net.minecraft.world.level.block.state.properties.RotationSegment.convertToDegrees(
+                state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.ROTATION_16)));
+        } else {
+            // On a wall: against the block behind it, a quarter block up, facing away from it.
+            Direction facing = state.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.HORIZONTAL_FACING);
+            yaw = Math.toRadians(facing.toYRot());
+            cx = 0.5 - facing.getStepX() * 0.25;
+            cz = 0.5 - facing.getStepZ() * 0.25;
+            y0 = 0.25;
+            y1 = 0.75;
+        }
+        // Forward (where the face looks) and right, from the yaw: 0 is south, +z.
+        double fx = -Math.sin(yaw), fz = Math.cos(yaw), rx = -fz, rz = fx;
+        double[][] corners = new double[4][];
+        int k = 0;
+        for (int a : new int[] {-1, 1}) {
+            for (int b : new int[] {-1, 1}) {
+                corners[k++] = new double[] {cx + 0.25 * (a * fx + b * rx), cz + 0.25 * (a * fz + b * rz)};
+            }
+        }
+        int[][] ring = {{0, 1}, {1, 3}, {3, 2}, {2, 0}};
+        for (int[] e : ring) {
+            double[] p = corners[e[0]], q = corners[e[1]];
+            line(lines, ox + (float) p[0], oy + (float) y0, oz + (float) p[1], ox + (float) q[0], oy + (float) y0, oz + (float) q[1], color);
+            line(lines, ox + (float) p[0], oy + (float) y1, oz + (float) p[1], ox + (float) q[0], oy + (float) y1, oz + (float) q[1], color);
+            line(lines, ox + (float) p[0], oy + (float) y0, oz + (float) p[1], ox + (float) p[0], oy + (float) y1, oz + (float) p[1], color);
+        }
+        // The arrow on top: a shaft from the middle to near the front, and two barbs.
+        float ty = oy + (float) y1 + 0.01F;
+        double tipX = cx + 0.2 * fx, tipZ = cz + 0.2 * fz;
+        line(lines, ox + (float) (cx - 0.12 * fx), ty, oz + (float) (cz - 0.12 * fz), ox + (float) tipX, ty, oz + (float) tipZ, color);
+        for (int side : new int[] {-1, 1}) {
+            line(lines, ox + (float) tipX, ty, oz + (float) tipZ,
+                ox + (float) (tipX - 0.1 * fx + side * 0.08 * rx), ty, oz + (float) (tipZ - 0.1 * fz + side * 0.08 * rz), color);
+        }
+    }
+
     private void outline(BufferBuilder lines, int x, int y, int z, int i, BlockStatus st, BlockPos pos) {
         int color = st.color();
         float ox = x - 1, oy = y - 1, oz = z - 1;
@@ -224,6 +270,10 @@ final class SectionMeshBuilder {
                 for (int e = 0; e < edges.length; e += 6) {
                     line(lines, bx + edges[e], by + edges[e + 1], bz + edges[e + 2], bx + edges[e + 3], by + edges[e + 4], bz + edges[e + 5], color);
                 }
+                return;
+            }
+            if (shape.getBlock() instanceof net.minecraft.world.level.block.AbstractSkullBlock) {
+                skullOutline(lines, ox, oy, oz, shape, color);
                 return;
             }
             // No model geometry (chests, signs and other block-entity blocks): use the hitbox.

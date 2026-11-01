@@ -1,5 +1,6 @@
 package com.sputnikboi.slopmatica.view;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import com.sputnikboi.slopmatica.SlopmaticaActions;
 import com.sputnikboi.slopmatica.SlopmaticaKeys;
 import com.sputnikboi.slopmatica.build.PlacementBuilder;
@@ -58,6 +59,8 @@ public final class PlacementView {
     /** Half the size of the camera's collision box: enough that the near plane never shows a wall's inside. */
     private static final double CAMERA_RADIUS = 0.25;
 
+    /** The view is open; it may be on a build ({@link #placement}) or, without one, just for selecting. */
+    private boolean open;
     private @Nullable Placement placement;
     private double x, y, z, xo, yo, zo;
     private float yRot, xRot;
@@ -71,6 +74,10 @@ public final class PlacementView {
 
     private Tool tool = Tool.MOVE;
 
+    /** Where a carried build was picked up, for cancelling the move. */
+    private @Nullable BlockPos carryStart;
+    private boolean sWasDown;
+
     /** Origin minus the targeted block when picked up, so it doesn't jump to the crosshair. */
     private @Nullable BlockPos carryOffset;
     private double carryDistance;
@@ -80,7 +87,7 @@ public final class PlacementView {
     }
 
     public boolean active() {
-        return placement != null;
+        return open;
     }
 
     /**
@@ -88,7 +95,7 @@ public final class PlacementView {
      * keeps you in your body: you walk and look as usual, and only clicks and keys go to the view.
      */
     public boolean freecam() {
-        return placement != null && SlopmaticaConfig.get().viewFreecam;
+        return open && SlopmaticaConfig.get().viewFreecam;
     }
 
     public @Nullable Placement placement() {
@@ -135,19 +142,15 @@ public final class PlacementView {
         if (target == null) {
             target = PlacementManager.INSTANCE.selected().filter(p -> p.visible() && p.inDimension(mc.level)).orElse(null);
         }
-        if (target == null) {
-            SlopmaticaActions.actionBar(Component.literal("Look at a placement first (or load one)").withColor(SlopmaticaActions.ERROR));
-            return;
-        }
-        enter(mc, target, false);
+        enter(mc, target, false); // Without a build: a view for making a selection.
     }
 
-    /** Opens the view on a placement, optionally already carrying it (used by paste). */
-    public void enter(Minecraft mc, Placement target, boolean carrying) {
+    /** Opens the view on a placement (or none, to make a selection), optionally already carrying it (used by paste). */
+    public void enter(Minecraft mc, @Nullable Placement target, boolean carrying) {
         if (mc.player == null) {
             return;
         }
-        PlacementManager.INSTANCE.select(target);
+        open = true;
         placement = target;
         Vec3 eye = mc.player.getEyePosition();
         x = xo = eye.x;
@@ -156,6 +159,13 @@ public final class PlacementView {
         yRot = mc.player.getYRot();
         xRot = mc.player.getXRot();
         lastHealth = mc.player.getHealth() + mc.player.getAbsorptionAmount();
+        carryOffset = null;
+        if (target == null) {
+            tool = Tool.SELECT;
+            SlopmaticaActions.actionBar(Component.translatable("slopmatica.view.no_build").withColor(SlopmaticaActions.ACCENT));
+            return;
+        }
+        PlacementManager.INSTANCE.select(target);
         startOrigin = target.transform().origin();
         startRotation = target.transform().rotation();
         startMirror = target.transform().mirror();
@@ -169,9 +179,10 @@ public final class PlacementView {
 
     /** Leaving while carrying puts the placement down where it is. */
     public void exit(Minecraft mc) {
-        if (placement == null) {
+        if (!open) {
             return;
         }
+        open = false;
         placement = null;
         carryOffset = null;
         if (!mc.isSameThread()) {
@@ -237,14 +248,25 @@ public final class PlacementView {
 
     /** Runs at the start of the client tick, before vanilla handles the keys this view takes over. */
     public void tick(Minecraft mc) {
-        Placement p = placement;
-        if (p == null) {
+        if (!open) {
             return;
         }
-        if (mc.player == null || mc.level == null || !PlacementManager.INSTANCE.placements().contains(p)) {
+        if (mc.player == null || mc.level == null) {
+            open = false;
             placement = null;
             return;
         }
+        Placement p = placement;
+        if (p != null && !PlacementManager.INSTANCE.placements().contains(p)) {
+            placement = p = null; // Unloaded meanwhile: carry on without a build.
+            carryOffset = null;
+        }
+        // Ctrl+S: save the selection. S and Ctrl also fly, so the raw keys are watched here.
+        boolean sDown = InputConstants.isKeyDown(InputConstants.KEY_S);
+        if (sDown && !sWasDown && mc.hasControlDown() && mc.gui.screen() == null) {
+            mc.gui.setScreen(new com.sputnikboi.slopmatica.gui.SaveSelectionScreen(null));
+        }
+        sWasDown = sDown;
         // Your body is standing defenceless somewhere: getting hurt brings you back to it.
         float health = mc.player.getHealth() + mc.player.getAbsorptionAmount();
         boolean hurt = health < lastHealth;
@@ -279,7 +301,9 @@ public final class PlacementView {
         while (mc.options.keyAttack.consumeClick()) {
             switch (tool) {
                 case MOVE -> {
-                    if (carryOffset == null) {
+                    if (p == null) {
+                        SlopmaticaActions.actionBar(Component.translatable("slopmatica.view.no_build").withColor(SlopmaticaActions.ERROR));
+                    } else if (carryOffset == null) {
                         pickUp(mc, p);
                     } else {
                         putDown(p);
@@ -288,6 +312,7 @@ public final class PlacementView {
                 case SELECT -> {
                     BlockPos block = pointedBlock(mc, eye(), look());
                     if (block != null) {
+                        UndoStack.INSTANCE.saveSelection();
                         Selection.INSTANCE.setCorner(block, mc.level.dimension().identifier().toString());
                     }
                 }
@@ -295,15 +320,16 @@ public final class PlacementView {
             }
         }
         while (mc.options.keyUse.consumeClick()) {
-            if (carryOffset != null) {
-                putDown(p);
+            if (carryOffset != null && p != null) {
+                cancelCarry(p); // Right click while moving a build: put it back where it was.
+            } else {
+                mc.gui.setScreen(new PlacementViewScreen());
             }
-            mc.gui.setScreen(new PlacementViewScreen());
         }
         while (mc.options.keyPickItem.consumeClick()) {
             // Swallowed so the player doesn't pick blocks from where they stand.
         }
-        if (carryOffset != null) {
+        if (carryOffset != null && p != null) {
             BlockPos target = target(mc);
             if (!target.equals(lastTarget)) {
                 lastTarget = target;
@@ -324,7 +350,11 @@ public final class PlacementView {
             rotate(mc, Rotation.CLOCKWISE_90);
         }
         while (SlopmaticaKeys.pressed(SlopmaticaKeys.VIEW_MIRROR)) {
-            mirror(mc);
+            if (mc.hasControlDown()) {
+                undo(mc); // Ctrl+Z
+            } else {
+                mirror(mc);
+            }
         }
         for (int i = 0; i < SlopmaticaKeys.VIEW_NUDGES.length; i++) {
             while (SlopmaticaKeys.pressed(SlopmaticaKeys.VIEW_NUDGES[i])) {
@@ -339,6 +369,7 @@ public final class PlacementView {
     public void rotate(Minecraft mc, Rotation by) {
         Placement p = placement;
         if (p != null) {
+            UndoStack.INSTANCE.saveBuild(p);
             SlopmaticaActions.rotate(p, by, SlopmaticaActions::actionBar);
             rebaseCarry(p);
         }
@@ -347,6 +378,7 @@ public final class PlacementView {
     public void mirror(Minecraft mc) {
         Placement p = placement;
         if (p != null) {
+            UndoStack.INSTANCE.saveBuild(p);
             SlopmaticaActions.setMirror(p, SlopmaticaActions.nextMirror(p.transform().mirror()), SlopmaticaActions::actionBar);
             rebaseCarry(p);
         }
@@ -368,6 +400,7 @@ public final class PlacementView {
         }
         Direction facing = Direction.fromYRot(yRot());
         Direction[] directions = {facing, facing.getOpposite(), facing.getCounterClockWise(), facing.getClockWise(), Direction.UP, Direction.DOWN};
+        UndoStack.INSTANCE.saveBuild(p);
         SlopmaticaActions.nudge(p, directions[direction], amount, SlopmaticaActions::actionBar);
         rebaseCarry(p);
     }
@@ -386,6 +419,7 @@ public final class PlacementView {
         Placement p = placement;
         if (p != null && startOrigin != null) {
             carryOffset = null;
+            UndoStack.INSTANCE.saveBuild(p);
             p.setRotation(startRotation);
             p.setMirror(startMirror);
             SlopmaticaActions.moveTo(p, startOrigin, SlopmaticaActions::actionBar);
@@ -509,9 +543,44 @@ public final class PlacementView {
             ? Math.max(4, hit.getLocation().distanceTo(from))
             : Math.max(8, AABB.of(p.transform().worldBounds()).getCenter().distanceTo(from));
         BlockPos target = target(mc);
+        UndoStack.INSTANCE.saveBuild(p);
+        carryStart = p.transform().origin();
         carryOffset = p.transform().origin().subtract(target);
         lastTarget = target;
         SlopmaticaActions.actionBar(Component.literal("Carrying " + p.name() + " (left click to put down)").withColor(SlopmaticaActions.ACCENT));
+    }
+
+    /** Stops carrying and puts the build back where it was picked up. */
+    private void cancelCarry(Placement p) {
+        carryOffset = null;
+        if (carryStart != null) {
+            p.setOrigin(carryStart);
+            PlacementManager.INSTANCE.changed();
+        }
+        SlopmaticaActions.actionBar(Component.translatable("slopmatica.view.move_cancelled", p.name()).withColor(SlopmaticaActions.ACCENT));
+    }
+
+    /** Undoes the last move, turn, crop or selection change. */
+    public void undo(Minecraft mc) {
+        carryOffset = null;
+        String what = UndoStack.INSTANCE.undo();
+        SlopmaticaActions.actionBar((what == null ? Component.translatable("slopmatica.view.undo_nothing")
+            : Component.translatable("slopmatica.view.undone", what)).withColor(SlopmaticaActions.ACCENT));
+    }
+
+    /** Shrinks the selection to the blocks in it. */
+    public void fitSelection(Minecraft mc) {
+        if (mc.level == null) {
+            return;
+        }
+        Selection.State before = Selection.INSTANCE.state();
+        if (Selection.INSTANCE.fitToBlocks(mc.level)) {
+            UndoStack.INSTANCE.saveSelectionState(before);
+            var box = Selection.INSTANCE.box();
+            SlopmaticaActions.actionBar(Component.translatable("slopmatica.view.fitted", box.getXSpan(), box.getYSpan(), box.getZSpan()).withColor(SlopmaticaActions.ACCENT));
+        } else {
+            SlopmaticaActions.actionBar(Component.translatable("slopmatica.view.fit_nothing").withColor(SlopmaticaActions.ERROR));
+        }
     }
 
     private void putDown(Placement p) {
@@ -533,11 +602,21 @@ public final class PlacementView {
         if (mc.gui.screen() != null) {
             return;
         }
-        if (p == null) {
+        if (!open) {
             // Outside the view, a reminder that layer view is hiding part of every build.
             if (Layers.INSTANCE.mode() != Layers.Mode.ALL && !PlacementManager.INSTANCE.placements().isEmpty()) {
                 drawPanel(graphics, mc, List.of(SlopmaticaKeys.layersMessage().getString()), 4, 4);
             }
+            return;
+        }
+        if (p == null) {
+            drawPanel(graphics, mc, List.of(
+                "Build view: no build selected",
+                "Tool: " + tool.label().getString() + " (" + key(SlopmaticaKeys.VIEW_TOOL) + " to change)",
+                "Left click: set a selection corner   Right click: free cursor",
+                "Ctrl+S: save the selection   Ctrl+Z: undo",
+                "Done: " + key(SlopmaticaKeys.PLACEMENT_VIEW) + " or Esc"
+            ), 4, 4);
             return;
         }
         KeyMapping[] n = SlopmaticaKeys.VIEW_NUDGES;

@@ -166,7 +166,7 @@ public final class MaterialPanels {
             } else if (hovered) {
                 g.fill(x + 1, ry, x + W - 1, ry + ROW, 0x30FFFFFF);
             }
-            ItemStack stack = new ItemStack(e.item());
+            ItemStack stack = e.icon();
             g.item(stack, x + 2, ry + 1);
             String count = ignored ? "-" : e.missing() == 0 ? "✔" : String.valueOf(e.missing());
             int countColor = ignored ? 0xFF606060 : e.missing() == 0 ? 0xFF60E060 : e.have() >= e.missing() ? 0xFFFFFFFF : 0xFFFF8080;

@@ -67,10 +67,24 @@ public final class InventoryPlanner {
      * @param result      how it is packed
      * @param truncated   the area was too big and only part of it was looked at
      */
-    public record Plan(Map<Item, Long> need, Map<Item, Long> extra, InventoryPlan.Result<Item> result, Scope scope, boolean truncated) {
+    public record Plan(Map<Item, Long> need, Map<Item, Long> extra, Map<Item, Long> toBring, List<Tool> tools,
+                       InventoryPlan.Result<Item> result, Scope scope, boolean truncated, String world) {
         public boolean needs(Item item) {
             return need.containsKey(item) || extra.containsKey(item);
         }
+
+        /** How many more of an item the plan wants brought, beyond what is carried. */
+        public long stillToBring(Item item) {
+            return toBring.getOrDefault(item, 0L);
+        }
+    }
+
+    /**
+     * A tool worth bringing: one to break the wrong blocks in the way, or one the variants need.
+     *
+     * @param carried whether you already have one
+     */
+    public record Tool(String kind, Item icon, int uses, boolean carried) {
     }
 
     private @Nullable Plan plan;
@@ -78,8 +92,53 @@ public final class InventoryPlanner {
     private InventoryPlanner() {
     }
 
+    /** The plan for the world you're in; a plan made in another world stays hidden until you're back there. */
     public @Nullable Plan plan() {
-        return plan;
+        Plan p = plan;
+        return p != null && p.world().equals(worldKey(Minecraft.getInstance())) ? p : null;
+    }
+
+    /** Which world or server a plan belongs to. */
+    private static String worldKey(Minecraft mc) {
+        var server = mc.getSingleplayerServer();
+        if (server != null) {
+            return "sp:" + server.getWorldData().getLevelName();
+        }
+        var data = mc.getCurrentServer();
+        return data != null ? "mp:" + data.ip : "";
+    }
+
+    /** Leaving a world: forget the plan only if asked to (advanced option); a restart always does. */
+    public void onLeave() {
+        if (SlopmaticaConfig.get().planForgetOnLeave) {
+            plan = null;
+        }
+    }
+
+    private int lastInventory;
+    private int ticks;
+
+    /** Client tick: when what you carry changes, re-plan quietly so the plan follows your pickups. */
+    public void tick(Minecraft mc) {
+        if (plan() == null || mc.player == null || ++ticks % 10 != 0) {
+            return;
+        }
+        int signature = inventorySignature(mc);
+        if (signature != lastInventory) {
+            lastInventory = signature;
+            calculate(mc, true);
+        }
+    }
+
+    private static int inventorySignature(Minecraft mc) {
+        int h = 1;
+        Inventory inventory = mc.player.getInventory();
+        for (int i = 0; i < Inventory.INVENTORY_SIZE; i++) {
+            ItemStack stack = inventory.getItem(i);
+            h = 31 * h + (stack.isEmpty() ? 0 : BuiltInRegistries.ITEM.getId(stack.getItem()) * 97 + stack.getCount());
+        }
+        ItemStack cursor = mc.player.containerMenu.getCarried();
+        return 31 * h + (cursor.isEmpty() ? 0 : BuiltInRegistries.ITEM.getId(cursor.getItem()) * 97 + cursor.getCount());
     }
 
     public void clear() {
@@ -88,6 +147,11 @@ public final class InventoryPlanner {
 
     /** Recalculates from the world as it is now, and reports a one-line summary. */
     public void calculate(Minecraft mc) {
+        calculate(mc, false);
+    }
+
+    /** {@code quiet}: no summary on the action bar (automatic re-plans). */
+    public void calculate(Minecraft mc, boolean quiet) {
         if (mc.player == null || mc.level == null) {
             return;
         }
@@ -95,7 +159,9 @@ public final class InventoryPlanner {
         ClientLevel level = mc.level;
         List<Placement> placements = PlacementManager.INSTANCE.placements().stream().filter(p -> p.visible() && p.inDimension(level)).toList();
         if (placements.isEmpty()) {
-            SlopmaticaActions.actionBar(Component.translatable("slopmatica.plan.no_builds").withColor(SlopmaticaActions.ERROR));
+            if (!quiet) {
+                SlopmaticaActions.actionBar(Component.translatable("slopmatica.plan.no_builds").withColor(SlopmaticaActions.ERROR));
+            }
             return;
         }
         int playerY = mc.player.getBlockY();
@@ -104,6 +170,9 @@ public final class InventoryPlanner {
             default -> null;
         };
         if (config.planScope == Scope.SELECTION && area == null) {
+            if (quiet) {
+                return;
+            }
             SlopmaticaActions.actionBar(Component.translatable("slopmatica.plan.no_selection").withColor(SlopmaticaActions.ERROR));
             return;
         }
@@ -126,6 +195,7 @@ public final class InventoryPlanner {
 
         // What is missing, in the order it will be needed: layer by layer in the chosen direction.
         Map<Item, Long> missing = new LinkedHashMap<>();
+        Map<String, Integer> toBreak = new LinkedHashMap<>();
         BoundingBox all = null;
         for (Placement p : placements) {
             BoundingBox b = p.transform().worldBounds();
@@ -166,6 +236,12 @@ public final class InventoryPlanner {
                             BlockStatus status = loaded ? BlockMatcher.compare(want, level.getBlockState(pos.set(x, y, z))) : BlockStatus.MISSING;
                             if (status == BlockStatus.MISSING || status == BlockStatus.WRONG) {
                                 missing.merge(item, (long) n, Long::sum);
+                            }
+                            if (status == BlockStatus.WRONG) {
+                                String tool = toolFor(level.getBlockState(pos));
+                                if (tool != null) {
+                                    toBreak.merge(tool, 1, Integer::sum);
+                                }
                             }
                         }
                     }
@@ -253,7 +329,17 @@ public final class InventoryPlanner {
         }
         InventoryPlan.Result<Item> result = InventoryPlan.plan(toBring, item -> new ItemStack(item).getMaxStackSize(), room,
             slots, config.planUseCarriedShulkers ? carriedShulkerRoom : 0, maxCarried, maxEnder);
-        plan = new Plan(need, extra, result, config.planScope, truncated);
+        // Tools: for breaking what's in the way, and for the variants (the axe).
+        if (extra.containsKey(Items.IRON_AXE)) {
+            toBreak.merge("axe", 0, Integer::sum);
+        }
+        List<Tool> tools = new java.util.ArrayList<>();
+        toBreak.forEach((kind, uses) -> tools.add(new Tool(kind, TOOL_ICONS.get(kind), uses, carriesTool(inventory, kind))));
+        plan = new Plan(need, extra, toBring, List.copyOf(tools), result, config.planScope, truncated, worldKey(mc));
+        lastInventory = inventorySignature(mc);
+        if (quiet) {
+            return;
+        }
 
         long total = toBring.values().stream().mapToLong(Long::longValue).sum();
         Component summary = total == 0
@@ -261,6 +347,46 @@ public final class InventoryPlanner {
             : Component.translatable(result.overflow().isEmpty() ? "slopmatica.plan.summary" : "slopmatica.plan.summary_overflow",
                 result.stacks().size(), result.shulkers() + result.enderShulkers(), result.overflow().size());
         SlopmaticaActions.actionBar(summary.copy().withColor(result.overflow().isEmpty() ? SlopmaticaActions.ACCENT : SlopmaticaActions.WARNING));
+    }
+
+    private static final Map<String, Item> TOOL_ICONS = Map.of("pickaxe", Items.IRON_PICKAXE, "axe", Items.IRON_AXE,
+        "shovel", Items.IRON_SHOVEL, "hoe", Items.IRON_HOE, "shears", Items.SHEARS);
+
+    /** The tool that breaks a block fastest, or null when a hand will do just as well. */
+    private static @Nullable String toolFor(net.minecraft.world.level.block.state.BlockState state) {
+        if (state.is(net.minecraft.tags.BlockTags.MINEABLE_WITH_PICKAXE)) {
+            return "pickaxe";
+        }
+        if (state.is(net.minecraft.tags.BlockTags.MINEABLE_WITH_AXE)) {
+            return "axe";
+        }
+        if (state.is(net.minecraft.tags.BlockTags.MINEABLE_WITH_SHOVEL)) {
+            return "shovel";
+        }
+        if (state.is(net.minecraft.tags.BlockTags.MINEABLE_WITH_HOE)) {
+            return "hoe";
+        }
+        if (state.is(net.minecraft.tags.BlockTags.LEAVES) || state.is(net.minecraft.tags.BlockTags.WOOL) || state.is(net.minecraft.world.level.block.Blocks.COBWEB)) {
+            return "shears";
+        }
+        return null;
+    }
+
+    private static boolean carriesTool(Inventory inventory, String kind) {
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack stack = inventory.getItem(i);
+            boolean match = switch (kind) {
+                case "pickaxe" -> stack.is(ItemTags.PICKAXES);
+                case "axe" -> stack.is(ItemTags.AXES);
+                case "shovel" -> stack.is(ItemTags.SHOVELS);
+                case "hoe" -> stack.is(ItemTags.HOES);
+                default -> stack.is(Items.SHEARS);
+            };
+            if (match) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** {@code minecraft:stripped_oak_log} -> {@code minecraft:oak_log}, if that item exists. */

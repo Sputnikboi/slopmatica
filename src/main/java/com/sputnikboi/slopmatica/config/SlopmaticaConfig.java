@@ -85,10 +85,14 @@ public final class SlopmaticaConfig {
     public boolean includeNbt = true;
     /** The file format copies are saved in. */
     public SchematicFormats copyFormat = SchematicFormats.SLOPMATIC;
+    public CornerMode cornerMode = CornerMode.DYNAMIC;
     /** What pasting into the world may overwrite. */
     public PlacementBuilder.Replace pasteReplace = PlacementBuilder.Replace.NONE;
-    public int fadeStart = 24;
-    public int fadeEnd = 48;
+    /**
+     * How far blue and green outlines reach before fading, as a percentage like Minecraft's
+     * Entity Distance: 100% fades from 24 to 48 blocks, 200% from 48 to 96.
+     */
+    public int outlineDistance = 100;
 
     // Inventory plan (see InventoryPlanner).
     public com.sputnikboi.slopmatica.plan.InventoryPlanner.Scope planScope = com.sputnikboi.slopmatica.plan.InventoryPlanner.Scope.NEXT_BOTTOM_UP;
@@ -107,6 +111,10 @@ public final class SlopmaticaConfig {
     public com.sputnikboi.slopmatica.plan.InventoryPlanner.Sort planSort = com.sputnikboi.slopmatica.plan.InventoryPlanner.Sort.NEXT;
     /** Item ids left out of the plan. */
     public java.util.Set<String> planIgnored = new java.util.LinkedHashSet<>();
+    /** Forget the plan when leaving a world (otherwise it lasts until the game closes). */
+    public boolean planForgetOnLeave = false;
+    /** The list beside the inventory: what doesn't fit, ender chest boxes, tools. */
+    public boolean planSideList = true;
     /** Ghost items in empty inventory slots and container highlights. */
     public boolean planShowInInventory = true;
 
@@ -148,14 +156,31 @@ public final class SlopmaticaConfig {
         return instance;
     }
 
+    /** Where the corner key puts a selection corner. */
+    public enum CornerMode {
+        /** The block you look at, or your feet when you look at nothing. */
+        DYNAMIC,
+        /** Only the block you look at. */
+        LOOK,
+        /** Always where you stand. */
+        FEET
+    }
+
+    /** Which missing ghost on the crosshair line Easy Place places (it never places off the line). */
     public enum EasyPlaceOrder {
-        /** Furthest reachable missing block in front of you first, so near blocks never get in the way. */
+        /** The furthest one first, so blocks placed nearby never get in the way of ones further off. */
         FURTHEST,
-        NEAREST,
-        /** Lowest layer first. */
-        BOTTOM_UP,
-        /** Exactly the ghost under the crosshair (Litematica's behaviour). */
-        CROSSHAIR
+        NEAREST
+    }
+
+    /** Where outline fading starts, in blocks. */
+    public float fadeStartBlocks() {
+        return 24 * outlineDistance / 100.0F;
+    }
+
+    /** Where outlines are gone, in blocks. */
+    public float fadeEndBlocks() {
+        return 48 * outlineDistance / 100.0F;
     }
 
     /** Solid view draws ghosts at full opacity, whatever the opacity slider says. */
@@ -231,13 +256,15 @@ public final class SlopmaticaConfig {
     private SlopmaticaConfig sanitized() {
         ghostOpacity = Math.clamp(ghostOpacity, 0.05F, 1.0F);
         outlineWidth = Math.clamp(outlineWidth, 0.01F, 4.0F);
-        fadeStart = Math.clamp(fadeStart, 4, 256);
-        fadeEnd = Math.clamp(fadeEnd, fadeStart + 4, 260);
+        outlineDistance = Math.clamp(outlineDistance, 25, 500);
         if (easyPlaceOrder == null) {
             easyPlaceOrder = EasyPlaceOrder.FURTHEST;
         }
         if (copyFormat == null) {
             copyFormat = SchematicFormats.SLOPMATIC;
+        }
+        if (cornerMode == null) {
+            cornerMode = CornerMode.DYNAMIC;
         }
         if (pasteReplace == null) {
             pasteReplace = PlacementBuilder.Replace.NONE;

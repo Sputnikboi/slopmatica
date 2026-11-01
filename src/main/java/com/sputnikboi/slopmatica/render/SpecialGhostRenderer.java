@@ -66,9 +66,14 @@ final class SpecialGhostRenderer {
                 }
                 poseStack.pushPose();
                 poseStack.translate(dx, dy, dz);
-                renderState.clear();
-                resolver.update(renderState, ghost.state(), DISPLAY_CONTEXT);
-                renderState.submit(poseStack, ghosts, LightCoordsUtil.FULL_BRIGHT, OverlayTexture.NO_OVERLAY, 0);
+                // A head with its data is drawn by its block-entity renderer, skin and all; the plain
+                // model would put a Steve head over it.
+                boolean drawnByEntity = ghost.data() != null && ghost.state().getBlock() instanceof net.minecraft.world.level.block.AbstractSkullBlock;
+                if (!drawnByEntity) {
+                    renderState.clear();
+                    resolver.update(renderState, ghost.state(), DISPLAY_CONTEXT);
+                    renderState.submit(poseStack, ghosts, LightCoordsUtil.FULL_BRIGHT, OverlayTexture.NO_OVERLAY, 0);
+                }
                 if (ghost.data() != null) {
                     BlockEntity entity = detachedFor(ghost);
                     if (entity != null) {

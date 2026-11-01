@@ -48,6 +48,10 @@ public class PlacementViewScreen extends Screen {
     private @Nullable BoxDrag boxDrag;
     private @Nullable BoundingBox lastBox;
     private int buildsTop;
+    /** What a drag started from, so right click can put it back. */
+    private @Nullable BlockPos dragStart;
+    private Selection.@Nullable State dragSelection;
+    private @Nullable BoundingBox dragCrop;
 
     public PlacementViewScreen() {
         super(Component.translatable("slopmatica.view.title"));
@@ -130,6 +134,18 @@ public class PlacementViewScreen extends Screen {
             y += B + GAP;
         }
 
+        // Undo, for every tool.
+        int third = (LEFT_W - 2 * GAP) / 2;
+        Button undo = addRenderableWidget(Button.builder(Component.translatable("slopmatica.view.undo"), b -> view.undo(minecraft))
+            .bounds(x, y, third, B).tooltip(Tooltip.create(Component.translatable("slopmatica.view.undo.tooltip"))).build());
+        undo.active = !UndoStack.INSTANCE.isEmpty();
+        addRenderableWidget(Button.builder(Component.translatable("slopmatica.view.fit"), b -> {
+            view.fitSelection(minecraft);
+            rebuildWidgets();
+        }).bounds(x + third + GAP, y, LEFT_W - third - GAP, B).tooltip(Tooltip.create(Component.translatable("slopmatica.view.fit.tooltip"))).build())
+            .active = Selection.INSTANCE.box() != null;
+        y += B + GAP;
+
         // Layers.
         y += 4;
         Layers layers = Layers.INSTANCE;
@@ -186,6 +202,28 @@ public class PlacementViewScreen extends Screen {
         }
     }
 
+    /** Right click during a drag: everything back to how it was when the drag started. */
+    private boolean cancelDrag() {
+        Placement p = PlacementView.INSTANCE.placement();
+        if (dragOffset != null && p != null && dragStart != null) {
+            dragOffset = null;
+            p.setOrigin(dragStart);
+            PlacementManager.INSTANCE.changed();
+        } else if (boxDrag != null) {
+            boxDrag = null;
+            if (PlacementView.INSTANCE.tool() == Tool.MODIFY && dragSelection != null) {
+                Selection.INSTANCE.restore(dragSelection);
+            } else if (p != null) {
+                p.setCrop(dragCrop);
+                PlacementManager.INSTANCE.changed();
+            }
+        } else {
+            return false;
+        }
+        SlopmaticaActions.actionBar(Component.translatable("slopmatica.view.drag_cancelled").withColor(SlopmaticaActions.ACCENT));
+        return true;
+    }
+
     private void pickTool(Tool tool) {
         PlacementView.INSTANCE.setTool(tool);
         toolsOpen = false;
@@ -211,6 +249,14 @@ public class PlacementViewScreen extends Screen {
         super.extractRenderState(graphics, mouseX, mouseY, a);
         Placement p = PlacementView.INSTANCE.placement();
         if (p == null) {
+            PlacementView.drawPanel(graphics, minecraft, List.of(
+                "Build view: no build selected",
+                "Select: click two blocks   Modify: drag a face",
+                "Ctrl+S: save the selection   Ctrl+Z: undo",
+                "Right click or Esc: back to flying   " + PlacementView.key(SlopmaticaKeys.PLACEMENT_VIEW) + ": done"
+            ), 4, 4);
+            graphics.text(font, Component.translatable("slopmatica.builds.title").withStyle(ChatFormatting.BOLD), 6, buildsTop - 11, 0xFFFFFFFF);
+            MaterialPanels.INSTANCE.draw(graphics, minecraft, mouseX, mouseY, true);
             return;
         }
         String hint = switch (PlacementView.INSTANCE.tool()) {
@@ -244,13 +290,20 @@ public class PlacementViewScreen extends Screen {
         }
         // 26.3 numbers mouse buttons the SDL way: left 1, middle 2, right 3.
         if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
+            if (cancelDrag()) {
+                return true;
+            }
             onClose();
             return true;
         }
         PlacementView view = PlacementView.INSTANCE;
         Placement p = view.placement();
-        if (event.button() != InputConstants.MOUSE_BUTTON_LEFT || p == null || minecraft.level == null) {
+        if (event.button() != InputConstants.MOUSE_BUTTON_LEFT || minecraft.level == null) {
             return false;
+        }
+        if (p == null && (view.tool() == Tool.MOVE || view.tool() == Tool.CROP)) {
+            SlopmaticaActions.actionBar(Component.translatable("slopmatica.view.no_build").withColor(SlopmaticaActions.ERROR));
+            return true;
         }
         Vec3 from = view.eye();
         Vec3 dir = view.rayThrough(minecraft, event.x(), event.y(), width, height);
@@ -263,6 +316,8 @@ public class PlacementViewScreen extends Screen {
                     return false;
                 }
                 dragPlaneY = hit.y;
+                UndoStack.INSTANCE.saveBuild(p);
+                dragStart = p.transform().origin();
                 dragOffset = p.transform().origin().subtract(BlockPos.containing(hit.x, dragPlaneY, hit.z));
             }
             case SELECT -> {
@@ -270,7 +325,9 @@ public class PlacementViewScreen extends Screen {
                 if (block == null) {
                     return false;
                 }
+                UndoStack.INSTANCE.saveSelection();
                 Selection.INSTANCE.setCorner(block, dim);
+                rebuildWidgets(); // Fit and Undo may have become available.
             }
             case MODIFY -> {
                 BoundingBox box = dim.equals(Selection.INSTANCE.dimension()) ? Selection.INSTANCE.box() : null;
@@ -280,10 +337,18 @@ public class PlacementViewScreen extends Screen {
                 }
                 boxDrag = BoxDrag.grab(box, from, dir);
                 lastBox = box;
+                if (boxDrag != null) {
+                    UndoStack.INSTANCE.saveSelection();
+                    dragSelection = Selection.INSTANCE.state();
+                }
             }
             case CROP -> {
                 boxDrag = BoxDrag.grab(p.transform().worldBounds(), from, dir);
                 lastBox = p.transform().worldBounds();
+                if (boxDrag != null) {
+                    UndoStack.INSTANCE.saveBuild(p);
+                    dragCrop = p.crop();
+                }
             }
         }
         return true;
@@ -296,7 +361,7 @@ public class PlacementViewScreen extends Screen {
         }
         PlacementView view = PlacementView.INSTANCE;
         Placement p = view.placement();
-        if (p == null || minecraft.level == null) {
+        if (minecraft.level == null || (p == null && boxDrag == null)) {
             return super.mouseDragged(event, dx, dy);
         }
         Vec3 from = view.eye();
@@ -307,7 +372,7 @@ public class PlacementViewScreen extends Screen {
                 lastBox = box;
                 if (view.tool() == Tool.MODIFY) {
                     Selection.INSTANCE.set(box, minecraft.level.dimension().identifier().toString());
-                } else {
+                } else if (p != null) {
                     Placement.Transform t = p.transform();
                     p.setCrop(BoundingBox.fromCorners(t.toLocal(box.minX(), box.minY(), box.minZ()), t.toLocal(box.maxX(), box.maxY(), box.maxZ())));
                     PlacementManager.INSTANCE.changed();
@@ -315,7 +380,7 @@ public class PlacementViewScreen extends Screen {
             }
             return true;
         }
-        if (dragOffset == null) {
+        if (dragOffset == null || p == null) {
             return super.mouseDragged(event, dx, dy);
         }
         if (Math.abs(dir.y) < 1.0E-4) {
@@ -362,6 +427,7 @@ public class PlacementViewScreen extends Screen {
                 SlopmaticaActions.actionBar(Component.literal(p.name() + " at " + p.transform().origin().toShortString()).withColor(SlopmaticaActions.ACCENT));
             }
             MaterialPanels.INSTANCE.invalidate();
+            rebuildWidgets(); // Undo is available now.
             return true;
         }
         return super.mouseReleased(event);
@@ -379,6 +445,16 @@ public class PlacementViewScreen extends Screen {
     @Override
     public boolean keyPressed(KeyEvent event) {
         PlacementView view = PlacementView.INSTANCE;
+        if (event.hasControlDown() && event.key() == InputConstants.KEY_Z) {
+            cancelDrag();
+            view.undo(minecraft);
+            rebuildWidgets();
+            return true;
+        }
+        if (event.hasControlDown() && event.key() == InputConstants.KEY_S) {
+            minecraft.gui.setScreen(new com.sputnikboi.slopmatica.gui.SaveSelectionScreen(this));
+            return true;
+        }
         // Number keys pick a tool here; the hotbar doesn't matter while the cursor is free.
         int number = event.key() - InputConstants.KEY_1;
         if (number >= 0 && number < Tool.values().length) {

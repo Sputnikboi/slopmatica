@@ -41,6 +41,18 @@ public class SlopmaticaMenuScreen extends Screen {
     private @Nullable Button updateButton;
     private Button creditsButton;
 
+    private boolean shownBefore;
+
+    /** 26.3 keeps a screen's widgets when you come back to it: rebuild, so counts and labels are current. */
+    @Override
+    public void added() {
+        super.added();
+        if (shownBefore) {
+            rebuildWidgets();
+        }
+        shownBefore = true;
+    }
+
     @Override
     protected void init() {
         Updates.INSTANCE.check(false);

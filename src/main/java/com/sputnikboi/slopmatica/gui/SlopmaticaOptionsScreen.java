@@ -69,14 +69,7 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
                 toggle("slopmatica.options.outline_variant", c.outlineVariant, v -> c.outlineVariant = v, true),
                 toggle("slopmatica.options.outline_wrong", c.outlineWrong, v -> c.outlineWrong = v, true),
                 toggle("slopmatica.options.fade_outlines", c.fadeOutlines, v -> c.fadeOutlines = v, false),
-                slider("slopmatica.options.fade_start", 4, 128, c.fadeStart, " blocks", v -> {
-                    c.fadeStart = v;
-                    c.fadeEnd = Math.max(c.fadeEnd, v + 4);
-                }, false),
-                slider("slopmatica.options.fade_end", 8, 256, c.fadeEnd, " blocks", v -> {
-                    c.fadeEnd = v;
-                    c.fadeStart = Math.min(c.fadeStart, v - 4);
-                }, false)
+                slider("slopmatica.options.outline_distance", 25, 500, c.outlineDistance, "%", v -> c.outlineDistance = v, false)
             );
         }
 
@@ -103,6 +96,7 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
             toggle("slopmatica.options.include_nbt", c.includeNbt, v -> c.includeNbt = v, false),
             cycle("slopmatica.options.paste_replace", PlacementBuilder.Replace.values(), c.pasteReplace, v -> c.pasteReplace = v)
         );
+        list.addSmall(cycle("slopmatica.options.corner_mode", SlopmaticaConfig.CornerMode.values(), c.cornerMode, v -> c.cornerMode = v), null);
         if (advanced) {
             list.addSmall(new OptionInstance<>(
                 "slopmatica.options.copy_format",
@@ -127,7 +121,9 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
             Button.builder(Component.translatable("slopmatica.options.import_litematica"), b -> minecraft.gui.setScreen(new LitematicaImportScreen(this)))
                 .tooltip(Tooltip.create(Component.translatable("slopmatica.options.import_litematica.tooltip"))).width(WIDE).build()
         );
-        list.addSmall(Button.builder(Component.translatable("slopmatica.options.welcome"), b -> minecraft.gui.setScreen(new WelcomeScreen(this))).width(WIDE).build(), null);
+        list.addSmall(Button.builder(Component.translatable("slopmatica.options.welcome"), b -> minecraft.gui.setScreen(new WelcomeScreen(this))).width(WIDE).build(),
+            Button.builder(Component.translatable("slopmatica.options.plan"), b -> minecraft.gui.setScreen(new InventoryPlanScreen(this))).width(WIDE)
+                .tooltip(Tooltip.create(Component.translatable("slopmatica.menu.plan.tooltip"))).build());
 
         // Sharing between instances on this computer.
         list.addHeader(Component.translatable("slopmatica.options.sharing"));
@@ -194,6 +190,18 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
         return Button.builder(Component.translatable("slopmatica.options.color_of", Component.translatable(key)).withColor(status.color()),
             b -> minecraft.gui.setScreen(new ColorPickerScreen(this, status))).width(WIDE)
             .tooltip(Tooltip.create(Component.translatable("slopmatica.options.color.tooltip"))).build();
+    }
+
+    private boolean shownBefore;
+
+    /** 26.3 keeps a screen's widgets when you come back to it: rebuild, so changes show at once. */
+    @Override
+    public void added() {
+        super.added();
+        if (shownBefore) {
+            rebuildWidgets();
+        }
+        shownBefore = true;
     }
 
     @Override

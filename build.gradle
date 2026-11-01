@@ -42,6 +42,9 @@ test {
     if (System.getProperty('slopmatica.colors')) {
         systemProperty 'slopmatica.colors', System.getProperty('slopmatica.colors')
     }
+    if (System.getProperty('slopmatica.testschematic')) {
+        systemProperty 'slopmatica.testschematic', System.getProperty('slopmatica.testschematic')
+    }
 }
 
 loom {
@@ -57,6 +60,9 @@ loom {
             // Cloud login against a test server with a fake Mojang check: skip the real session join.
             if (project.hasProperty('devSkipJoin')) {
                 vmArg "-Dslopmatica.dev.skipJoin=true"
+            }
+            if (project.hasProperty('devDebugEasyPlace')) {
+                vmArg "-Dslopmatica.debug.easyplace=true"
             }
         }
     }

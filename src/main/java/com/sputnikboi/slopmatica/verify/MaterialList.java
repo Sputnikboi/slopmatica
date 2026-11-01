@@ -33,7 +33,8 @@ public final class MaterialList {
         BlockStateProperties.LAYERS, BlockStateProperties.FLOWER_AMOUNT, BlockStateProperties.SEGMENT_AMOUNT,
     };
 
-    public record Entry(Item item, int total, int missing, int have) {
+    /** {@code icon}: the item as shown, e.g. a player head with its skin. */
+    public record Entry(Item item, int total, int missing, int have, ItemStack icon) {
     }
 
     private final List<Entry> entries;
@@ -54,6 +55,7 @@ public final class MaterialList {
         Placement.Transform t = placement.transform();
         BoundingBox box = t.worldBounds();
         Map<Item, int[]> counts = new LinkedHashMap<>();
+        Map<Item, ItemStack> icons = new java.util.HashMap<>();
         int unloaded = 0;
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (int x = box.minX(); x <= box.maxX(); x++) {
@@ -68,6 +70,10 @@ public final class MaterialList {
                     int n = itemCount(want);
                     if (item == Items.AIR || n == 0) {
                         continue;
+                    }
+                    if (want.getBlock() instanceof net.minecraft.world.level.block.AbstractSkullBlock && !icons.containsKey(item)) {
+                        // Heads look like their owner: take the skin from the first one's data.
+                        icons.put(item, iconWithData(item, want, t.tileEntityAt(x, y, z), pos.set(x, y, z), level));
                     }
                     int[] c = counts.computeIfAbsent(item, k -> new int[2]);
                     c[0] += n;
@@ -96,12 +102,34 @@ public final class MaterialList {
         int total = 0, missing = 0;
         for (Map.Entry<Item, int[]> e : counts.entrySet()) {
             int[] c = e.getValue();
-            entries.add(new Entry(e.getKey(), c[0], c[1], carried.getOrDefault(e.getKey(), 0)));
+            entries.add(new Entry(e.getKey(), c[0], c[1], carried.getOrDefault(e.getKey(), 0), icons.getOrDefault(e.getKey(), new ItemStack(e.getKey()))));
             total += c[0];
             missing += c[1];
         }
         entries.sort(Comparator.comparingInt(Entry::missing).reversed().thenComparing(Comparator.comparingInt(Entry::total).reversed()));
         return new MaterialList(List.copyOf(entries), total, missing, unloaded);
+    }
+
+    /** The item with the components its block entity data gives it (a head's skin, a banner's pattern). */
+    private static ItemStack iconWithData(Item item, BlockState state, net.minecraft.nbt.@org.jspecify.annotations.Nullable CompoundTag data,
+                                         BlockPos pos, ClientLevel level) {
+        ItemStack stack = new ItemStack(item);
+        if (data == null) {
+            return stack;
+        }
+        try {
+            net.minecraft.nbt.CompoundTag tag = data.copy();
+            tag.putInt("x", pos.getX());
+            tag.putInt("y", pos.getY());
+            tag.putInt("z", pos.getZ());
+            var entity = net.minecraft.world.level.block.entity.BlockEntity.loadStatic(pos.immutable(), state, tag, level.registryAccess());
+            if (entity != null) {
+                stack.applyComponents(entity.collectComponents());
+            }
+        } catch (RuntimeException e) {
+            // Unreadable data: the plain item will do.
+        }
+        return stack;
     }
 
     public static int itemCount(BlockState state) {
