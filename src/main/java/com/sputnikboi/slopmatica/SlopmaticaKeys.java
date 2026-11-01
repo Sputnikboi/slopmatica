@@ -85,6 +85,15 @@ public final class SlopmaticaKeys {
     private SlopmaticaKeys() {
     }
 
+    /** One click of a key, counted for usage reports when those are switched on. */
+    public static boolean pressed(KeyMapping key) {
+        if (key.consumeClick()) {
+            com.sputnikboi.slopmatica.telemetry.Telemetry.INSTANCE.key(key.getName());
+            return true;
+        }
+        return false;
+    }
+
     public static KeyMapping openMenu() {
         return OPEN_MENU;
     }
@@ -151,94 +160,94 @@ public final class SlopmaticaKeys {
 
     private static void tick(Minecraft mc) {
         Consumer<Component> feedback = SlopmaticaActions::actionBar;
-        while (OPEN_MENU.consumeClick()) {
+        while (pressed(OPEN_MENU)) {
             mc.gui.setScreen(new SlopmaticaMenuScreen(null));
         }
-        while (LOAD_SCHEMATIC.consumeClick()) {
+        while (pressed(LOAD_SCHEMATIC)) {
             mc.gui.setScreen(new SchematicBrowserScreen(null));
         }
-        while (TOGGLE_HOLOGRAM.consumeClick()) {
+        while (pressed(TOGGLE_HOLOGRAM)) {
             HologramRenderer renderer = HologramRenderer.INSTANCE;
             renderer.setHidden(!renderer.hidden());
             feedback.accept(Component.literal(renderer.hidden() ? "Hologram hidden" : "Hologram shown").withColor(SlopmaticaActions.ACCENT));
         }
-        while (TOGGLE_OUTLINES.consumeClick()) {
+        while (pressed(TOGGLE_OUTLINES)) {
             SlopmaticaConfig config = SlopmaticaConfig.get();
             config.showOutlines = !config.showOutlines;
             config.save();
             feedback.accept(Component.literal(config.showOutlines ? "Outlines shown" : "Outlines hidden").withColor(SlopmaticaActions.ACCENT));
         }
-        while (TOGGLE_GHOSTS.consumeClick()) {
+        while (pressed(TOGGLE_GHOSTS)) {
             SlopmaticaConfig config = SlopmaticaConfig.get();
             config.showGhosts = !config.showGhosts;
             config.save();
             feedback.accept(Component.literal(config.showGhosts ? "Ghost blocks shown" : "Ghost blocks hidden").withColor(SlopmaticaActions.ACCENT));
         }
-        while (TOGGLE_EASY_PLACE.consumeClick()) {
+        while (pressed(TOGGLE_EASY_PLACE)) {
             EasyPlace.INSTANCE.toggle();
         }
-        while (SPAWN_CHECK.consumeClick()) {
+        while (pressed(SPAWN_CHECK)) {
             SpawnCheck.INSTANCE.toggle(mc);
         }
-        while (PLAN_INVENTORY.consumeClick()) {
+        while (pressed(PLAN_INVENTORY)) {
             com.sputnikboi.slopmatica.plan.InventoryPlanner.INSTANCE.calculate(mc);
         }
-        while (PLACEMENT_VIEW.consumeClick()) {
+        while (pressed(PLACEMENT_VIEW)) {
             PlacementView.INSTANCE.toggle(mc);
         }
         PlacementView.INSTANCE.handleKeys(mc);
         int here = Layers.startHeight(mc.player != null ? mc.player.getBlockY() : 0);
         Layers layers = Layers.INSTANCE;
-        while (LAYER_MODE.consumeClick()) {
+        while (pressed(LAYER_MODE)) {
             layers.cycleMode(here);
             feedback.accept(layersMessage());
         }
-        while (LAYER_UP.consumeClick()) {
+        while (pressed(LAYER_UP)) {
             layers.move(1);
             feedback.accept(layersMessage());
         }
-        while (LAYER_DOWN.consumeClick()) {
+        while (pressed(LAYER_DOWN)) {
             layers.move(-1);
             feedback.accept(layersMessage());
         }
-        while (LAYER_HERE.consumeClick()) {
+        while (pressed(LAYER_HERE)) {
             layers.setLayer(here);
             feedback.accept(layersMessage());
         }
-        while (SELECT_CORNER.consumeClick()) {
+        while (pressed(SELECT_CORNER)) {
             Selection.INSTANCE.setCorner(mc);
         }
-        while (COPY_SELECTION.consumeClick()) {
+        while (pressed(COPY_SELECTION)) {
             Clipboard.INSTANCE.copy(mc);
         }
-        while (PASTE.consumeClick()) {
+        while (pressed(PASTE)) {
             Clipboard.INSTANCE.paste(mc);
         }
-        while (CLEAR_SELECTION.consumeClick()) {
+        while (pressed(CLEAR_SELECTION)) {
             Selection.INSTANCE.clear();
         }
         Placement p = PlacementManager.INSTANCE.selected().orElse(null);
-        while (MOVE_HERE.consumeClick()) {
+        while (pressed(MOVE_HERE)) {
             if (p != null && mc.player != null) {
                 SlopmaticaActions.moveTo(p, mc.player.blockPosition(), feedback);
             }
         }
-        while (NUDGE_FORWARD.consumeClick()) {
+        while (pressed(NUDGE_FORWARD)) {
             if (p != null && mc.player != null) {
                 SlopmaticaActions.nudge(p, mc.player.getNearestViewDirection(), 1, feedback);
             }
         }
-        while (NUDGE_BACK.consumeClick()) {
+        while (pressed(NUDGE_BACK)) {
             if (p != null && mc.player != null) {
                 SlopmaticaActions.nudge(p, mc.player.getNearestViewDirection().getOpposite(), 1, feedback);
             }
         }
-        while (ROTATE.consumeClick()) {
+        while (pressed(ROTATE)) {
             if (p != null) {
                 SlopmaticaActions.rotate(p, Rotation.CLOCKWISE_90, feedback);
             }
         }
-        while (MIRROR.consumeClick()) {
+        while (pressed(MIRROR)) {
             if (p != null) {
                 SlopmaticaActions.setMirror(p, SlopmaticaActions.nextMirror(p.transform().mirror()), feedback);
             }

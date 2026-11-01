@@ -137,6 +137,10 @@ public final class HologramRenderer {
         return camera.distanceToSqr(cx, cy, cz) < reach * reach;
     }
 
+    public int sectionCount() {
+        return sections.size();
+    }
+
     /** One line for the developer overlay: sections, builds in flight, last rebuild time, threads. */
     public String stats() {
         long building = rebuildStartedNanos != 0 ? (System.nanoTime() - rebuildStartedNanos) / 1_000_000 : -1;

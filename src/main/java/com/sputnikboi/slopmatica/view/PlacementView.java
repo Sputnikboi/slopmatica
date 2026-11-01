@@ -315,23 +315,23 @@ public final class PlacementView {
 
     /** Handles the view's own keys. Runs every tick so presses outside the view are drained, not queued. */
     public void handleKeys(Minecraft mc) {
-        while (SlopmaticaKeys.VIEW_TOOL.consumeClick()) {
+        while (SlopmaticaKeys.pressed(SlopmaticaKeys.VIEW_TOOL)) {
             if (active()) {
                 setTool(tool.next());
             }
         }
-        while (SlopmaticaKeys.VIEW_ROTATE.consumeClick()) {
+        while (SlopmaticaKeys.pressed(SlopmaticaKeys.VIEW_ROTATE)) {
             rotate(mc, Rotation.CLOCKWISE_90);
         }
-        while (SlopmaticaKeys.VIEW_MIRROR.consumeClick()) {
+        while (SlopmaticaKeys.pressed(SlopmaticaKeys.VIEW_MIRROR)) {
             mirror(mc);
         }
         for (int i = 0; i < SlopmaticaKeys.VIEW_NUDGES.length; i++) {
-            while (SlopmaticaKeys.VIEW_NUDGES[i].consumeClick()) {
+            while (SlopmaticaKeys.pressed(SlopmaticaKeys.VIEW_NUDGES[i])) {
                 nudge(mc, i);
             }
         }
-        while (SlopmaticaKeys.VIEW_PASTE.consumeClick()) {
+        while (SlopmaticaKeys.pressed(SlopmaticaKeys.VIEW_PASTE)) {
             build(mc);
         }
     }

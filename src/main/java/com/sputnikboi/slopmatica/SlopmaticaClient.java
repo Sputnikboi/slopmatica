@@ -67,6 +67,13 @@ public final class SlopmaticaClient implements ClientModInitializer {
             }
         });
         com.sputnikboi.slopmatica.plan.InventoryOverlay.register();
+        var telemetry = com.sputnikboi.slopmatica.telemetry.Telemetry.INSTANCE;
+        PlacementManager.INSTANCE.addListener(telemetry::placementsChanged);
+        ClientTickEvents.END_CLIENT_TICK.register(mc -> telemetry.tick());
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> mc.execute(telemetry::finishSession));
+        // Joining starts a fresh session (and sends anything left from the last one).
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, mc) -> mc.execute(telemetry::finishSession));
+        net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> telemetry.finishSession());
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "dev_overlay"), (graphics, delta) -> com.sputnikboi.slopmatica.dev.StressTest.INSTANCE.extractHud(graphics));
         ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> com.sputnikboi.slopmatica.plan.InventoryPlanner.INSTANCE.clear());
         DevHarness.install();
