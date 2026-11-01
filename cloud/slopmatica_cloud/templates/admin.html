@@ -2,7 +2,7 @@
 {% from "_badges.html" import user_badges %}
 {% block title %}Admin &middot; Slopmatica Cloud{% endblock %}
 {# A player for admins: the display name with its tag (which tells people apart), and the Minecraft name when different. #}
-{% macro person(u, size=24) %}{% if u %}<span class="person"><img class="head" src="{{ avatar_url(u.uuid, u.avatarVersion or 0) }}" alt="" width="{{ size }}" height="{{ size }}" loading="lazy"> <a href="{{ base }}/admin?tab=users&amp;q={{ u.uuid }}">{{ u.displayName or u.name or u.uuid }}{% if u.tag %}<span class="tag">#{{ u.tag }}</span>{% endif %}</a>{% if u.displayName and u.name and u.displayName != u.name %} <span class="muted small">({{ u.name }})</span>{% endif %}</span>{% else %}<span class="muted">nobody</span>{% endif %}{% endmacro %}
+{% macro person(u, size=24) %}{% if u %}<span class="person"><img class="head" src="{{ avatar_url(u.uuid, u.avatarVersion or 0) }}" alt="" width="{{ size }}" height="{{ size }}" loading="lazy"> <a href="{{ base }}/admin?tab=users&amp;q={{ u.uuid }}" data-user="{{ u.uuid }}">{{ u.displayName or u.name or u.uuid }}{% if u.tag %}<span class="tag">#{{ u.tag }}</span>{% endif %}</a>{% if u.displayName and u.name and u.displayName != u.name %} <span class="muted small">({{ u.name }})</span>{% endif %}</span>{% else %}<span class="muted">nobody</span>{% endif %}{% endmacro %}
 {% macro status_tabs(tab) %}
 <nav class="tabs fb-tabs" aria-label="Status">
   {% for key in statuses + ("all",) %}
@@ -136,7 +136,7 @@
     {% for e in entries %}
     <li data-wl-row data-search="{{ e.name|lower }} {{ e.uuid }} {{ (e.accountName or '')|lower }}">
       <img class="head" src="{{ avatar_url(e.uuid) }}" alt="" width="16" height="16" loading="lazy">
-      <span class="wl-name">{{ e.name }}{% if e.accountName and e.accountName != e.name %} <span class="muted">(now {{ e.accountName }})</span>{% endif %}</span>
+      <span class="wl-name">{% if e.accountName %}<span class="uname" data-user="{{ e.uuid }}" tabindex="0">{{ e.name }}</span>{% else %}{{ e.name }}{% endif %}{% if e.accountName and e.accountName != e.name %} <span class="muted">(now {{ e.accountName }})</span>{% endif %}</span>
       <code class="wl-uuid muted">{{ e.uuid }}</code>
       <span class="badge src-{{ e.source }}" title="Source: {{ e.source }}">{{ e.source }}</span>
       <button type="button" class="btn small ghost danger" data-adm-url="{{ base }}/api/admin/whitelist/{{ e.uuid }}" data-method="DELETE" data-confirm="Remove {{ e.name }} from the whitelist? Their files stay, but they can't use the cloud until added again.">Remove</button>

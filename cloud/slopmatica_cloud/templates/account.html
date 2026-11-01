@@ -31,11 +31,38 @@
     <span class="label">Picture</span>
     <div class="avatar-row">
       <img class="head" src="{{ avatar_url(user.uuid, user.avatar_version) }}" alt="Your picture" width="48" height="48">
-      <input type="file" name="icon" accept="image/png,image/jpeg" aria-label="Picture (PNG or JPEG)">
-      <button type="submit" class="btn ghost small">Upload</button>
+      <input type="file" name="icon" accept="image/png,image/jpeg,image/webp,image/gif" aria-label="Choose a picture">
       {% if user.avatar %}<button type="button" class="btn ghost small" data-avatar-reset>Reset to Minecraft face</button>{% endif %}
     </div>
-    <p class="muted small">{% if user.avatar %}A custom picture.{% else %}Your Minecraft face, from your skin.{% endif %} A PNG or JPEG of at most {{ max_avatar_kb }} KB and {{ max_avatar_side }} &times; {{ max_avatar_side }} pixels.</p>
+    <p class="muted small">{% if user.avatar %}A custom picture.{% else %}Your Minecraft face, from your skin.{% endif %} Choose any picture: you can crop it, and it is saved as {{ avatar_out }} &times; {{ avatar_out }} pixels (at most {{ max_avatar_kb }} KB).</p>
+    {# The crop step (avatar.js): drag the picture under the square, zoom, pick a format, upload. #}
+    <div class="crop" data-crop hidden>
+      <div class="crop-stage">
+        <canvas data-crop-view width="320" height="320" tabindex="0" aria-label="Crop area: drag or use the arrow keys to move the picture, + and - to zoom"></canvas>
+      </div>
+      <div class="crop-side">
+        <div class="crop-preview-row">
+          <canvas class="crop-preview" data-crop-preview width="{{ avatar_out }}" height="{{ avatar_out }}" aria-label="Preview"></canvas>
+          <canvas class="crop-preview small-preview" data-crop-preview-small width="{{ avatar_out }}" height="{{ avatar_out }}" aria-hidden="true"></canvas>
+        </div>
+        <label class="field"><span class="label">Zoom</span>
+          <input type="range" data-crop-zoom min="1" max="8" step="0.01" value="1"></label>
+        <fieldset class="crop-formats">
+          <legend class="label">Format</legend>
+          <label class="radio"><input type="radio" name="crop-format" value="image/png" checked> <span>PNG (lossless)</span></label>
+          <label class="radio"><input type="radio" name="crop-format" value="image/jpeg"> <span>JPEG</span></label>
+          <label class="radio" data-webp-choice><input type="radio" name="crop-format" value="image/webp"> <span>WebP</span></label>
+        </fieldset>
+        <label class="field" data-quality-field hidden><span class="label">Quality <output data-crop-quality-out>0.85</output></span>
+          <input type="range" data-crop-quality min="0.3" max="1" step="0.01" value="0.85"></label>
+        <p class="small" data-crop-size aria-live="polite"></p>
+        <div class="form-actions start">
+          <button type="submit" class="btn">Upload</button>
+          <button type="button" class="btn ghost" data-crop-fit>Whole picture</button>
+          <button type="button" class="btn ghost" data-crop-cancel>Cancel</button>
+        </div>
+      </div>
+    </div>
     <p class="form-msg" role="status"></p>
   </form>
 </section>
@@ -162,5 +189,6 @@
 {% endblock %}
 {% block scripts %}
 <script src="{{ base }}/static/account.js?v={{ v }}"></script>
+<script src="{{ base }}/static/avatar.js?v={{ v }}"></script>
 <script src="{{ base }}/static/access.js?v={{ v }}"></script>
 {% endblock %}

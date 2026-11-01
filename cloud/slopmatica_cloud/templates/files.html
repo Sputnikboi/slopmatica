@@ -22,8 +22,8 @@
 
 <section class="panel upload" id="upload">
   <label class="drop" id="drop" for="file-input">
-    <input type="file" id="file-input" accept=".slopmatic,.nbt,.litematic" multiple hidden>
-    <span class="drop-title">Drop <code>.slopmatic</code>, <code>.nbt</code> or <code>.litematic</code> files here</span>
+    <input type="file" id="file-input" accept=".slopmatic,.nbt,.litematic,.schem" multiple hidden>
+    <span class="drop-title">Drop <code>.slopmatic</code>, <code>.nbt</code>, <code>.litematic</code> or <code>.schem</code> files here</span>
     <span class="muted">or click to choose files</span>
   </label>
   <div class="upload-opts">
@@ -60,7 +60,7 @@
       <h3 class="name" title="{{ e.f.path }}">{{ e.stem }} <span class="ext">{{ e.ext }}</span></h3>
       {% if e.f.source %}
       {% set src = e.f.source %}
-      <div class="sub muted from-board" title="{{ src.title }}">{% if e.source_url %}<a href="{{ e.source_url }}">From the board &middot; by {{ src.author_name }}</a>{% else %}From the board &middot; by {{ src.author_name }}{% endif %}</div>
+      <div class="sub muted from-board">{% if e.source_url %}<a href="{{ e.source_url }}" title="{{ src.title }}">From the board</a>{% else %}<span title="{{ src.title }}">From the board</span>{% endif %} &middot; by <span class="uname" data-user="{{ src.author_uuid }}" tabindex="0">{{ src.author_name }}</span></div>
       {% endif %}
       <div class="sub">
         {% if e.folder %}<button type="button" class="chip" data-act="folder">{{ e.folder }}</button>{% else %}<span class="chip plain">top level</span>{% endif %}
@@ -89,7 +89,7 @@
   <form class="post-form" data-post-form="create" novalidate>
     <h2 id="post-dialog-title">Post to the board</h2>
     <p class="muted small">Posting <code data-post-path></code>. The board keeps its own copy, so later changes to the file don&rsquo;t affect the post. The copy counts toward your storage.</p>
-    <p class="muted small note-convert">Files that aren&rsquo;t already .slopmatic are converted to Slopmatica&rsquo;s format when posted (usually much smaller). Your own file stays as it is; people can still export the post as .nbt or .litematic.</p>
+    <p class="muted small note-convert">Files that aren&rsquo;t already .slopmatic are converted to Slopmatica&rsquo;s format when posted (usually much smaller). Your own file stays as it is; people can still export the post as .nbt, .litematic or .schem.</p>
     <input type="hidden" name="path" value="">
     {{ post_fields(visibilities, max_title, max_description, all_tags=all_tags, limits={"max_author_name": max_author_name, "max_links": max_links, "max_version_label": max_version_label}) }}
     <p class="form-msg" role="status"></p>

@@ -132,7 +132,7 @@ def test_post_public(client, ppl, data_dir):
     assert lit.status_code == 200 and 'filename="Castle.litematic"' in lit.headers["content-disposition"]
     assert same_blocks(as_slopmatic(lit.content), as_slopmatic(body))
     assert anon.get(f"/api/board/{p['id']}/export?format=slopmatic").status_code == 400
-    assert anon.get(f"/api/board/{p['id']}/export?format=schem").status_code == 400
+    assert anon.get(f"/api/board/{p['id']}/export?format=schematic").status_code == 400
     assert list((data_dir / "tmp").iterdir()) == []
 
 

@@ -57,12 +57,12 @@
     {% endif %}
     <div class="author">
       <img class="head" src="{{ avatar_url(post.uuid, post.author_avatar_v) }}" alt="" width="24" height="24">
-      <a class="author-link" href="{{ base }}/u/{{ post.uuid }}"><strong>{{ post.author_shown }}</strong></a>{{ user_badges(post.author_badges) }}
+      <a class="author-link" href="{{ base }}/u/{{ post.uuid }}" data-user="{{ post.uuid }}"><strong>{{ post.author_shown }}</strong></a>{{ user_badges(post.author_badges) }}
       <span class="muted">&middot; <time datetime="{{ post.created|iso_utc }}">{{ post.created|pretty_utc }}</time></span>
     </div>
     {% if post.coauthors %}
     <p class="small coauthors"><span class="muted">With</span>
-      {% for a in post.coauthors %}{% if a.uuid %}<a href="{{ base }}/u/{{ a.uuid }}">{{ a.display }}</a>{% else %}<span>{{ a.display }}</span>{% endif %}{{ ", " if not loop.last else "" }}{% endfor %}</p>
+      {% for a in post.coauthors %}{% if a.uuid %}<a href="{{ base }}/u/{{ a.uuid }}" data-user="{{ a.uuid }}">{{ a.display }}</a>{% else %}<span>{{ a.display }}</span>{% endif %}{{ ", " if not loop.last else "" }}{% endfor %}</p>
     {% endif %}
 
     <div class="vote" data-my-vote="{{ my_vote }}">
@@ -156,8 +156,8 @@
           {% for f in my_files %}<option value="{{ f }}"{% if f == post.source_path %} selected{% endif %}>{{ f }}</option>{% endfor %}
           <option value="">&mdash; or upload a file below &mdash;</option>
         </select></label>
-      <label class="field"><span class="label">Or a file from this computer <span class="muted">(.slopmatic, .nbt or .litematic)</span></span>
-        <input type="file" name="file" accept=".slopmatic,.nbt,.litematic"></label>
+      <label class="field"><span class="label">Or a file from this computer <span class="muted">(.slopmatic, .nbt, .litematic or .schem)</span></span>
+        <input type="file" name="file" accept=".slopmatic,.nbt,.litematic,.schem"></label>
       <div class="field-row">
         <label class="field"><span class="label">Version label <span class="muted">(optional)</span></span>
           <input type="text" name="label" maxlength="{{ max_version_label }}" placeholder="e.g. faster clock" autocomplete="off"></label>

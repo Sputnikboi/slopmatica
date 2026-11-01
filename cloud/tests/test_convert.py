@@ -136,7 +136,7 @@ def test_pair_round_trip(src, dst, dv):
     # and back again
     c = through(b, src)
     assert_same_content(a, c)
-    if dst != "nbt":  # .nbt merges regions into one box
+    if dst not in ("nbt", "schem"):  # .nbt and .schem merge regions into one box
         assert [(r.pos, r.size) for r in c.regions] == [(r.pos, r.size) for r in a.regions]
 
 
@@ -388,7 +388,7 @@ def test_volume_cap():
         root = nbt.loads(nbt.dumps(convert.write(s, fmt)))[1]
         with pytest.raises(convert.TooLarge):
             convert.read(root, fmt, "x", max_volume=10)
-        convert.read(root, fmt, "x", max_volume=16 if fmt != "nbt" else 28)
+        convert.read(root, fmt, "x", max_volume=28 if fmt in ("nbt", "schem") else 16)  # one box: 7x2x2
     # merging into one box counts the enclosing volume (7x2x2 = 28 > 16 of regions)
     with pytest.raises(convert.TooLarge):
         convert.write(s, "nbt", max_volume=20)

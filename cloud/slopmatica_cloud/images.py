@@ -1,4 +1,4 @@
-"""Just enough image handling for avatars, without Pillow: reading the size of an uploaded PNG or JPEG,
+"""Just enough image handling for avatars, without Pillow: reading the size of an uploaded PNG, JPEG or WebP,
 decoding a Minecraft skin (a small PNG) and cutting the face out of it as a new PNG.
 
 The decoder handles what skins are saved as: non-interlaced PNGs, 8 or 16 bits per channel (grey, grey +
@@ -13,6 +13,7 @@ import zlib
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 JPEG_MAGIC = b"\xff\xd8\xff"
+VP8_START = b"\x9d\x01\x2a"  # a lossy WebP key frame's start code
 
 FACE = 8  # the face is 8 x 8 pixels in the skin
 FACE_SCALE = 16  # served as 128 x 128, so browsers scale it down crisply (whole multiples for 16 to 128 px)
@@ -54,6 +55,27 @@ def jpeg_size(data: bytes) -> tuple[int, int] | None:
             height, width = struct.unpack(">HH", data[i + 5:i + 9])
             return width, height
         i += 2 + length
+    return None
+
+
+def webp_size(data: bytes) -> tuple[int, int] | None:
+    """(width, height) of a WebP (RIFF ... WEBP), from its first chunk: VP8X (extended: the canvas), VP8L
+    (lossless) or VP8 (lossy key frame). None if it is not a WebP or the header doesn't add up."""
+    if len(data) < 30 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+        return None
+    kind, body = data[12:16], data[20:30]
+    if kind == b"VP8X":
+        return 1 + int.from_bytes(body[4:7], "little"), 1 + int.from_bytes(body[7:10], "little")
+    if kind == b"VP8L":
+        if body[0] != 0x2F:
+            return None
+        bits = int.from_bytes(body[1:5], "little")
+        return 1 + (bits & 0x3FFF), 1 + ((bits >> 14) & 0x3FFF)
+    if kind == b"VP8 ":
+        if body[0] & 1 or body[3:6] != VP8_START:  # not a key frame
+            return None
+        width, height = struct.unpack("<HH", body[6:10])
+        return width & 0x3FFF, height & 0x3FFF  # the top two bits are a scale
     return None
 
 

@@ -15,7 +15,7 @@ from array import array
 import pytest
 from fastapi.testclient import TestClient
 
-from slopmatica_cloud import __version__, app as app_module, convert, images, nbt
+from slopmatica_cloud import app as app_module, convert, images, nbt
 from slopmatica_cloud.app import (
     CSP, MIGRATIONS, PROFILE_LIMIT, SCHEMA_VERSION, TELEMETRY_INSTALL_LIMIT, TELEMETRY_IP_LIMIT, MojangUnavailable,
     Settings, complexity_class, complexity_sql, fetch_skin,
@@ -63,8 +63,8 @@ def post_json(c, h, path="a.litematic", status=201, **extra):
 # ------------------------------------------------------------------ versions and settings
 
 
-def test_version_bumped():
-    assert __version__ == "0.8.0" and SCHEMA_VERSION == 6
+def test_schema_version():
+    assert SCHEMA_VERSION == 6  # 0.9.0 added no migration
 
 
 def test_settings_from_env():
@@ -808,7 +808,7 @@ def test_coauthors(gated, ppl, mojang):
     assert 'name="players" value="Robert"' in ppl.alice.cookie_client(c.app).get(f"/board/{p['id']}").text
     assert c.patch(f"/api/board/{p['id']}", headers=h, json={"coauthors": [{"player": "Robert"}, {"name": "Free Guy"}]}).status_code == 200
     page = TestClient(c.app).get(f"/board/{p['id']}").text
-    assert f'<a href="/u/{ppl.bob.uuid}">Bob the Builder</a>' in page and "<span>Free Guy</span>" in page
+    assert f'<a href="/u/{ppl.bob.uuid}" data-user="{ppl.bob.uuid}">Bob the Builder</a>' in page and "<span>Free Guy</span>" in page
     # the co-author's profile and the author filter list it; search finds them too
     assert "My build" in TestClient(c.app).get(f"/u/{ppl.bob.uuid}").text
     assert [x["id"] for x in c.get(f"/api/board?author={ppl.bob.uuid}").json()["posts"]] == [p["id"]]

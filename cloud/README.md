@@ -1,6 +1,6 @@
 # Slopmatica Cloud
 
-A small self-hosted service that stores schematics (`.slopmatic`, vanilla `.nbt`, `.litematic`) per Minecraft account,
+A small self-hosted service that stores schematics (`.slopmatic`, vanilla `.nbt`, `.litematic`, WorldEdit `.schem`) per Minecraft account,
 for the Slopmatica mod's cloud autosync, plus a website for browsing, uploading,
 renaming, deleting and converting them, and a schematics board for sharing them.
 
@@ -35,7 +35,7 @@ It reads optional overrides from `~/.config/slopmatica-cloud/env`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SLOPMATICA_DATA` | `cloud/data` | Data directory: `cloud.db` plus `users/<uuid>/files/...`, `users/<uuid>/thumbs/<path>.png`, a custom picture `users/<uuid>/avatar.png` or `.jpeg`, cached skins `skins/<uuid>.png` and faces `skins/<uuid>.face.png`, and board snapshots in `posts/<id>/` (`<original stem>.slopmatic`, `thumb.png`, and the 3D view's cache `model-<sha256[:16]>.json.gz` or `.toobig`; earlier versions the same way in `posts/<id>/v<n>/`) |
+| `SLOPMATICA_DATA` | `cloud/data` | Data directory: `cloud.db` plus `users/<uuid>/files/...`, `users/<uuid>/thumbs/<path>.png`, a custom picture `users/<uuid>/avatar.png`, `.jpeg` or `.webp`, cached skins `skins/<uuid>.png` and faces `skins/<uuid>.face.png`, and board snapshots in `posts/<id>/` (`<original stem>.slopmatic`, `thumb.png`, and the 3D view's cache `model-<sha256[:16]>.json.gz` or `.toobig`; earlier versions the same way in `posts/<id>/v<n>/`) |
 | `SLOPMATICA_ROOT_PATH` | *(empty)* | URL prefix when mounted under a path, e.g. `/slopmatica`. Works whether or not the proxy strips the prefix. |
 | `SLOPMATICA_ADMINS` | `sputnikboi` | Comma-separated Minecraft names with unlimited storage. Names are matched case-insensitively at login, and the account's uuid then stays an admin even after a rename. |
 | `SLOPMATICA_QUOTA_BYTES` | `1073741824` | Default per-account quota (1 GiB). An admin can set another one per account (storage requests, or the admin page's user list); admins are always unlimited. |
@@ -94,7 +94,7 @@ only when that is `127.0.0.1`/`::1` (the local reverse proxy) is the right-most
 ### Files
 
 Paths are `/`-separated and relative to the account's space. They must end in `.slopmatic`,
-`.nbt` or `.litematic` and may use at most 8 segments, 100 characters per segment and 300 characters in total.
+`.nbt`, `.litematic` or `.schem` and may use at most 8 segments, 100 characters per segment and 300 characters in total.
 These are rejected with 400: empty segments, segments starting with `.`, backslashes,
 control characters, `<>:"|?*`, segments with leading or trailing whitespace or a trailing
 `.`, and folder names ending in one of those extensions.
@@ -105,7 +105,7 @@ control characters, `<>:"|?*`, segments with leading or trailing whitespace or a
 | `GET /api/files` | `{"files":[{"path","size","sha256","modified"(unix ms),"hasThumbnail","source"}],"usedBytes","quotaBytes"}`. `source` is `null`, or for a file saved with "Add to my cloud" `{"postId","title","author","authorUuid"}`: the post, its title when saved, and its author (`author` is the author's current name as last seen at a login, else the name when saved). |
 | `PUT /api/files/{path}` | Raw body. It must be gzip (`1f 8b`) and at most 256 MiB. Optional `X-Sha256` must match. A schematic whose blocks, block entities or entities use a namespace other than `minecraft` is refused with 400 `{"error","code":"modded","namespaces":[...]}` (a file the server can't parse is stored as before). Returns 201 (new) or 200 (replaced) with the file entry. Over quota gives 413 `{"error":"quota exceeded","usedBytes","quotaBytes"}`; the quota counts the new size minus the size of the file being replaced. Replacing a file with different bytes drops its (now stale) thumbnail and its `source` (it is the user's own file from then on); the same bytes keep both. |
 | `GET /api/files/{path}` | Bytes, `application/octet-stream`, `Content-Disposition: attachment`, `X-Sha256` |
-| `GET /api/export/{path}?format=slopmatic\|nbt\|litematic` | The file converted to another format: bytes, `application/octet-stream`, `Content-Disposition: attachment` named like the original with the new extension (no folder). 400 for a missing, unknown or same format, for a file that cannot be parsed, or for more than 64 million blocks of volume. 404 if the file is missing. A read, so cookie requests need no `X-Requested-With`. |
+| `GET /api/export/{path}?format=slopmatic\|nbt\|litematic\|schem` | The file converted to another format: bytes, `application/octet-stream`, `Content-Disposition: attachment` named like the original with the new extension (no folder). 400 for a missing, unknown or same format, for a file that cannot be parsed, or for more than 64 million blocks of volume. 404 if the file is missing. A read, so cookie requests need no `X-Requested-With`. |
 | `DELETE /api/files/{path}` | 204. The thumbnail is deleted too. |
 | `POST /api/files/move` | `{"from","to"}` returns 200 with the new entry. The thumbnail and `source` move along. 404 if the source is missing, 409 if the target exists. |
 | `PUT /api/thumbnails/{path}` | Raw PNG, at most 2 MiB, for an existing file (404 otherwise). Returns 200 with the file entry. Thumbnails don't count toward the quota. |
@@ -122,7 +122,7 @@ plain-text description (at most 5000 characters), any number of tags and a visib
 
 A post keeps its own snapshot of the file and its thumbnail, so later edits to or deletion of
 the cloud file don't affect it; the author can re-take the snapshot from the same path. Snapshots
-are stored as `.slopmatic`: a `.nbt` or `.litematic` is converted when it is posted or refreshed
+are stored as `.slopmatic`: a `.nbt`, `.litematic` or `.schem` is converted when it is posted or refreshed
 (block states and data version kept, as for exports) and named `<original stem>.slopmatic`; the
 user's own file is untouched. A file that can't be read or converted is refused with 400 (nothing is
 stored), and so is a modded one (400 code `modded`, as for uploads). Snapshot bytes (the converted size) count toward the author's quota (`usedBytes` includes
@@ -243,9 +243,15 @@ face: the skin is fetched through the session server profile (textures, `SKIN` u
 front of the head plus the hat layer is cut out server-side (no image library: `images.py` reads the skin PNG) and served
 as a 128 x 128 PNG. Only accounts and whitelisted players are looked up; anyone else, a player without a skin, an
 unreadable skin or Mojang being down (retried after 10 minutes, the old face kept meanwhile) gets a plain placeholder face.
-Pages only use this endpoint, so the CSP allows images from the site itself only. `PUT /api/account/avatar` (raw PNG or
-JPEG, at most 256 KiB and 512 x 512 pixels, checked by magic bytes and header dimensions) sets a custom icon and
-`DELETE /api/account/avatar` goes back to the face; both return `{"avatar","custom"}`.
+Pages only use this endpoint, so the CSP allows images from the site itself only. `PUT /api/account/avatar` (raw PNG,
+JPEG or WebP, at most 256 KiB and 512 x 512 pixels, checked by magic bytes and header dimensions; for WebP the first
+chunk's: `VP8X` canvas, `VP8L` or a `VP8 ` key frame) sets a custom icon and `DELETE /api/account/avatar` goes back to
+the face; both return `{"avatar","custom"}`. The account page doesn't send the chosen file itself: `static/avatar.js`
+shows a crop step (drag the picture under a square; zoom with the wheel, the slider, a pinch or `+`/`-`; arrow keys
+move it), draws the square on a 256 x 256 canvas and uploads that as PNG, JPEG or WebP (quality slider, 0.85 by
+default; WebP only where the browser can encode it), showing the resulting size first. An already square picture can
+be uploaded straight away and is just scaled. The picture is read with `createImageBitmap` (or a `data:` URL), so the
+CSP needs no `blob:`.
 
 **Discord.** With the three `SLOPMATICA_DISCORD_*` variables set, the account page offers linking: `/account/discord/link`
 sends the player to Discord's authorization page (scope `identify`) with a single-use `state` (10 minutes) tied to the
@@ -255,6 +261,19 @@ and stores them (one Slopmatica account per Discord account), then returns to `/
 
 **Profiles.** `/u/<uuid>` shows a player's display name, badges, picture and public posts (their own and those they
 co-authored); `GET /api/users/<uuid>` returns `{"uuid","displayName","badges","avatar","page"}`.
+
+**Hover cards.** Wherever the site shows the name of a player with an account (board cards, post pages and their
+co-authors, the board's author filter, the "From the board" line in My files, the admin lists and feedback), the name
+carries `data-user="<uuid>"`, and `static/usercard.js` shows a small card for it: picture, display name and badges, the
+Minecraft name, the number of contributions and the join date. Mouse: on hover. Keyboard: on focus (names that aren't
+links get `tabindex="0"`), Escape closes. Touch: the first tap shows it, a second tap follows the link, a tap
+elsewhere closes it. It is placed below the name, or above it if there is no room, and kept inside the viewport.
+Free-text co-authors have no card. Each card is fetched once per page, on first use, from
+`GET /api/users/<uuid>/card` (dashes optional; logged out is fine): `{"uuid","name","displayName","tag","badges",
+"avatarVersion","contributions","joined"}`, where `name` is the Minecraft name, `contributions` counts the public,
+not hidden posts the player owns or co-authored (as on the profile), `joined` is the account's first login (unix ms)
+and `tag` is null except for admins. `Cache-Control: private, max-age=300`, `Vary: Cookie, Authorization`. 404 for
+anyone without an account.
 
 ### Access: the Fruitbowl whitelist
 
@@ -400,7 +419,7 @@ partial unique indexes); the whitelist seed is inserted in the same transaction.
 `post_versions` (earlier snapshots), `post_authors`, `post_downloads`, `profiles`, `telemetry` and `meta` (the address
 hashing secret, made at the first start). In the same transaction every account gets its Minecraft name as display name
 (older accounts first; a repeated name gets a random tag) and the unique index on (name, tag) is created. After it, the
-startup reads each existing snapshot once to count its block types. Before step 3, board snapshots that aren't
+startup reads each existing snapshot once to count its block types. 0.9.0 changes nothing in the database (still 6). Before step 3, board snapshots that aren't
 `.slopmatic` are converted in place, each committed on its own (size, hash, format, file name, so quota
 usage follows); one that fails to convert is left as it is and logged. An interrupted run converts the
 rest at the next start.
@@ -410,7 +429,7 @@ older snapshot) are removed too, and so are `v<n>/` folders without a version; a
 
 ### Export (format conversion)
 
-`slopmatica_cloud/convert.py` converts between the three formats through one in-memory model
+`slopmatica_cloud/convert.py` converts between the four formats through one in-memory model
 (regions with a palette and an index per block, block entities, entities), using the small
 NBT reader/writer in `slopmatica_cloud/nbt.py`. Block state compounds and the data version
 are copied unchanged, so Minecraft's data fixers see the output as they would have seen
@@ -423,6 +442,16 @@ the input. Entity and block entity NBT is passed through apart from its coordina
   `minecraft:structure_void` palette entry in the other formats, and are left out again on
   the way back. Air is listed.
 - `.nbt` has no name, so the file name is used.
+- `.schem` is the Sponge Schematic format WorldEdit writes. Versions 1, 2 and 3 are read (v3's contents sit in a
+  `Schematic` compound); exports are version 3, as WorldEdit 7.3 writes them. Palette keys are block state strings
+  (`minecraft:oak_stairs[facing=east,half=bottom]`), read into the same compounds as the other formats (`Name` /
+  `Properties`, or `id` / `properties` from data version 5006) and printed back in the same order. Block data is one
+  LEB128 varint per block in the same order as everywhere else (x fastest, then z, then y). Like `.nbt`, it is one
+  box: several Litematica regions are merged, and positions no region covers become structure voids. The min corner's
+  position relative to the paste origin is kept (v3 `Offset`, v2 WorldEdit's `WEOffsetX/Y/Z`), as are block entities
+  (`Id` plus their tags; nested in `Data` in v3) and entities (v3: relative to the min corner; v2: world positions,
+  made relative through `Offset`). A v1 file has no data version and is read as 1.13.2 (1631). Biomes are dropped.
+  Width, height and length are unsigned shorts, so an export may be at most 65535 blocks a side.
 - Two conversions run at once (`Settings.export_slots`). Other requests wait up to 30 s, then
   get 503. The conversion is pure Python. At the 64-million-block cap, a `.litematic`
   takes about 7 s to read. Worst case, writing a fully listed `.nbt` takes about 40 s.

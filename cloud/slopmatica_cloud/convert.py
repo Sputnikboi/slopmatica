@@ -1,7 +1,8 @@
-"""Conversion between the three schematic formats Slopmatica reads.
+"""Conversion between the four schematic formats Slopmatica reads.
 
-``.litematic`` (Litematica), ``.nbt`` (vanilla structure files) and ``.slopmatic``
-(Slopmatica's own) are all gzip NBT. Each is read into one small in-memory model
+``.litematic`` (Litematica), ``.nbt`` (vanilla structure files), ``.schem`` (WorldEdit's, the
+Sponge Schematic format, versions 1 to 3) and ``.slopmatic`` (Slopmatica's own) are all gzip
+NBT. Each is read into one small in-memory model
 (:class:`Schematic`: regions with a palette, an index per block, block entities and
 entities) and written back out from it.
 
@@ -39,7 +40,7 @@ from .nbt import (
     String,
 )
 
-FORMATS = ("slopmatic", "nbt", "litematic")
+FORMATS = ("slopmatic", "nbt", "litematic", "schem")
 DEFAULT_MAX_VOLUME = 64_000_000
 
 AIR_NAMES = frozenset({"minecraft:air", "minecraft:cave_air", "minecraft:void_air"})
@@ -49,6 +50,11 @@ NEW_STATE_KEYS = 5006
 
 SLOPMATIC_MAGIC = "slopmatica"
 SLOPMATIC_VERSION = 1
+
+# Sponge v1 predates DataVersion; WorldEdit reads such files as Minecraft 1.13.2.
+SPONGE_V1_DATA_VERSION = 1631
+SPONGE_VERSION = 3  # the version .schem exports are written as
+SPONGE_MAX_SIDE = 0xFFFF  # Width, Height and Length are unsigned shorts
 
 SOLID, AIR, VOID = 0, 1, 2
 UNSET = 0xFFFFFFFF  # merged .nbt box: no region covers this position
@@ -170,6 +176,38 @@ def make_state(name: str, data_version: int) -> Compound:
     return Compound({("id" if data_version >= NEW_STATE_KEYS else "Name"): String(name)})
 
 
+_STATE_STRING = re.compile(r"([^\[\]=,]+)(?:\[([^\[\]]*)\])?")
+
+
+def parse_state(text: str, data_version: int) -> Compound:
+    """A block state string as Sponge palettes key them, ``minecraft:oak_stairs[facing=east,half=bottom]``,
+    as the compound the other formats store (keys in the style of data_version, properties in their order)."""
+    m = _STATE_STRING.fullmatch(text.strip())
+    if m is None:
+        raise ConversionError(f"malformed block state {text[:100]!r}")
+    state = make_state(m.group(1).strip(), data_version)
+    if m.group(2) and m.group(2).strip():
+        props = Compound()
+        for part in m.group(2).split(","):
+            key, eq, value = (t.strip() for t in part.partition("="))
+            if not eq or not key or not value:
+                raise ConversionError(f"malformed block state {text[:100]!r}")
+            props[key] = String(value)
+        state["properties" if data_version >= NEW_STATE_KEYS else "Properties"] = props
+    return state
+
+
+def state_string(state: Any) -> str:
+    """The inverse of parse_state: ``name[key=value,...]``, or the name alone without properties."""
+    name = state_name(state)
+    if not name:
+        raise ConversionError("a block state in the palette has no name")
+    props = state.get("Properties", state.get("properties"))
+    if isinstance(props, Compound) and props:
+        return name + "[" + ",".join(f"{k}={v}" for k, v in props.items()) + "]"
+    return name
+
+
 # --------------------------------------------------------------------------- packing
 
 
@@ -253,12 +291,12 @@ def rle_encode(blocks: array) -> bytes:
 _VARINT = re.compile(rb"[\x80-\xff]{0,9}[\x00-\x7f]")
 
 
-def _varints(data: bytes) -> list[int] | bytes:
+def _varints(data: bytes, what: str = ".slopmatic") -> list[int] | bytes:
     if data.isascii():
         return data  # all single-byte varints; indexing bytes gives ints
     tokens = _VARINT.findall(data)
     if sum(map(len, tokens)) != len(data):
-        raise ConversionError("corrupt .slopmatic: truncated or overlong varint in block data")
+        raise ConversionError(f"corrupt {what}: truncated or overlong varint in block data")
     out = []
     for t in tokens:
         if len(t) == 1:
@@ -266,6 +304,29 @@ def _varints(data: bytes) -> list[int] | bytes:
         else:
             out.append(sum((b & 0x7F) << (7 * k) for k, b in enumerate(t)))
     return out
+
+
+# Byte tables for varint_array: the 7 value bits; the value bits of a continuation byte (else 0);
+# 7 for a continuation byte (else 0); 1 for the last byte of a varint.
+_LOW7 = bytes(b & 0x7F for b in range(256))
+_CONT_LOW = bytes(b & 0x7F if b >= 0x80 else 0 for b in range(256))
+_CONT_SHIFT = bytes(7 if b >= 0x80 else 0 for b in range(256))
+_LAST = bytes(int(b < 0x80) for b in range(256))
+
+
+def varint_array(data: bytes, what: str) -> array:
+    """Unsigned LEB128 varints, one per block (Sponge's block data). One- and two-byte varints (palettes
+    of up to 16384 states) are decoded without a Python loop: each final byte adds its value bits,
+    shifted by 7 if a continuation byte precedes it, to that byte's value bits."""
+    if data.isascii():
+        return array("I", array("B", data))
+    if data[-1] >= 0x80:
+        raise ConversionError(f"corrupt {what}: truncated varint at the end of the block data")
+    shift = b"\0" + data[:-1].translate(_CONT_SHIFT)
+    if b"\x07\x07" in shift:  # some varint is three bytes or longer
+        return array("I", _varints(data, what))
+    values = map(operator.add, b"\0" + data[:-1].translate(_CONT_LOW), map(operator.lshift, data.translate(_LOW7), shift))
+    return array("I", compress(values, data.translate(_LAST)))
 
 
 def rle_decode(data: bytes, palette_size: int, volume: int) -> array:
@@ -521,7 +582,98 @@ def read_structure(root: Compound, fallback_name: str, max_volume: int = DEFAULT
     return Schematic(name=fallback_name, author=_str(root, "author"), data_version=data_version, regions=[region])
 
 
-READERS = {"litematic": read_litematic, "slopmatic": read_slopmatic, "nbt": read_structure}
+def _sponge_palette(tag: Any, data_version: int) -> list[Compound]:
+    """Sponge's palette ({state string: index}) as a list. Indices must be distinct; a gap (no writer leaves
+    one) is filled with air."""
+    if not isinstance(tag, Compound) or not tag:
+        raise ConversionError("schematic has no block palette")
+    by_index: dict[int, Compound] = {}
+    for text, index in tag.items():
+        if not isinstance(index, int) or not 0 <= index < len(tag) + 1024 or index in by_index:
+            raise ConversionError("schematic has a malformed block palette")
+        by_index[int(index)] = parse_state(text, data_version)
+    air = make_state("minecraft:air", data_version)
+    return [by_index.get(i, air) for i in range(max(by_index) + 1)]
+
+
+def _sponge_data(te: Compound, nested: bool) -> Compound | None:
+    """A Sponge block entity or entity as the NBT the other formats keep: its own tags (v3 nests them in
+    Data, earlier versions put them next to Pos and Id) with Id as their id."""
+    eid = _str(te, "Id")
+    if not eid:
+        return None
+    data = _get(te, "Data", Compound) if nested else None
+    out = _without(data if data is not None else te, ("Pos", "Id", "id", "x", "y", "z", "ContentVersion"))
+    out["id"] = String(eid)
+    return out
+
+
+def read_sponge(root: Compound, fallback_name: str, max_volume: int = DEFAULT_MAX_VOLUME) -> Schematic:
+    """A Sponge Schematic (WorldEdit's .schem), version 1, 2 or 3. Biomes are not kept."""
+    inner = _get(root, "Schematic", Compound)  # v3 wraps everything in a "Schematic" compound
+    if inner is not None:
+        root = inner
+    version = _int(root, "Version", None)
+    if version not in (1, 2, 3):
+        raise ConversionError("not a Sponge schematic" if version is None else f"unsupported Sponge schematic version {version}")
+    dims = [_int(root, k, None) for k in ("Width", "Height", "Length")]
+    if None in dims:
+        raise ConversionError("schematic has no Width, Height or Length")
+    size: Vec3 = tuple(d & 0xFFFF for d in dims)  # type: ignore[assignment,operator]  # unsigned shorts
+    _check_volume(size, 0, max_volume)
+    data_version = _int(root, "DataVersion", None) or (SPONGE_V1_DATA_VERSION if version == 1 else 0)
+    meta = _get(root, "Metadata", Compound) or Compound()
+    offset = root.get("Offset")
+    offset_v: Vec3 = _vec3i(offset, "Offset") if offset is not None else (0, 0, 0)
+    if version == 3:
+        holder = _get(root, "Blocks", Compound)
+        if holder is None:
+            raise ConversionError("schematic has no Blocks")
+        palette_tag, data = holder.get("Palette"), _get(holder, "Data", ByteArray)
+        tiles = _compounds(holder, "BlockEntities")
+        # Offset is the min corner relative to the paste origin; entities are relative to the min corner.
+        pos, entity_origin = offset_v, (0, 0, 0)
+    else:
+        palette_tag, data = root.get("Palette"), _get(root, "BlockData", ByteArray)
+        tiles = _compounds(root, "BlockEntities") or _compounds(root, "TileEntities")  # v1 calls them TileEntities
+        # Offset is the min corner in the world it was copied from, and entity positions are world positions
+        # too; WorldEdit keeps the min corner relative to the paste origin in WEOffsetX/Y/Z.
+        we = [_int(meta, "WEOffset" + a, None) for a in "XYZ"]
+        pos, entity_origin = (tuple(we) if None not in we else (0, 0, 0)), offset_v  # type: ignore[assignment]
+    palette = _sponge_palette(palette_tag, data_version)
+    if data is None:
+        raise ConversionError("schematic has no block data")
+    blocks = varint_array(data, "schematic")
+    if len(blocks) != size[0] * size[1] * size[2]:
+        raise ConversionError(f"corrupt schematic: block data covers {len(blocks)} of {size[0] * size[1] * size[2]} blocks")
+    _check_indices(blocks, len(palette), "schematic")
+    name = _str(meta, "Name").strip() and _str(meta, "Name") or fallback_name
+    region = Region(name, pos, size, palette, blocks)
+    for te in tiles:
+        p = te.get("Pos")
+        be = _sponge_data(te, version == 3)
+        if isinstance(p, IntArray) and len(p) == 3 and _inside(tuple(p), size) and be is not None:  # type: ignore[arg-type]
+            region.block_entities[tuple(p)] = be  # type: ignore[index]
+    for e in _compounds(root, "Entities"):
+        epos, data_e = _vec3d(e.get("Pos")), _sponge_data(e, version == 3)
+        if epos is None or data_e is None:
+            continue
+        rel = tuple(a - o for a, o in zip(epos, entity_origin))
+        # Other v2 writers store positions relative to the min corner already: keep those that only fit as such.
+        if version != 3 and not _near(rel, size) and _near(epos, size):
+            rel = epos
+        region.entities.append(Entity(rel, data_e))  # type: ignore[arg-type]
+    date = _int(meta, "Date", None)
+    return Schematic(name=name, author=_str(meta, "Author"), data_version=data_version, regions=[region],
+                     created=date, modified=date)
+
+
+def _near(p: tuple[float, ...], size: Vec3) -> bool:
+    """Whether an entity at p (relative to the min corner) is in or right next to the box."""
+    return all(-1 <= p[a] <= size[a] + 1 for a in range(3))
+
+
+READERS = {"litematic": read_litematic, "slopmatic": read_slopmatic, "nbt": read_structure, "schem": read_sponge}
 
 
 # --------------------------------------------------------------------------- writers
@@ -758,6 +910,61 @@ def write_structure(s: Schematic, max_volume: int = DEFAULT_MAX_VOLUME) -> Compo
     return root
 
 
+def _varint(v: int) -> bytes:
+    out = bytearray()
+    _put_varint(out, v)
+    return bytes(out)
+
+
+def write_sponge(s: Schematic, max_volume: int = DEFAULT_MAX_VOLUME) -> Compound:
+    """Sponge Schematic version 3, as WorldEdit 7.3 writes it. Regions are merged into one box as for
+    .nbt; positions no region covers become structure voids. The box's min corner, relative to the
+    schematic's origin, is the Offset."""
+    box = merge_regions(s, max_volume)
+    if max(box.size) > SPONGE_MAX_SIDE:
+        raise ConversionError(f"too large for .schem: {box.size[0]}x{box.size[1]}x{box.size[2]} (at most {SPONGE_MAX_SIDE} a side)")
+    palette: dict[str, int] = {}  # state string -> index; two compounds may print the same
+    codes: dict[int, bytes] = {}  # box palette index -> varint of the new index
+    for i, st in enumerate(box.palette):
+        codes[i] = _varint(palette.setdefault(state_string(st), len(palette)))
+    if UNSET in box.blocks:
+        codes[UNSET] = _varint(palette.setdefault(VOID_NAME, len(palette)))
+    tiles = List((), TAG_COMPOUND)
+    for p, data in box.block_entities.items():
+        idx = box.blocks[(p[1] * box.size[2] + p[2]) * box.size[0] + p[0]]
+        eid = _str(data, "id") or (state_name(box.palette[idx]) if idx != UNSET else "")
+        if eid:
+            tiles.append(Compound({"Pos": _ivec(p), "Id": String(eid), "Data": _without(data, ("id", "x", "y", "z", "Pos"))}))
+    entities = List((), TAG_COMPOUND)
+    for e in box.entities:
+        if _str(e.data, "id"):
+            entities.append(Compound({
+                "Pos": List([Double(v) for v in e.pos], TAG_DOUBLE),
+                "Id": String(_str(e.data, "id")),
+                "Data": _without(e.data, ("id", "Pos")),
+            }))
+    meta = Compound({"Name": String(s.name), "Date": Long(s.created if s.created is not None else _now_ms())})
+    if s.author:
+        meta["Author"] = String(s.author)
+    blocks = Compound({
+        "Palette": Compound({k: Int(v) for k, v in palette.items()}),
+        "Data": ByteArray(b"".join(map(codes.__getitem__, box.blocks))),
+        "BlockEntities": tiles,
+    })
+    schematic = Compound({
+        "Version": Int(SPONGE_VERSION),
+        "DataVersion": Int(s.data_version),
+        "Metadata": meta,
+        # unsigned shorts, so a side over 32767 is stored as a negative Short
+        **{k: nbt.Short(v - 0x10000 if v > 0x7FFF else v) for k, v in zip(("Width", "Height", "Length"), box.size)},
+        "Offset": _ivec(box.pos),
+        "Blocks": blocks,
+    })
+    if entities:
+        schematic["Entities"] = entities
+    return Compound({"Schematic": schematic})
+
+
 # --------------------------------------------------------------------------- entry points
 
 
@@ -779,6 +986,8 @@ def write(s: Schematic, fmt: str, max_volume: int = DEFAULT_MAX_VOLUME) -> Compo
         return write_slopmatic(s)
     if fmt == "nbt":
         return write_structure(s, max_volume)
+    if fmt == "schem":
+        return write_sponge(s, max_volume)
     raise ValueError(f"unknown format {fmt!r}")
 
 

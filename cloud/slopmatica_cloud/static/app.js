@@ -2,7 +2,7 @@
 (function () {
   const base = document.body.dataset.base || "";
   const HDR = { "X-Requested-With": "slopmatica" };
-  const SCHEMATIC = /\.(slopmatic|nbt|litematic)$/i;
+  const SCHEMATIC = /\.(slopmatic|nbt|litematic|schem)$/i;
   const enc = (path) => path.split("/").map(encodeURIComponent).join("/");
   const fileUrl = (path) => base + "/api/files/" + enc(path);
 
@@ -34,7 +34,7 @@
       if (BAD.test(s)) return 'names may not contain <>:"|?*\\';
       if (s !== s.trim() || s.endsWith(".")) return "names may not start/end with spaces or end with '.'";
     }
-    if (!SCHEMATIC.test(segs[segs.length - 1])) return "only .slopmatic, .nbt and .litematic files are allowed";
+    if (!SCHEMATIC.test(segs[segs.length - 1])) return "only .slopmatic, .nbt, .litematic and .schem files are allowed";
     return null;
   }
   const normFolder = (f) => f.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");

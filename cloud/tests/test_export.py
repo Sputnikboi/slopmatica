@@ -43,7 +43,7 @@ def test_export_formats(client, alice, src, dst):
 def test_export_format_param(client, alice):
     upload(client, alice, "a.litematic", schematic_bytes("litematic"))
     assert client.get("/api/export/a.litematic?format=.NBT", headers=alice).status_code == 200
-    for bad in ("", "schem", "litematic"):  # missing, unknown, same as the source
+    for bad in ("", "schematic", "litematic"):  # missing, unknown, same as the source
         r = client.get(f"/api/export/a.litematic?format={bad}", headers=alice)
         assert r.status_code == 400, bad
         assert "error" in r.json()

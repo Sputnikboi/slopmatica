@@ -29,7 +29,7 @@ GOOD = [
 ]
 BAD = [
     "",
-    "a.schem",
+    "a.schematic",  # MCEdit's old format
     "a.litematic.png",
     "../a.litematic",
     "x/../a.litematic",

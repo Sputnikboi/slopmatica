@@ -75,7 +75,7 @@
 
 {% if q %}<p class="muted result-note">{{ total }} result{{ "" if total == 1 else "s" }} for &ldquo;{{ q }}&rdquo; &middot; <a href="{{ link(q='') }}">clear</a></p>{% endif %}
 {% if filtered_by %}<p class="muted result-note">{{ total }} post{{ "" if total == 1 else "s" }}
-  {%- if author %} by <a href="{{ base }}/u/{{ author.uuid }}"><strong>{{ author.shown }}</strong></a>{% endif %}
+  {%- if author %} by <a href="{{ base }}/u/{{ author.uuid }}" data-user="{{ author.uuid }}"><strong>{{ author.shown }}</strong></a>{% endif %}
   {%- if tags %} tagged {% for t in tags %}<strong>{{ all_tags[t] }}</strong>{{ " and " if not loop.last else "" }}{% endfor %}{% endif %}
   {%- if size %}{{ "," if tags else "" }} size <strong>{{ size_classes[size] }}</strong>{% endif %}
   {%- if complexity %}{{ "," if tags or size else "" }} <strong>{{ complexity_labels[complexity] }}</strong>{% endif %}

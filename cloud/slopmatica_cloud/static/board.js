@@ -3,7 +3,7 @@
 (function () {
   const base = document.body.dataset.base || "";
   const HDR = { "X-Requested-With": "slopmatica" };
-  const SCHEMATIC = /\.(slopmatic|nbt|litematic)$/i;
+  const SCHEMATIC = /\.(slopmatic|nbt|litematic|schem)$/i;
   const apiPost = (id) => base + "/api/board/" + encodeURIComponent(id);
   const postPage = (id) => base + "/board/" + encodeURIComponent(id);
 
@@ -132,7 +132,7 @@
       const label = el.label.value.trim();
       const mc = el.mc.value.trim();
       if (!file && !el.path.value) { say(msg, "Pick one of your files or choose a file to upload.", true); return; }
-      if (file && !SCHEMATIC.test(file.name)) { say(msg, "Only .slopmatic, .nbt and .litematic files.", true); return; }
+      if (file && !SCHEMATIC.test(file.name)) { say(msg, "Only .slopmatic, .nbt, .litematic and .schem files.", true); return; }
       const submit = versionForm.querySelector("button[type=submit]");
       submit.disabled = true;
       say(msg, file ? "Uploading and converting…" : "Converting…");

@@ -99,31 +99,10 @@
     if (reset) reset.addEventListener("click", () => shown({ name: null }, reset));
   }
 
-  // ---- account page: picture
+  // ---- account page: picture (choosing, cropping and uploading one is avatar.js)
   const avatar = document.querySelector("form[data-avatar-form]");
   if (avatar) {
     const msg = avatar.querySelector(".form-msg");
-    avatar.addEventListener("submit", async (ev) => {
-      ev.preventDefault();
-      const file = avatar.elements.icon.files[0];
-      if (!file) { say(msg, "Choose a PNG or JPEG first.", true); return; }
-      if (file.size > 256 * 1024) { say(msg, "That picture is larger than 256 KB.", true); return; }
-      const button = avatar.querySelector("button[type=submit]");
-      button.disabled = true;
-      say(msg, "Uploading…");
-      try {
-        const r = await fetch(base + "/api/account/avatar", {
-          method: "PUT", credentials: "same-origin",
-          headers: { "X-Requested-With": "slopmatica", "Content-Type": file.type || "application/octet-stream" }, body: file,
-        });
-        if (!r.ok) { say(msg, await errorText(r), true); return; }
-        location.reload();
-      } catch (_) {
-        say(msg, "Network error, try again.", true);
-      } finally {
-        button.disabled = false;
-      }
-    });
     const reset = avatar.querySelector("[data-avatar-reset]");
     if (reset) {
       reset.addEventListener("click", async () => {

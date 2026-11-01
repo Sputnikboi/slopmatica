@@ -1,4 +1,4 @@
-"""Slopmatica Cloud: per-Minecraft-account storage for schematics (.slopmatic, .nbt, .litematic).
+"""Slopmatica Cloud: per-Minecraft-account storage for schematics (.slopmatic, .nbt, .litematic, .schem).
 
 Identity comes from Mojang's session server (the same handshake a Minecraft
 server does), so there are no passwords. See README.md for the API.
@@ -204,7 +204,9 @@ DISPLAY_TAG_RE = re.compile(r"^[A-Za-z0-9]{3,5}$")
 TAG_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # random tags: 4 of these (no 0/O or 1/I)
 MAX_AVATAR_BYTES = 256 * 1024
 MAX_AVATAR_SIDE = 512
-AVATAR_TYPES = {"png": "image/png", "jpeg": "image/jpeg"}
+AVATAR_OUT_SIDE = 256  # what the account page's crop step sends
+AVATAR_TYPES = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}
+USER_CARD_MAX_AGE = 300  # seconds a browser may reuse a name's hover card
 SKIN_TTL = DAY  # a cached skin is fetched again after this
 SKIN_RETRY = 600  # seconds before trying Mojang again after a failed fetch
 SKIN_MAX_BYTES = 64 * 1024
@@ -329,8 +331,8 @@ class ApiError(Exception):
         self.payload = {"error": error, **extra}
 
 
-# The formats the Slopmatica mod reads: its own, vanilla structure files, Litematica's.
-SCHEMATIC_EXTENSIONS = (".slopmatic", ".nbt", ".litematic")
+# The formats the Slopmatica mod reads: its own, vanilla structure files, Litematica's, WorldEdit's (Sponge).
+SCHEMATIC_EXTENSIONS = (".slopmatic", ".nbt", ".litematic", ".schem")
 
 
 def validate_path(path: str) -> str:
@@ -2086,6 +2088,18 @@ class Store:
         with self.lock:
             rows = self.db.execute("SELECT badge FROM badges WHERE uuid=?", (uuid,)).fetchall()
         return badge_list(",".join(r["badge"] for r in rows))
+
+    def user_card_stats(self, uuid: str) -> tuple[int, int]:
+        """(contributions, joined): the public, not hidden posts uuid owns or co-authored (the profile page's
+        list), and when the account was made (its first login), in unix s."""
+        with self.lock:
+            (count,) = self.db.execute(
+                """SELECT COUNT(*) FROM posts p WHERE p.visibility = 'public' AND p.hidden IS NULL
+                   AND (p.uuid = :u OR EXISTS (SELECT 1 FROM post_authors a WHERE a.post_id = p.id AND a.uuid = :u))""",
+                {"u": uuid},
+            ).fetchone()
+            row = self.db.execute("SELECT created FROM users WHERE uuid=?", (uuid,)).fetchone()
+        return int(count), int(row["created"]) if row else 0
 
     def set_badge(self, uuid: str, badge: str, on: bool, by: str) -> None:
         with self.lock:
@@ -4542,14 +4556,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.put("/api/account/avatar")
     async def avatar_upload(request: Request) -> dict[str, Any]:
-        """A custom icon: the raw PNG or JPEG, at most MAX_AVATAR_BYTES and MAX_AVATAR_SIDE pixels a side."""
+        """A custom icon: the raw PNG, JPEG or WebP, at most MAX_AVATAR_BYTES and MAX_AVATAR_SIDE pixels a side.
+        The account page crops and scales pictures to 256 x 256 before sending them."""
         user = member_auth(request, mutating=True)
         data, _, _ = await read_capped(request, MAX_AVATAR_BYTES)
         kind, dims = "png", images.png_size(data)
         if dims is None:
             kind, dims = "jpeg", images.jpeg_size(data)
         if dims is None:
-            raise ApiError(400, "the icon must be a PNG or JPEG image")
+            kind, dims = "webp", images.webp_size(data)
+        if dims is None:
+            raise ApiError(400, "the icon must be a PNG or JPEG image (or a WebP)")
         w, h = dims
         if not (0 < w <= MAX_AVATAR_SIDE and 0 < h <= MAX_AVATAR_SIDE):
             raise ApiError(400, f"the icon must be at most {MAX_AVATAR_SIDE} x {MAX_AVATAR_SIDE} pixels (this one is {w} x {h})")
@@ -4640,6 +4657,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"uuid": target.uuid, "displayName": target.shown, "badges": store.badges_of(target.uuid),
                 "avatar": avatar_url(target.uuid, target.avatar_version, absolute=True),
                 "page": f"{settings.site_url}/u/{target.uuid}"}
+
+    @app.get("/api/users/{uuid}/card")
+    def user_card(uuid: str, request: Request) -> JSONResponse:
+        """What the hover card on a player's name shows. The tag only for admins, so the answer is cached by
+        the browser alone (private), per login."""
+        dashed = parse_uuid(uuid)
+        target = store.get_user(dashed) if dashed else None
+        if target is None:
+            raise ApiError(404, "no such user")
+        viewer = optional_user(request)
+        contributions, joined = store.user_card_stats(target.uuid)
+        return JSONResponse({
+            "uuid": target.uuid, "name": target.name, "displayName": target.shown,
+            "tag": target.display_tag if viewer is not None and viewer.is_admin else None,
+            "badges": store.badges_of(target.uuid), "avatarVersion": target.avatar_version,
+            "contributions": contributions, "joined": joined * 1000,
+        }, headers={"Cache-Control": f"private, max-age={USER_CARD_MAX_AGE}", "Vary": "Cookie, Authorization"})
 
     # ---- mod releases
 
@@ -5578,7 +5612,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             min_display=MIN_DISPLAY_NAME_LEN,
             max_display=MAX_DISPLAY_NAME_LEN,
             max_avatar_kb=MAX_AVATAR_BYTES // 1024,
-            max_avatar_side=MAX_AVATAR_SIDE,
+            avatar_out=AVATAR_OUT_SIDE,
             discord_enabled=settings.discord_enabled,
             discord_msg=DISCORD_MESSAGES.get(request.query_params.get("discord") or ""),
         )

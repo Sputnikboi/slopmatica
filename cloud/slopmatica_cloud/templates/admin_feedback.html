@@ -14,7 +14,7 @@
     <div class="fb-head">
       <span class="badge fb-{{ f.type }}">{{ kinds[f.type] }}</span>
       <span class="muted small grow">#{{ f.id }} &middot; <time datetime="{{ f.created|iso_utc }}">{{ f.created|pretty_utc }}</time> &middot;
-        {% if f.user %}{{ f.user.name }}{% else %}anonymous{% endif %}
+        {% if f.user %}<span class="uname" data-user="{{ f.user.uuid }}" tabindex="0">{{ f.user.name }}</span>{% else %}anonymous{% endif %}
         {% if f.modVersion %} &middot; mod {{ f.modVersion }}{% endif %}{% if f.mcVersion %} &middot; Minecraft {{ f.mcVersion }}{% endif %}</span>
       <button type="button" class="btn small ghost" data-resolve="{{ f.id }}" data-resolved="{{ 'true' if f.resolved else 'false' }}">{{ "Reopen" if f.resolved else "Mark resolved" }}</button>
     </div>

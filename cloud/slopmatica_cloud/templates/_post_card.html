@@ -13,7 +13,7 @@
     <h3 class="name" title="{{ p.title }}"><a class="card-link" href="{{ base }}/board/{{ p.id }}">{{ p.title }}</a></h3>
     <div class="sub author">
       <img class="head" src="{{ avatar_url(p.uuid, p.author_avatar_v) }}" alt="" width="16" height="16" loading="lazy">
-      <a class="author-link" href="{{ base }}/u/{{ p.uuid }}">{{ p.author_shown }}</a>{{ user_badges(p.author_badges) }}
+      <a class="author-link" href="{{ base }}/u/{{ p.uuid }}" data-user="{{ p.uuid }}">{{ p.author_shown }}</a>{{ user_badges(p.author_badges) }}
       {% if p.coauthors %}<span class="muted" title="With {% for a in p.coauthors %}{{ a.display }}{{ ', ' if not loop.last else '' }}{% endfor %}">+{{ p.coauthors|length }}</span>{% endif %}
     </div>
     <div class="sub muted stats">

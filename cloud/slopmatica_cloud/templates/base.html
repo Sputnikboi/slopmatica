@@ -32,7 +32,9 @@
 {% block main %}{% endblock %}
 </main>
 <footer class="wrap foot">Slopmatica Cloud &middot; schematic sync for the Slopmatica mod &middot; <a href="{{ base }}/feedback">Made by Sputniknull + Claude</a></footer>
+<div class="ucard" id="user-card" role="tooltip" hidden data-badges="{{ badge_labels|tojson|forceescape }}"></div>
 <script src="{{ base }}/static/app.js?v={{ v }}"></script>
+<script src="{{ base }}/static/usercard.js?v={{ v }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

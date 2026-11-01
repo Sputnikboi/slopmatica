@@ -436,7 +436,8 @@ def test_file_source(client, ppl, mojang):
     # the page shows where it came from, linking to the post
     web = b.cookie_client(client.app)
     html = web.get("/").text
-    assert f'<a href="/board/{pid}">From the board &middot; by Alicia</a>' in html
+    # (0.9.0: the author's name is outside the link, with a hover card)
+    assert f'<a href="/board/{pid}" title="Castle">From the board</a> &middot; by <span class="uname" data-user="{a.uuid}" tabindex="0">Alicia</span>' in html
     assert html.count("From the board") == 1  # not on own.litematic
     # a PUT with different bytes makes it the user's own file
     assert client.put("/api/files/mine/C.slopmatic", content=schem("slopmatic"), headers=b.h).json()["source"] is None
@@ -452,13 +453,14 @@ def test_file_source_link_needs_a_visible_post(client, ppl):
     client.post(f"/api/board/{gone}/save", headers=b.h)
     web = b.cookie_client(client.app)
     html = web.get("/").text
-    assert f'<a href="/board/{pid}">From the board &middot; by Alice</a>' in html
-    assert f'<a href="/board/{gone}">' in html
+    by = f' &middot; by <span class="uname" data-user="{a.uuid}" tabindex="0">Alice</span></div>'  # 0.9.0: a hover card
+    assert f'<a href="/board/{pid}" title="Secret">From the board</a>' + by in html
+    assert f'<a href="/board/{gone}" ' in html
     client.patch(f"/api/board/{pid}", json={"allowed": []}, headers=a.h)  # Bob can't see it any more
     client.delete(f"/api/board/{gone}", headers=a.h)
     html = web.get("/").text
     assert f"/board/{pid}" not in html and f"/board/{gone}" not in html
-    assert html.count("From the board &middot; by Alice</div>") == 2  # plain text, no link
+    assert html.count("From the board</span>" + by) == 2  # plain text, no link
     # the API still says where they came from
     assert {f["source"]["postId"] for f in client.get("/api/files", headers=b.h).json()["files"]} == {pid, gone}
 
