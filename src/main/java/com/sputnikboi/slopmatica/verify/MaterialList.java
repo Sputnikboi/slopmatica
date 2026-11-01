@@ -104,7 +104,7 @@ public final class MaterialList {
         return new MaterialList(List.copyOf(entries), total, missing, unloaded);
     }
 
-    static int itemCount(BlockState state) {
+    public static int itemCount(BlockState state) {
         if (state.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF) && state.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.UPPER) {
             return 0;
         }

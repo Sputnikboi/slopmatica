@@ -74,6 +74,26 @@ public final class SlopmaticaConfig {
     public int fadeStart = 24;
     public int fadeEnd = 48;
 
+    // Inventory plan (see InventoryPlanner).
+    public com.sputnikboi.slopmatica.plan.InventoryPlanner.Scope planScope = com.sputnikboi.slopmatica.plan.InventoryPlanner.Scope.NEXT_BOTTOM_UP;
+    /** Use every free inventory slot; off uses {@link #planSlots} instead. */
+    public boolean planAutoSlots = true;
+    public int planSlots = 27;
+    /** New shulker boxes to fill: up to 27 carried plus 26 in the ender chest, unless unlimited. */
+    public int planShulkers = 0;
+    public boolean planUnlimitedShulkers = false;
+    /** Also fill empty slots of shulker boxes already carried. */
+    public boolean planUseCarriedShulkers = false;
+    /** Count carried items whatever their data (names, enchantments...); off counts only plain ones. */
+    public boolean planIgnoreNbt = true;
+    /** Bring the plain block for stripped wood (plus an axe) and waxed copper (plus honeycomb). */
+    public boolean planVariants = false;
+    public com.sputnikboi.slopmatica.plan.InventoryPlanner.Sort planSort = com.sputnikboi.slopmatica.plan.InventoryPlanner.Sort.NEXT;
+    /** Item ids left out of the plan. */
+    public java.util.Set<String> planIgnored = new java.util.LinkedHashSet<>();
+    /** Ghost items in empty inventory slots and container highlights. */
+    public boolean planShowInInventory = true;
+
     public static SlopmaticaConfig get() {
         if (instance == null) {
             instance = load();
@@ -165,6 +185,17 @@ public final class SlopmaticaConfig {
         if (pasteReplace == null) {
             pasteReplace = PlacementBuilder.Replace.NONE;
         }
+        if (planScope == null) {
+            planScope = com.sputnikboi.slopmatica.plan.InventoryPlanner.Scope.NEXT_BOTTOM_UP;
+        }
+        if (planSort == null) {
+            planSort = com.sputnikboi.slopmatica.plan.InventoryPlanner.Sort.NEXT;
+        }
+        if (planIgnored == null) {
+            planIgnored = new java.util.LinkedHashSet<>();
+        }
+        planSlots = Math.clamp(planSlots, 1, 36);
+        planShulkers = Math.clamp(planShulkers, 0, planUnlimitedShulkers ? 999 : 53);
         return this;
     }
 

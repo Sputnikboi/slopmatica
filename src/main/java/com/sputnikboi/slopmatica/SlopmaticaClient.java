@@ -66,6 +66,8 @@ public final class SlopmaticaClient implements ClientModInitializer {
                 mc.gui.setScreen(new WelcomeScreen(title));
             }
         });
+        com.sputnikboi.slopmatica.plan.InventoryOverlay.register();
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> com.sputnikboi.slopmatica.plan.InventoryPlanner.INSTANCE.clear());
         DevHarness.install();
     }
 }

@@ -54,11 +54,15 @@ public class SlopmaticaMenuScreen extends Screen {
         column.addChild(Button.builder(Component.translatable("slopmatica.menu.placements", loaded), b -> minecraft.gui.setScreen(new PlacementsScreen(this)))
             .width(BUTTON_WIDTH).build());
         Placement active = PlacementManager.INSTANCE.selected().orElse(null);
-        Button materials = column.addChild(Button.builder(
+        LinearLayout materialRow = column.addChild(LinearLayout.horizontal().spacing(4));
+        Button materials = materialRow.addChild(Button.builder(
             active == null ? Component.translatable("slopmatica.menu.materials.none") : Component.translatable("slopmatica.menu.materials"),
             b -> minecraft.gui.setScreen(new MaterialListScreen(this, active))
-        ).width(BUTTON_WIDTH).build());
+        ).width((BUTTON_WIDTH - 4) / 2).build());
         materials.active = active != null;
+        Button plan = materialRow.addChild(Button.builder(Component.translatable("slopmatica.menu.plan"), b -> minecraft.gui.setScreen(new InventoryPlanScreen(this)))
+            .width((BUTTON_WIDTH - 4) / 2).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.plan.tooltip"))).build());
+        plan.active = active != null;
         LinearLayout copyRow = column.addChild(LinearLayout.horizontal().spacing(4));
         copyRow.addChild(Button.builder(Component.translatable("slopmatica.menu.copy"), b -> {
             onClose();

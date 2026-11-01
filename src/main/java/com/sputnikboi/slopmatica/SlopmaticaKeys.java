@@ -48,6 +48,7 @@ public final class SlopmaticaKeys {
     private static final KeyMapping TOGGLE_GHOSTS = register(MAIN, "toggle_ghosts");
     private static final KeyMapping TOGGLE_EASY_PLACE = register(MAIN, "toggle_easy_place");
     private static final KeyMapping SPAWN_CHECK = register(MAIN, "spawn_check");
+    private static final KeyMapping PLAN_INVENTORY = register(MAIN, "plan_inventory");
 
     private static final KeyMapping MOVE_HERE = register(PLACEMENT, "move_here");
     private static final KeyMapping NUDGE_FORWARD = register(PLACEMENT, "nudge_forward");
@@ -178,6 +179,9 @@ public final class SlopmaticaKeys {
         }
         while (SPAWN_CHECK.consumeClick()) {
             SpawnCheck.INSTANCE.toggle(mc);
+        }
+        while (PLAN_INVENTORY.consumeClick()) {
+            com.sputnikboi.slopmatica.plan.InventoryPlanner.INSTANCE.calculate(mc);
         }
         while (PLACEMENT_VIEW.consumeClick()) {
             PlacementView.INSTANCE.toggle(mc);
