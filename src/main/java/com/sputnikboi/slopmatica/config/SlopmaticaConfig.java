@@ -47,7 +47,7 @@ public final class SlopmaticaConfig {
     /** When the profile was last taken from the cloud (server time, seconds). */
     public long cloudProfilePulled = 0;
     /** The Quick Menu's nine slots: action ids, "" for empty. */
-    public java.util.List<String> quickMenu = new java.util.ArrayList<>(com.sputnikboi.slopmatica.quick.QuickAction.DEFAULT_LAYOUT);
+    public java.util.List<String> quickMenu = new java.util.ArrayList<>(com.sputnikboi.slopmatica.quick.QuickLayout.DEFAULT);
     public com.sputnikboi.slopmatica.quick.QuickMenu.Mode quickMode = com.sputnikboi.slopmatica.quick.QuickMenu.Mode.CLICK;
     /** Setting toggles the player made, offered in the Quick Menu editor (ids, see SettingToggle). */
     public java.util.List<String> quickToggles = new java.util.ArrayList<>();
@@ -271,7 +271,7 @@ public final class SlopmaticaConfig {
             copyFormat = SchematicFormats.SLOPMATIC;
         }
         if (quickMenu == null || quickMenu.size() != 9) {
-            quickMenu = new java.util.ArrayList<>(com.sputnikboi.slopmatica.quick.QuickAction.DEFAULT_LAYOUT);
+            quickMenu = new java.util.ArrayList<>(com.sputnikboi.slopmatica.quick.QuickLayout.DEFAULT);
         }
         if (quickMode == null) {
             quickMode = com.sputnikboi.slopmatica.quick.QuickMenu.Mode.CLICK;

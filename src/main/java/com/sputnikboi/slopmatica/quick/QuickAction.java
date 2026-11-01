@@ -47,7 +47,7 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
 
     private static final Map<String, QuickAction> BUILT_IN = new LinkedHashMap<>();
 
-    public static final List<String> DEFAULT_LAYOUT = List.of("build_view", "easy_place", "plan", "undo", "menu", "materials", "", "", "");
+    public static final List<String> DEFAULT_LAYOUT = QuickLayout.DEFAULT;
 
     static {
         // The default set.
