@@ -181,15 +181,20 @@ public final class InventoryPlanner {
             if (config.planVariants) {
                 Optional<Item> plain = prefixed(item, "stripped_");
                 if (plain.isPresent()) {
-                    need.merge(plain.get(), e.getValue(), Long::sum);
+                    item = plain.get();
                     extra.put(Items.IRON_AXE, 1L);
-                    continue;
                 }
                 plain = prefixed(item, "waxed_");
                 if (plain.isPresent()) {
-                    need.merge(plain.get(), e.getValue(), Long::sum);
+                    item = plain.get();
                     extra.merge(Items.HONEYCOMB, e.getValue(), Long::sum);
-                    continue;
+                }
+                // Copper only ages one way with time, but an axe scrapes it back a stage at a
+                // time: fully oxidized copper covers every stage.
+                Optional<Item> oldest = agedBack(item);
+                if (oldest.isPresent()) {
+                    item = oldest.get();
+                    extra.put(Items.IRON_AXE, 1L);
                 }
             }
             need.merge(item, e.getValue(), Long::sum);
@@ -265,6 +270,17 @@ public final class InventoryPlanner {
             return Optional.empty();
         }
         return BuiltInRegistries.ITEM.getOptional(Identifier.fromNamespaceAndPath(id.getNamespace(), id.getPath().substring(prefix.length())));
+    }
+
+    /** {@code exposed_cut_copper} or {@code weathered_cut_copper} -> {@code oxidized_cut_copper}, if that exists. */
+    private static Optional<Item> agedBack(Item item) {
+        Identifier id = BuiltInRegistries.ITEM.getKey(item);
+        for (String stage : new String[] {"exposed_", "weathered_"}) {
+            if (id.getPath().startsWith(stage)) {
+                return BuiltInRegistries.ITEM.getOptional(Identifier.fromNamespaceAndPath(id.getNamespace(), "oxidized_" + id.getPath().substring(stage.length())));
+            }
+        }
+        return Optional.empty();
     }
 
     /**

@@ -17,9 +17,11 @@ public enum SchematicFormats {
     /** Vanilla structure files: structure blocks and {@code /place template}. */
     NBT(".nbt"),
     /** Litematica, for files made with or meant for it. */
-    LITEMATIC(".litematic");
+    LITEMATIC(".litematic"),
+    /** WorldEdit and FAWE ({@code //schem save}), the Sponge schematic format. */
+    SCHEM(".schem");
 
-    public static final List<String> EXTENSIONS = List.of(".slopmatic", ".nbt", ".litematic");
+    public static final List<String> EXTENSIONS = List.of(".slopmatic", ".nbt", ".litematic", ".schem");
 
     public final String extension;
 
@@ -50,6 +52,7 @@ public enum SchematicFormats {
             case SLOPMATIC -> SlopmaticFormat.read(file);
             case NBT -> StructureNbtFormat.read(file);
             case LITEMATIC -> LitematicFormat.read(file);
+            case SCHEM -> SpongeFormat.read(file);
         };
     }
 
@@ -58,6 +61,7 @@ public enum SchematicFormats {
             case SLOPMATIC -> SlopmaticFormat.write(file, volume);
             case NBT -> StructureNbtFormat.write(file, volume);
             case LITEMATIC -> LitematicFormat.write(file, volume);
+            case SCHEM -> SpongeFormat.write(file, volume);
         }
     }
 

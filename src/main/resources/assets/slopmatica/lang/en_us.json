@@ -335,7 +335,7 @@
   "slopmatica.plan.ignore_nbt": "Ignore NBT",
   "slopmatica.plan.ignore_nbt.tooltip": "Count what you carry whatever its data (renamed, enchanted...). Off: only plain items count.",
   "slopmatica.plan.variants": "Variants",
-  "slopmatica.plan.variants.tooltip": "Bring plain logs and an axe for stripped wood, and plain copper and honeycomb for waxed copper.",
+  "slopmatica.plan.variants.tooltip": "Bring plain logs and an axe for stripped wood, plain copper and honeycomb for waxed copper, and fully oxidized copper and an axe for exposed or weathered copper (scrape it back to the stage you need).",
   "slopmatica.plan.sort": "Order",
   "slopmatica.plan.sort.next": "Needed Next",
   "slopmatica.plan.sort.amount": "Amount",
@@ -398,5 +398,6 @@
   "slopmatica.profiles.save.tooltip": "Save this instance's settings as a new profile, and follow it.",
   "slopmatica.profiles.stop": "Don't Follow a Profile",
   "slopmatica.profiles.stop.tooltip": "Keep this instance's settings to itself. The profiles stay in the cloud.",
-  "slopmatica.profiles.intro_unknown": "Choose the settings this instance follows"
+  "slopmatica.profiles.intro_unknown": "Choose the settings this instance follows",
+  "slopmatica.options.copy_format.schem.tooltip": "WorldEdit's .schem (Sponge format, version 3): for pasting with WorldEdit or FAWE."
 }

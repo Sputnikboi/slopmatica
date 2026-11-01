@@ -99,6 +99,29 @@ class SchematicFormatsTest {
         assertEquals(new BlockPos(3, 1, 1), frame.blockPos(), format + " hanging block");
     }
 
+    /** A version 2 file as older WorldEdit writes it: flat layout, palette strings, varint data. */
+    @Test
+    void readsWorldEditVersion2() throws Exception {
+        CompoundTag palette = new CompoundTag();
+        palette.putInt("minecraft:air", 0);
+        palette.putInt("minecraft:oak_stairs[facing=east,half=bottom,shape=straight,waterlogged=false]", 1);
+        palette.putInt("minecraft:stone", 200); // A big id, so its varint takes two bytes.
+        CompoundTag root = new CompoundTag();
+        root.putInt("Version", 2);
+        root.putInt("DataVersion", net.minecraft.SharedConstants.getCurrentVersion().dataVersion().version());
+        root.putShort("Width", (short) 3);
+        root.putShort("Height", (short) 1);
+        root.putShort("Length", (short) 1);
+        root.put("Palette", palette);
+        root.putByteArray("BlockData", new byte[] {1, (byte) (200 & 0x7F | 0x80), (byte) (200 >> 7), 0});
+        Schematic s = Schematic.fromRaw(SpongeFormat.parse(root, "we"), Path.of("we.schem"));
+        Schematic.Region r = s.regions().getFirst();
+        assertEquals(STAIR, r.palette()[r.paletteIndexAt(0, 0, 0)]);
+        assertEquals(Blocks.STONE.defaultBlockState(), r.palette()[r.paletteIndexAt(1, 0, 0)]);
+        assertEquals(Blocks.AIR.defaultBlockState(), r.palette()[r.paletteIndexAt(2, 0, 0)]);
+        assertEquals(2, s.blockCount());
+    }
+
     /** An entity inside a block ends up inside that block's new place, for every rotation and mirror. */
     @Test
     void entitiesFollowTheirBlock(@TempDir Path dir) throws Exception {
