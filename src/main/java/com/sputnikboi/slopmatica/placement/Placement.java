@@ -3,7 +3,10 @@ package com.sputnikboi.slopmatica.placement;
 import com.sputnikboi.slopmatica.schematic.EntityData;
 import com.sputnikboi.slopmatica.schematic.Schematic;
 import net.minecraft.world.phys.Vec3;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import net.minecraft.world.item.Item;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Mirror;
@@ -23,6 +26,15 @@ public final class Placement {
     private final String dimension;
     private volatile Transform transform;
     private boolean visible = true;
+    /** Only this part of the schematic counts (schematic coordinates), or null for all of it. */
+    private @Nullable BoundingBox crop;
+    /** Materials to show; empty shows everything. Affects only what is drawn and aimed at. */
+    private Set<Item> selectedMaterials = Set.of();
+    /** Materials left out of the material panel's counts. */
+    private Set<Item> ignoredMaterials = Set.of();
+    /** The floating material panel: open in the placement view, pinned to stay on screen outside it, and where. */
+    public boolean panelOpen, panelPinned;
+    public int panelX = -1, panelY = -1;
 
     public Placement(Schematic schematic, String name, BlockPos origin) {
         this(schematic, name, origin, "minecraft:overworld");
@@ -32,7 +44,7 @@ public final class Placement {
         this.schematic = schematic;
         this.name = name;
         this.dimension = dimension;
-        this.transform = new Transform(schematic, origin, Rotation.NONE, Mirror.NONE);
+        this.transform = new Transform(schematic, origin, Rotation.NONE, Mirror.NONE, null, Layers.INSTANCE.minY(), Layers.INSTANCE.maxY(), Set.of());
     }
 
     public Schematic schematic() {
@@ -65,17 +77,71 @@ public final class Placement {
 
     public void setOrigin(BlockPos origin) {
         Transform t = transform;
-        transform = new Transform(schematic, origin.immutable(), t.rotation, t.mirror);
+        rebuild(origin.immutable(), t.rotation, t.mirror);
     }
 
     public void setRotation(Rotation rotation) {
         Transform t = transform;
-        transform = new Transform(schematic, t.origin, rotation, t.mirror);
+        rebuild(t.origin, rotation, t.mirror);
     }
 
     public void setMirror(Mirror mirror) {
         Transform t = transform;
-        transform = new Transform(schematic, t.origin, t.rotation, mirror);
+        rebuild(t.origin, t.rotation, mirror);
+    }
+
+    public @Nullable BoundingBox crop() {
+        return crop;
+    }
+
+    /** Crops to a box in schematic coordinates (clamped to the schematic), or null to show all of it. */
+    public void setCrop(@Nullable BoundingBox box) {
+        BoundingBox b = schematic.bounds();
+        if (box != null) {
+            box = new BoundingBox(Math.max(box.minX(), b.minX()), Math.max(box.minY(), b.minY()), Math.max(box.minZ(), b.minZ()),
+                Math.min(box.maxX(), b.maxX()), Math.min(box.maxY(), b.maxY()), Math.min(box.maxZ(), b.maxZ()));
+            if (box.minX() > box.maxX() || box.minY() > box.maxY() || box.minZ() > box.maxZ() || box.equals(b)) {
+                box = null; // Nothing left, or nothing cut: no crop.
+            }
+        }
+        crop = box;
+        refresh();
+    }
+
+    public Set<Item> selectedMaterials() {
+        return selectedMaterials;
+    }
+
+    public void setSelectedMaterials(Set<Item> items) {
+        selectedMaterials = Set.copyOf(items);
+        refresh();
+    }
+
+    public Set<Item> ignoredMaterials() {
+        return ignoredMaterials;
+    }
+
+    public void setIgnoredMaterials(Set<Item> items) {
+        ignoredMaterials = Set.copyOf(items);
+    }
+
+    /** Rebuilds the transform after a crop, material or {@link Layers} change. */
+    public void refresh() {
+        Transform t = transform;
+        rebuild(t.origin, t.rotation, t.mirror);
+    }
+
+    private void rebuild(BlockPos origin, Rotation rotation, Mirror mirror) {
+        transform = new Transform(schematic, origin, rotation, mirror, crop, Layers.INSTANCE.minY(), Layers.INSTANCE.maxY(), selectedMaterials);
+    }
+
+    /** Toggles one material in a set, keeping insertion order. */
+    public static Set<Item> toggled(Set<Item> set, Item item) {
+        Set<Item> out = new LinkedHashSet<>(set);
+        if (!out.remove(item)) {
+            out.add(item);
+        }
+        return out;
     }
 
     public static final class Transform {
@@ -86,11 +152,20 @@ public final class Placement {
         /** Each region's palette with this transform's mirror and rotation already applied. */
         private final BlockState[][] palettes;
         private final BoundingBox worldBounds;
+        private final @Nullable BoundingBox crop;
+        /** What is drawn: the layer range (world Y) and the selected materials (empty: all). */
+        private final int shownMinY, shownMaxY;
+        private final Set<Item> shownItems;
 
-        Transform(Schematic schematic, BlockPos origin, Rotation rotation, Mirror mirror) {
+        Transform(Schematic schematic, BlockPos origin, Rotation rotation, Mirror mirror, @Nullable BoundingBox crop,
+                  int shownMinY, int shownMaxY, Set<Item> shownItems) {
             this.origin = origin;
             this.rotation = rotation;
             this.mirror = mirror;
+            this.crop = crop;
+            this.shownMinY = shownMinY;
+            this.shownMaxY = shownMaxY;
+            this.shownItems = shownItems;
             this.regions = schematic.regions();
             this.palettes = new BlockState[regions.size()][];
             for (int i = 0; i < regions.size(); i++) {
@@ -101,7 +176,7 @@ public final class Placement {
                 }
                 palettes[i] = dst;
             }
-            BoundingBox b = schematic.bounds();
+            BoundingBox b = crop != null ? crop : schematic.bounds();
             BlockPos a = toWorld(b.minX(), b.minY(), b.minZ());
             BlockPos c = toWorld(b.maxX(), b.maxY(), b.maxZ());
             this.worldBounds = BoundingBox.fromCorners(a, c);
@@ -147,6 +222,9 @@ public final class Placement {
                 case FRONT_BACK -> x = -x;
                 default -> { }
             }
+            if (crop != null && !crop.isInside(x, y, z)) {
+                return null;
+            }
 
             BlockState found = null;
             for (int i = 0; i < regions.size(); i++) {
@@ -164,6 +242,22 @@ public final class Placement {
                 }
             }
             return found;
+        }
+
+        /**
+         * What is drawn and can be aimed at: {@link #stateAt}, minus blocks outside the layer range
+         * and materials not selected (those have no opinion, so rays pass through them). Material
+         * lists, pasting and Easy Place's inventory checks use the whole schematic instead.
+         */
+        public @Nullable BlockState shownStateAt(int wx, int wy, int wz) {
+            if (wy < shownMinY || wy > shownMaxY) {
+                return null;
+            }
+            BlockState state = stateAt(wx, wy, wz);
+            if (state != null && !shownItems.isEmpty() && !state.isAir() && !shownItems.contains(state.getBlock().asItem())) {
+                return null;
+            }
+            return state;
         }
 
         /** Block entity data the schematic has for a world position, or null. */

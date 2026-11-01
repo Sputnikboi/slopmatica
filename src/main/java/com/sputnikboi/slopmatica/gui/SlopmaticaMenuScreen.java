@@ -84,7 +84,9 @@ public class SlopmaticaMenuScreen extends Screen {
 
         // Bottom right: credits, linking to the website's feedback page.
         creditsButton = addRenderableWidget(Button.builder(Component.translatable("slopmatica.menu.credits"),
-            b -> ConfirmLinkScreen.confirmLinkNow(this, URI.create(CloudSync.INSTANCE.account().url + "/feedback")))
+            b -> ConfirmLinkScreen.confirmLinkNow(this, URI.create(CloudSync.INSTANCE.account().url + "/feedback?mod="
+                + java.net.URLEncoder.encode(Updates.modVersion(), java.nio.charset.StandardCharsets.UTF_8)
+                + "&mc=" + java.net.URLEncoder.encode(net.minecraft.SharedConstants.getCurrentVersion().name(), java.nio.charset.StandardCharsets.UTF_8))))
             .tooltip(Tooltip.create(Component.translatable("slopmatica.menu.credits.tooltip"))).width(CREDITS_WIDTH).build());
         // Top right, beside the version: a download icon when a newer release exists.
         updateButton = addRenderableWidget(Button.builder(Component.literal("⬇"), b -> {

@@ -170,15 +170,36 @@ public final class Updates {
     }
 
     /** Whether version a is newer than b, comparing dotted numbers ("0.10.0" > "0.9.2"). */
+    /**
+     * Semver order: dotted numbers first, then a release beats its own pre-releases
+     * ({@code 0.7.0} is newer than {@code 0.7.0-beta.1}); build metadata after {@code +} is ignored.
+     */
     static boolean newer(String a, String b) {
-        String[] x = a.split("[.+-]"), y = b.split("[.+-]");
-        for (int i = 0; i < Math.max(x.length, y.length); i++) {
-            int xi = i < x.length ? parse(x[i]) : 0, yi = i < y.length ? parse(y[i]) : 0;
+        String[] x = a.split("\\+", 2)[0].split("-", 2), y = b.split("\\+", 2)[0].split("-", 2);
+        String[] xc = x[0].split("\\."), yc = y[0].split("\\.");
+        for (int i = 0; i < Math.max(xc.length, yc.length); i++) {
+            int xi = i < xc.length ? parse(xc[i]) : 0, yi = i < yc.length ? parse(yc[i]) : 0;
             if (xi != yi) {
                 return xi > yi;
             }
         }
-        return false;
+        boolean xPre = x.length > 1, yPre = y.length > 1;
+        if (xPre != yPre) {
+            return !xPre;
+        }
+        return xPre && comparePre(x[1].split("\\."), y[1].split("\\.")) > 0;
+    }
+
+    /** Pre-release identifiers: numbers by value and below words, words by text, more identifiers wins a tie. */
+    private static int comparePre(String[] x, String[] y) {
+        for (int i = 0; i < Math.min(x.length, y.length); i++) {
+            boolean xn = x[i].matches("\\d+"), yn = y[i].matches("\\d+");
+            int c = xn && yn ? Integer.compare(parse(x[i]), parse(y[i])) : xn != yn ? (xn ? -1 : 1) : x[i].compareTo(y[i]);
+            if (c != 0) {
+                return c;
+            }
+        }
+        return Integer.compare(x.length, y.length);
     }
 
     private static int parse(String s) {

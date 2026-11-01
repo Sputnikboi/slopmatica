@@ -30,11 +30,11 @@ public final class SchematicRaycast {
         return out;
     }
 
-    /** What the placements want at a position: a block before air, null where none has an opinion. */
+    /** What the placements show at a position (layer view and material selection applied): a block before air, null where none has an opinion. */
     public static @Nullable BlockState wantedAt(List<Placement.Transform> transforms, int x, int y, int z) {
         BlockState found = null;
         for (Placement.Transform transform : transforms) {
-            BlockState s = transform.stateAt(x, y, z);
+            BlockState s = transform.shownStateAt(x, y, z);
             if (s != null) {
                 if (!s.isAir()) {
                     return s;

@@ -7,6 +7,7 @@ import com.sputnikboi.slopmatica.build.Selection;
 import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.gui.SchematicBrowserScreen;
 import com.sputnikboi.slopmatica.gui.SlopmaticaMenuScreen;
+import com.sputnikboi.slopmatica.placement.Layers;
 import com.sputnikboi.slopmatica.placement.Placement;
 import com.sputnikboi.slopmatica.placement.PlacementManager;
 import com.sputnikboi.slopmatica.render.HologramRenderer;
@@ -35,6 +36,7 @@ public final class SlopmaticaKeys {
     private static final KeyMapping.Category PLACEMENT = category("2_placement");
     private static final KeyMapping.Category VIEW = category("3_view");
     private static final KeyMapping.Category COPY = category("4_copy");
+    private static final KeyMapping.Category LAYERS = category("5_layers");
     private static int order;
 
     private static final KeyMapping OPEN_MENU = register(MAIN, "open_menu", InputConstants.KEY_M);
@@ -64,11 +66,18 @@ public final class SlopmaticaKeys {
         register(VIEW, "view_nudge_down", InputConstants.KEY_COMMA),
     };
     public static final KeyMapping VIEW_PASTE = register(VIEW, "view_paste", InputConstants.KEY_RETURN);
+    /** Next tool (move, select, modify selection, crop). Y is free in vanilla. */
+    public static final KeyMapping VIEW_TOOL = register(VIEW, "view_tool", InputConstants.KEY_Y);
 
     public static final KeyMapping SELECT_CORNER = register(COPY, "select_corner", InputConstants.KEY_B);
     public static final KeyMapping COPY_SELECTION = register(COPY, "copy_selection");
     public static final KeyMapping PASTE = register(COPY, "paste");
     public static final KeyMapping CLEAR_SELECTION = register(COPY, "clear_selection");
+
+    private static final KeyMapping LAYER_MODE = register(LAYERS, "layer_mode");
+    private static final KeyMapping LAYER_UP = register(LAYERS, "layer_up");
+    private static final KeyMapping LAYER_DOWN = register(LAYERS, "layer_down");
+    private static final KeyMapping LAYER_HERE = register(LAYERS, "layer_here");
 
     private SlopmaticaKeys() {
     }
@@ -128,6 +137,15 @@ public final class SlopmaticaKeys {
         return KeyMappingHelper.registerKeyMapping(new KeyMapping("key.slopmatica." + name, InputConstants.Type.KEYBOARD, key, category, order++));
     }
 
+    /** "Layers: single, Y 64" and the like. */
+    public static Component layersMessage() {
+        Layers layers = Layers.INSTANCE;
+        String mode = layers.mode().name().toLowerCase(java.util.Locale.ROOT);
+        return layers.mode() == Layers.Mode.ALL
+            ? Component.translatable("slopmatica.layers.all").withColor(SlopmaticaActions.ACCENT)
+            : Component.translatable("slopmatica.layers.status", Component.translatable("slopmatica.layers." + mode), layers.layer()).withColor(SlopmaticaActions.ACCENT);
+    }
+
     private static void tick(Minecraft mc) {
         Consumer<Component> feedback = SlopmaticaActions::actionBar;
         while (OPEN_MENU.consumeClick()) {
@@ -160,6 +178,24 @@ public final class SlopmaticaKeys {
             PlacementView.INSTANCE.toggle(mc);
         }
         PlacementView.INSTANCE.handleKeys(mc);
+        int here = Layers.startHeight(mc.player != null ? mc.player.getBlockY() : 0);
+        Layers layers = Layers.INSTANCE;
+        while (LAYER_MODE.consumeClick()) {
+            layers.cycleMode(here);
+            feedback.accept(layersMessage());
+        }
+        while (LAYER_UP.consumeClick()) {
+            layers.move(1);
+            feedback.accept(layersMessage());
+        }
+        while (LAYER_DOWN.consumeClick()) {
+            layers.move(-1);
+            feedback.accept(layersMessage());
+        }
+        while (LAYER_HERE.consumeClick()) {
+            layers.setLayer(here);
+            feedback.accept(layersMessage());
+        }
         while (SELECT_CORNER.consumeClick()) {
             Selection.INSTANCE.setCorner(mc);
         }

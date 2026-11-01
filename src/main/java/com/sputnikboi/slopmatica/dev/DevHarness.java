@@ -111,6 +111,7 @@ public final class DevHarness {
                 KeyEvent event = switch (step.substring(4).trim()) {
                     case "tab" -> new KeyEvent(InputConstants.KEY_TAB, 9, 0);
                     case "down" -> new KeyEvent(InputConstants.KEY_DOWN, 0x40000051, 0);
+                    case "1", "2", "3", "4", "5" -> new KeyEvent(InputConstants.KEY_1 + Integer.parseInt(step.substring(4).trim()) - 1, 0, 0);
                     default -> new KeyEvent(InputConstants.KEY_RETURN, 13, 0);
                 };
                 boolean handled = mc.gui.screen().keyPressed(event);
@@ -126,6 +127,18 @@ public final class DevHarness {
                     screen.mouseReleased(event);
                 }
                 LOGGER.info("dev click {} on {} -> {}", step, screen.getClass().getSimpleName(), mc.gui.screen() == null ? null : mc.gui.screen().getClass().getSimpleName());
+            } else if (step.startsWith("drag ") && mc.gui.screen() != null) {
+                // drag <x1> <y1> <x2> <y2>: press, move in ten steps, release (left button).
+                String[] parts = step.split(" ");
+                double x1 = Double.parseDouble(parts[1]), y1 = Double.parseDouble(parts[2]), x2 = Double.parseDouble(parts[3]), y2 = Double.parseDouble(parts[4]);
+                var info = new net.minecraft.client.input.MouseButtonInfo(1, 0);
+                Screen screen = mc.gui.screen();
+                screen.mouseClicked(new net.minecraft.client.input.MouseButtonEvent(x1, y1, info), false);
+                for (int i = 1; i <= 10; i++) {
+                    double x = x1 + (x2 - x1) * i / 10, y = y1 + (y2 - y1) * i / 10;
+                    screen.mouseDragged(new net.minecraft.client.input.MouseButtonEvent(x, y, info), (x2 - x1) / 10, (y2 - y1) / 10);
+                }
+                screen.mouseReleased(new net.minecraft.client.input.MouseButtonEvent(x2, y2, info));
             } else if (step.startsWith("scroll ") && mc.gui.screen() != null) {
                 Screen screen = mc.gui.screen();
                 screen.mouseScrolled(screen.width / 2.0, screen.height / 2.0, 0, Double.parseDouble(step.substring(7).trim()));

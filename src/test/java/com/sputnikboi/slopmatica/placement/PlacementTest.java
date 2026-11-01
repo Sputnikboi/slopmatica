@@ -86,6 +86,51 @@ class PlacementTest {
         }
     }
 
+    /** A crop hides everything outside it, under every rotation, and survives moving and rotating. */
+    @Test
+    void cropKeepsOnlyThePartInside() {
+        Placement p = new Placement(asymmetric(), "t", new BlockPos(10, 64, 10));
+        // Keep schematic x 0..1 only: the stair at x=2 goes.
+        p.setCrop(new net.minecraft.world.level.levelgen.structure.BoundingBox(0, 0, 0, 1, 0, 1));
+        for (Rotation rotation : Rotation.values()) {
+            p.setRotation(rotation);
+            Placement.Transform t = p.transform();
+            BlockPos stair = t.toWorld(2, 0, 0), stone = t.toWorld(1, 0, 0);
+            assertNull(t.stateAt(stair.getX(), stair.getY(), stair.getZ()), rotation.name());
+            assertEquals(Blocks.STONE.defaultBlockState(), t.stateAt(stone.getX(), stone.getY(), stone.getZ()), rotation.name());
+            assertEquals(4, t.worldBounds().getXSpan() * t.worldBounds().getZSpan(), "bounds shrink to the crop");
+        }
+        // A crop covering everything is no crop.
+        p.setCrop(p.schematic().bounds());
+        assertNull(p.crop());
+    }
+
+    /** Layer view and material selection hide blocks from what is shown, not from the schematic. */
+    @Test
+    void shownStateFollowsLayersAndSelectedMaterials() {
+        Placement p = new Placement(asymmetric(), "t", new BlockPos(0, 64, 0));
+        p.setSelectedMaterials(java.util.Set.of(net.minecraft.world.item.Items.OAK_STAIRS));
+        Placement.Transform t = p.transform();
+        BlockPos stone = t.toWorld(0, 0, 0), stair = t.toWorld(2, 0, 0);
+        assertNull(t.shownStateAt(stone.getX(), stone.getY(), stone.getZ()));
+        assertEquals(Blocks.STONE.defaultBlockState(), t.stateAt(stone.getX(), stone.getY(), stone.getZ()));
+        assertEquals(Blocks.OAK_STAIRS, t.shownStateAt(stair.getX(), stair.getY(), stair.getZ()).getBlock());
+
+        p.setSelectedMaterials(java.util.Set.of());
+        Layers.INSTANCE.setMode(Layers.Mode.SINGLE, 65);
+        try {
+            p.refresh(); // Layers refreshes managed placements; this one isn't in the manager.
+            t = p.transform();
+            assertNull(t.shownStateAt(stone.getX(), stone.getY(), stone.getZ()), "layer 65 hides layer 64");
+            Layers.INSTANCE.setLayer(64);
+            p.refresh();
+            t = p.transform();
+            assertEquals(Blocks.STONE.defaultBlockState(), t.shownStateAt(stone.getX(), stone.getY(), stone.getZ()));
+        } finally {
+            Layers.INSTANCE.setMode(Layers.Mode.ALL, 0);
+        }
+    }
+
     @Test
     void everyTransformMapsSchematicBlocksToTheirWorldPositions() {
         Schematic schematic = asymmetric();

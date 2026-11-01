@@ -1,5 +1,11 @@
 package com.sputnikboi.slopmatica.placement;
 
+import java.util.LinkedHashSet;
+import java.util.Set;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
@@ -139,6 +145,19 @@ public final class PlacementStore {
                 p.setRotation(Rotation.valueOf(entry.get("rotation").getAsString()));
                 p.setMirror(Mirror.valueOf(entry.get("mirror").getAsString()));
                 p.setVisible(!entry.has("visible") || entry.get("visible").getAsBoolean());
+                if (entry.has("crop") && entry.get("crop").isJsonArray()) {
+                    JsonArray c = entry.getAsJsonArray("crop");
+                    p.setCrop(new BoundingBox(c.get(0).getAsInt(), c.get(1).getAsInt(), c.get(2).getAsInt(), c.get(3).getAsInt(), c.get(4).getAsInt(), c.get(5).getAsInt()));
+                }
+                p.setSelectedMaterials(items(entry, "selectedMaterials"));
+                p.setIgnoredMaterials(items(entry, "ignoredMaterials"));
+                if (entry.has("panel") && entry.get("panel").isJsonObject()) {
+                    JsonObject panel = entry.getAsJsonObject("panel");
+                    p.panelOpen = panel.has("open") && panel.get("open").getAsBoolean();
+                    p.panelPinned = panel.has("pinned") && panel.get("pinned").getAsBoolean();
+                    p.panelX = panel.has("x") ? panel.get("x").getAsInt() : -1;
+                    p.panelY = panel.has("y") ? panel.get("y").getAsInt() : -1;
+                }
                 // add() selects the new placement; keep the saved selection instead.
                 if (before != null && !(entry.has("selected") && entry.get("selected").getAsBoolean())) {
                     PlacementManager.INSTANCE.select(before);
@@ -175,6 +194,22 @@ public final class PlacementStore {
             e.addProperty("mirror", t.mirror().name());
             e.addProperty("visible", p.visible());
             e.addProperty("selected", p == selected);
+            BoundingBox crop = p.crop();
+            if (crop != null) {
+                JsonArray c = new JsonArray();
+                for (int v : new int[] {crop.minX(), crop.minY(), crop.minZ(), crop.maxX(), crop.maxY(), crop.maxZ()}) {
+                    c.add(v);
+                }
+                e.add("crop", c);
+            }
+            e.add("selectedMaterials", items(p.selectedMaterials()));
+            e.add("ignoredMaterials", items(p.ignoredMaterials()));
+            JsonObject panel = new JsonObject();
+            panel.addProperty("open", p.panelOpen);
+            panel.addProperty("pinned", p.panelPinned);
+            panel.addProperty("x", p.panelX);
+            panel.addProperty("y", p.panelY);
+            e.add("panel", panel);
             entries.add(e);
         }
         pending.forEach(entries::add);
@@ -193,6 +228,26 @@ public final class PlacementStore {
         } catch (IOException e) {
             LOGGER.error("Could not save placements to {}", file, e);
         }
+    }
+
+    private static JsonArray items(Set<Item> items) {
+        JsonArray out = new JsonArray();
+        items.forEach(item -> out.add(BuiltInRegistries.ITEM.getKey(item).toString()));
+        return out;
+    }
+
+    /** Item ids from a saved list; unknown ids (a removed mod) are dropped. */
+    private static Set<Item> items(JsonObject entry, String key) {
+        Set<Item> out = new LinkedHashSet<>();
+        if (entry.has(key) && entry.get(key).isJsonArray()) {
+            for (JsonElement id : entry.getAsJsonArray(key)) {
+                Identifier parsed = Identifier.tryParse(id.getAsString());
+                if (parsed != null) {
+                    BuiltInRegistries.ITEM.getOptional(parsed).ifPresent(out::add);
+                }
+            }
+        }
+        return out;
     }
 
     /** Inside the schematics folder, stored relative to it so the save survives moving the instance. */

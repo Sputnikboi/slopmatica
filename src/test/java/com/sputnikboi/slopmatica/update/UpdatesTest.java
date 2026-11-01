@@ -16,4 +16,15 @@ class UpdatesTest {
         assertFalse(Updates.newer("0.6", "0.6.0"));
         assertTrue(Updates.newer("0.6.0.1", "0.6.0"));
     }
+
+    @Test
+    void releasesBeatTheirPreReleases() {
+        assertTrue(Updates.newer("0.7.0", "0.7.0-beta.1"));
+        assertFalse(Updates.newer("0.7.0-beta.1", "0.7.0"));
+        assertTrue(Updates.newer("0.7.0-beta.2", "0.7.0-beta.1"));
+        assertTrue(Updates.newer("0.7.0-beta.10", "0.7.0-beta.9"));
+        assertTrue(Updates.newer("0.7.0-beta", "0.7.0-alpha.5"));
+        assertTrue(Updates.newer("0.7.0-beta.1", "0.6.9"));
+        assertFalse(Updates.newer("0.7.0+build.5", "0.7.0"));
+    }
 }

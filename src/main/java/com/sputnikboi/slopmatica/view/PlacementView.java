@@ -3,7 +3,13 @@ package com.sputnikboi.slopmatica.view;
 import com.sputnikboi.slopmatica.SlopmaticaActions;
 import com.sputnikboi.slopmatica.SlopmaticaKeys;
 import com.sputnikboi.slopmatica.build.PlacementBuilder;
+import com.sputnikboi.slopmatica.build.Selection;
+import com.sputnikboi.slopmatica.verify.SchematicRaycast;
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
+import com.sputnikboi.slopmatica.placement.Layers;
 import com.sputnikboi.slopmatica.placement.Placement;
 import com.sputnikboi.slopmatica.placement.PlacementManager;
 import java.util.ArrayList;
@@ -63,6 +69,8 @@ public final class PlacementView {
     /** Health plus absorption last tick, to notice damage. */
     private float lastHealth;
 
+    private Tool tool = Tool.MOVE;
+
     /** Origin minus the targeted block when picked up, so it doesn't jump to the crosshair. */
     private @Nullable BlockPos carryOffset;
     private double carryDistance;
@@ -85,6 +93,32 @@ public final class PlacementView {
 
     public @Nullable Placement placement() {
         return placement;
+    }
+
+    public Tool tool() {
+        return tool;
+    }
+
+    public void setTool(Tool tool) {
+        this.tool = tool;
+        if (tool != Tool.MOVE && carryOffset != null && placement != null) {
+            putDown(placement);
+        }
+        SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.now", tool.label()).withColor(SlopmaticaActions.ACCENT));
+    }
+
+    /** Switches the view to another placement, keeping the camera where it is. */
+    public void switchTo(Placement target) {
+        if (placement == null || target == placement) {
+            return;
+        }
+        carryOffset = null;
+        placement = target;
+        PlacementManager.INSTANCE.select(target);
+        startOrigin = target.transform().origin();
+        startRotation = target.transform().rotation();
+        startMirror = target.transform().mirror();
+        SlopmaticaActions.actionBar(Component.literal("Placement view: " + target.name()).withColor(SlopmaticaActions.ACCENT));
     }
 
     /** Enters the view for the placement under the crosshair, or the active one; leaves it if already in. */
@@ -140,6 +174,15 @@ public final class PlacementView {
         }
         placement = null;
         carryOffset = null;
+        if (!mc.isSameThread()) {
+            // Disconnects arrive on the network thread; screens may only change on the client thread.
+            mc.execute(() -> {
+                if (mc.gui.screen() instanceof PlacementViewScreen) {
+                    mc.gui.setScreen(null);
+                }
+            });
+            return;
+        }
         if (mc.gui.screen() instanceof PlacementViewScreen) {
             mc.gui.setScreen(null);
         }
@@ -234,10 +277,21 @@ public final class PlacementView {
         }
 
         while (mc.options.keyAttack.consumeClick()) {
-            if (carryOffset == null) {
-                pickUp(mc, p);
-            } else {
-                putDown(p);
+            switch (tool) {
+                case MOVE -> {
+                    if (carryOffset == null) {
+                        pickUp(mc, p);
+                    } else {
+                        putDown(p);
+                    }
+                }
+                case SELECT -> {
+                    BlockPos block = pointedBlock(mc, eye(), look());
+                    if (block != null) {
+                        Selection.INSTANCE.setCorner(block, mc.level.dimension().identifier().toString());
+                    }
+                }
+                default -> SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.needs_cursor", tool.label()).withColor(SlopmaticaActions.ERROR));
             }
         }
         while (mc.options.keyUse.consumeClick()) {
@@ -261,6 +315,11 @@ public final class PlacementView {
 
     /** Handles the view's own keys. Runs every tick so presses outside the view are drained, not queued. */
     public void handleKeys(Minecraft mc) {
+        while (SlopmaticaKeys.VIEW_TOOL.consumeClick()) {
+            if (active()) {
+                setTool(tool.next());
+            }
+        }
         while (SlopmaticaKeys.VIEW_ROTATE.consumeClick()) {
             rotate(mc, Rotation.CLOCKWISE_90);
         }
@@ -388,6 +447,50 @@ public final class PlacementView {
         return new Vec3(x, y, z);
     }
 
+    /**
+     * The block a ray points at: the nearer of a real block and a schematic block (ghosts count,
+     * so you can select parts of the build that aren't built yet). Null if neither is in reach.
+     */
+    public @Nullable BlockPos pointedBlock(Minecraft mc, Vec3 from, Vec3 dir) {
+        if (mc.level == null) {
+            return null;
+        }
+        BlockHitResult hit = mc.level.clip(new ClipContext(from, from.add(dir.scale(REACH)), ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, CollisionContext.empty()));
+        double worldDist = hit.getType() == HitResult.Type.BLOCK ? hit.getLocation().distanceTo(from) : Double.MAX_VALUE;
+        SchematicRaycast.Hit ghost = SchematicRaycast.trace(mc.level, SchematicRaycast.visibleTransforms(mc.level), from, dir, REACH);
+        if (ghost != null && ghost.distance() <= worldDist) {
+            return ghost.pos();
+        }
+        return hit.getType() == HitResult.Type.BLOCK ? hit.getBlockPos() : null;
+    }
+
+    /** The crop tool's boxes: the part that shows (orange) inside the whole build (grey). */
+    public void submitToolBoxes(LevelRenderContext context) {
+        Placement p = placement;
+        Minecraft mc = Minecraft.getInstance();
+        if (p == null || tool != Tool.CROP) {
+            return;
+        }
+        Vec3 cam = context.levelState().cameraRenderState.pos;
+        float width = mc.getWindow().getAppropriateLineWidth() * 2;
+        Placement.Transform t = p.transform();
+        BoundingBox shown = t.worldBounds();
+        BoundingBox all = fullWorldBounds(p);
+        context.submitNodeCollector().submitCustomGeometry(context.poseStack(), RenderTypes.lines(), (pose, buffer) -> {
+            if (!all.equals(shown)) {
+                Selection.box(buffer, pose, cam, all.minX(), all.minY(), all.minZ(), all.maxX() + 1, all.maxY() + 1, all.maxZ() + 1, 0.004, 0xFF808080, width / 2);
+            }
+            Selection.box(buffer, pose, cam, shown.minX(), shown.minY(), shown.minZ(), shown.maxX() + 1, shown.maxY() + 1, shown.maxZ() + 1, 0.008, 0xFFFFA020, width);
+        });
+    }
+
+    /** The whole build's box in the world, ignoring any crop. */
+    public static BoundingBox fullWorldBounds(Placement p) {
+        BoundingBox b = p.schematic().bounds();
+        Placement.Transform t = p.transform();
+        return BoundingBox.fromCorners(t.toWorld(b.minX(), b.minY(), b.minZ()), t.toWorld(b.maxX(), b.maxY(), b.maxZ()));
+    }
+
     /** The block in front of the face under the crosshair, or a point at carrying distance in the air. */
     private BlockPos target(Minecraft mc) {
         Vec3 from = new Vec3(x, y, z);
@@ -427,7 +530,14 @@ public final class PlacementView {
     public void extractHud(GuiGraphicsExtractor graphics) {
         Placement p = placement;
         Minecraft mc = Minecraft.getInstance();
-        if (p == null || mc.gui.screen() != null) {
+        if (mc.gui.screen() != null) {
+            return;
+        }
+        if (p == null) {
+            // Outside the view, a reminder that layer view is hiding part of every build.
+            if (Layers.INSTANCE.mode() != Layers.Mode.ALL && !PlacementManager.INSTANCE.placements().isEmpty()) {
+                drawPanel(graphics, mc, List.of(SlopmaticaKeys.layersMessage().getString()), 4, 4);
+            }
             return;
         }
         KeyMapping[] n = SlopmaticaKeys.VIEW_NUDGES;
@@ -435,7 +545,12 @@ public final class PlacementView {
         lines.add("Placement view: " + p.name() + (carryOffset != null ? "  (carrying)" : ""));
         lines.add("Fly: " + key(mc.options.keyUp) + key(mc.options.keyLeft) + key(mc.options.keyDown) + key(mc.options.keyRight)
             + ", " + key(mc.options.keyJump) + " / " + key(mc.options.keyShift) + ", " + key(mc.options.keySprint) + " faster");
-        lines.add(carryOffset == null ? "Left click: pick up   Right click: free cursor" : "Left click: put down   Right click: free cursor");
+        lines.add("Tool: " + tool.label().getString() + " (" + key(SlopmaticaKeys.VIEW_TOOL) + " to change)");
+        lines.add(switch (tool) {
+            case MOVE -> carryOffset == null ? "Left click: pick up   Right click: free cursor" : "Left click: put down   Right click: free cursor";
+            case SELECT -> "Left click: set a corner   Right click: free cursor";
+            default -> "Right click: free cursor, then drag a face of the box";
+        });
         lines.add("Rotate: " + key(SlopmaticaKeys.VIEW_ROTATE) + "   Mirror: " + key(SlopmaticaKeys.VIEW_MIRROR) + " (" + SlopmaticaActions.mirrorLabel(p.transform().mirror()) + ")");
         lines.add("Nudge: " + key(n[0]) + " " + key(n[1]) + " " + key(n[2]) + " " + key(n[3]) + "   up/down: " + key(n[4]) + " " + key(n[5]) + " or scroll");
         lines.add("Hold Shift to nudge 5 blocks");

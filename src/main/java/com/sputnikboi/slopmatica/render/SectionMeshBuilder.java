@@ -188,7 +188,7 @@ final class SectionMeshBuilder {
     private @Nullable BlockState expectedAt(int wx, int wy, int wz) {
         BlockState found = null;
         for (Placement.Transform t : in.transforms()) {
-            BlockState s = t.stateAt(wx, wy, wz);
+            BlockState s = t.shownStateAt(wx, wy, wz);
             if (s != null) {
                 if (!s.isAir()) {
                     return s;
@@ -202,7 +202,7 @@ final class SectionMeshBuilder {
     /** The block entity data of whichever placement supplied {@code want} at this position. */
     private @Nullable CompoundTag tileEntityAt(int wx, int wy, int wz, BlockState want) {
         for (Placement.Transform t : in.transforms()) {
-            if (t.stateAt(wx, wy, wz) == want) {
+            if (t.shownStateAt(wx, wy, wz) == want) {
                 return t.tileEntityAt(wx, wy, wz);
             }
         }

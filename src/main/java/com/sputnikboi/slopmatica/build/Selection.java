@@ -42,7 +42,11 @@ public final class Selection {
         } else {
             pos = mc.player.blockPosition();
         }
-        String dim = mc.level.dimension().identifier().toString();
+        setCorner(pos, mc.level.dimension().identifier().toString());
+    }
+
+    /** Sets the next corner (first, then second, then first again...) to a block. */
+    public void setCorner(BlockPos pos, String dim) {
         if (!dim.equals(dimension)) {
             first = second = null;
             nextIsFirst = true;
@@ -57,6 +61,14 @@ public final class Selection {
         BoundingBox box = box();
         String size = box == null ? "" : String.format("  (%d x %d x %d)", box.getXSpan(), box.getYSpan(), box.getZSpan());
         SlopmaticaActions.actionBar(Component.literal("Corner " + (nextIsFirst ? 2 : 1) + " at " + pos.toShortString() + size).withColor(SlopmaticaActions.ACCENT));
+    }
+
+    /** Replaces the whole selection with a box (the Modify tool). */
+    public void set(BoundingBox box, String dim) {
+        dimension = dim;
+        first = new BlockPos(box.minX(), box.minY(), box.minZ());
+        second = new BlockPos(box.maxX(), box.maxY(), box.maxZ());
+        nextIsFirst = true;
     }
 
     public void clear() {
@@ -95,7 +107,8 @@ public final class Selection {
         });
     }
 
-    private static void box(VertexConsumer b, PoseStack.Pose pose, Vec3 cam, double x0, double y0, double z0, double x1, double y1, double z1,
+    /** A line box from (x0, y0, z0) to (x1, y1, z1), grown by {@code grow} so it doesn't z-fight with block faces. */
+    public static void box(VertexConsumer b, PoseStack.Pose pose, Vec3 cam, double x0, double y0, double z0, double x1, double y1, double z1,
                             double grow, int color, float width) {
         float ax = (float) (x0 - grow - cam.x), ay = (float) (y0 - grow - cam.y), az = (float) (z0 - grow - cam.z);
         float bx = (float) (x1 + grow - cam.x), by = (float) (y1 + grow - cam.y), bz = (float) (z1 + grow - cam.z);
