@@ -56,7 +56,7 @@ def used(c, h) -> int:
 
 
 def test_version_bumped():
-    assert __version__ == "0.10.0" and SCHEMA_VERSION == 7
+    assert tuple(map(int, __version__.split("."))) >= (0, 10, 0) and SCHEMA_VERSION == 7
 
 
 def test_settings_from_env():

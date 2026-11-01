@@ -428,3 +428,66 @@ def test_real_litematics(path):
         if expected is not None:
             assert back.block_count() == expected
             assert convert.write(back, "litematic")["Metadata"]["TotalBlocks"] == expected
+
+
+# ------------------------------------------------------------------ the mod's settings (SlopmaticaMeta)
+
+
+def raw_meta(root: Compound, fmt: str) -> Compound:
+    """The SlopmaticaMeta compound where the mod looks for it."""
+    holder = root["Schematic"]["Metadata"] if fmt == "schem" else root
+    return holder[convert.META_KEY]
+
+
+def mod_origin(s: Schematic, fmt: str) -> tuple:
+    """The origin point measured from the build's min corner, the way the mod reads the file:
+    .schem and .nbt from 0,0,0, .litematic and .slopmatic from where their regions are."""
+    root = nbt.loads(nbt.dumps(convert.write(s, fmt)))[1]
+    origin = tuple(raw_meta(root, fmt)["Origin"])
+    lo = (0, 0, 0) if fmt in convert.ZERO_BASED else convert.read(root, fmt, "x").bounds()[0]
+    return tuple(o - l for o, l in zip(origin, lo))
+
+
+def with_meta(s: Schematic) -> Schematic:
+    # Regions start at (-4, 2, 3): the origin sits one block in from the min corner along x.
+    for r in s.regions:
+        r.pos = (r.pos[0] - 4, r.pos[1] + 2, r.pos[2] + 3)
+    s.meta = Compound({
+        "Biome": String("minecraft:plains"),
+        "Position": IntArray([100, 64, -20]),
+        "Rotation": String("CLOCKWISE_90"),
+        "MinVersion": String("1.21"),
+        "Origin": IntArray([-3, 2, 3]),
+    })
+    return s
+
+
+@pytest.mark.parametrize("src,dst", list(itertools.permutations(convert.FORMATS, 2)))
+def test_meta_survives_conversion(src, dst):
+    a = through(with_meta(synthetic(two_regions=(src == "litematic"))), src)
+    b = through(a, dst)
+    for s, fmt in ((a, src), (b, dst)):
+        assert mod_origin(s, fmt) == (1, 0, 0)
+        meta = raw_meta(convert.write(s, fmt), fmt)
+        assert meta["Biome"] == "minecraft:plains"
+        assert tuple(meta["Position"]) == (100, 64, -20)
+        assert meta["Rotation"] == "CLOCKWISE_90"
+        assert meta["MinVersion"] == "1.21"
+    assert mod_origin(through(b, src), src) == (1, 0, 0)
+
+
+def test_meta_in_a_mod_written_schem():
+    # The mod writes .schem with a zero Offset and its Origin relative to that.
+    s = synthetic()
+    s.meta = Compound({"Origin": IntArray([2, 0, 1])})
+    root = convert.write(s, "schem")
+    assert tuple(raw_meta(root, "schem")["Origin"]) == (2, 0, 1)
+    back = convert.read(root, "schem", "x")
+    assert tuple(raw_meta(convert.write(back, "litematic"), "litematic")["Origin"]) == (2, 0, 1)
+
+
+def test_no_meta_writes_none():
+    for fmt in convert.FORMATS:
+        root = convert.write(synthetic(), fmt)
+        holder = root["Schematic"]["Metadata"] if fmt == "schem" else root
+        assert convert.META_KEY not in holder

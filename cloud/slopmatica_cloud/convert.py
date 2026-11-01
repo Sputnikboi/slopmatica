@@ -110,6 +110,9 @@ class Schematic:
     description: str = ""
     created: int | None = None  # unix ms
     modified: int | None = None
+    # The mod's settings for the schematic (recommendations, origin point), kept as they are; its
+    # Origin is in this model's coordinates (see read and write).
+    meta: Compound | None = None
 
     def bounds(self) -> tuple[Vec3, Vec3]:
         """(min corner, enclosing size)."""
@@ -973,22 +976,64 @@ def format_of(filename: str) -> str | None:
     return next((f for f in FORMATS if lower.endswith("." + f)), None)
 
 
+# The mod's settings live in a SlopmaticaMeta compound that other tools ignore: in a .schem's
+# Metadata, elsewhere at the root. Its Origin is in the mod's coordinates for the file, which put a
+# .schem's or .nbt's min corner at 0,0,0 but take .litematic and .slopmatic regions where they are
+# stored, as this model does; so for .schem and .nbt it moves by the model's min corner.
+META_KEY = "SlopmaticaMeta"
+ZERO_BASED = ("schem", "nbt")
+
+
+def _meta_holder(root: Compound, fmt: str, create: bool) -> Compound | None:
+    if fmt != "schem":
+        return root
+    schematic = root.get("Schematic")
+    if not isinstance(schematic, Compound):
+        schematic = root
+    holder = schematic.get("Metadata")
+    if not isinstance(holder, Compound):
+        if not create:
+            return None
+        holder = schematic["Metadata"] = Compound()
+    return holder
+
+
+def _shift_origin(meta: Compound, by: Vec3) -> Compound:
+    out = Compound(meta)
+    origin = meta.get("Origin")
+    if isinstance(origin, IntArray) and len(origin) == 3:
+        out["Origin"] = IntArray([int(v) + d for v, d in zip(origin, by)])
+    return out
+
+
 def read(root: Any, fmt: str, fallback_name: str, max_volume: int = DEFAULT_MAX_VOLUME) -> Schematic:
     if not isinstance(root, Compound):
         raise ConversionError("the file's root tag is not a compound")
-    return READERS[fmt](root, fallback_name, max_volume)
+    s = READERS[fmt](root, fallback_name, max_volume)
+    holder = _meta_holder(root, fmt, create=False)
+    meta = holder.get(META_KEY) if holder is not None else None
+    if isinstance(meta, Compound) and meta:
+        s.meta = _shift_origin(meta, s.bounds()[0]) if fmt in ZERO_BASED and s.regions else Compound(meta)
+    return s
 
 
 def write(s: Schematic, fmt: str, max_volume: int = DEFAULT_MAX_VOLUME) -> Compound:
     if fmt == "litematic":
-        return write_litematic(s)
-    if fmt == "slopmatic":
-        return write_slopmatic(s)
-    if fmt == "nbt":
-        return write_structure(s, max_volume)
-    if fmt == "schem":
-        return write_sponge(s, max_volume)
-    raise ValueError(f"unknown format {fmt!r}")
+        root = write_litematic(s)
+    elif fmt == "slopmatic":
+        root = write_slopmatic(s)
+    elif fmt == "nbt":
+        root = write_structure(s, max_volume)
+    elif fmt == "schem":
+        root = write_sponge(s, max_volume)
+    else:
+        raise ValueError(f"unknown format {fmt!r}")
+    if s.meta:
+        meta = s.meta
+        if fmt in ZERO_BASED and s.regions:
+            meta = _shift_origin(meta, tuple(-v for v in s.bounds()[0]))  # type: ignore[arg-type]
+        _meta_holder(root, fmt, create=True)[META_KEY] = meta  # type: ignore[index]
+    return root
 
 
 def load(path: Path, max_volume: int = DEFAULT_MAX_VOLUME) -> Schematic:
