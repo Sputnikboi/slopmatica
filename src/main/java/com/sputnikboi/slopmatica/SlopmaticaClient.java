@@ -50,6 +50,7 @@ public final class SlopmaticaClient implements ClientModInitializer {
         LevelRenderEvents.COLLECT_SUBMITS.register(Selection.INSTANCE::submit);
         LevelRenderEvents.COLLECT_SUBMITS.register(PlacementView.INSTANCE::submitToolBoxes);
         LevelRenderEvents.COLLECT_SUBMITS.register(SpawnCheck.INSTANCE::submit);
+        LevelRenderEvents.COLLECT_SUBMITS.register(com.sputnikboi.slopmatica.render.IncompleteBoxes::submit);
         ClientTickEvents.END_CLIENT_TICK.register(SpawnCheck.INSTANCE::tick);
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "spawn_check"), (graphics, delta) -> SpawnCheck.INSTANCE.extractHud(graphics));
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "block_info"), (graphics, delta) -> BlockInfoHud.INSTANCE.extract(graphics));

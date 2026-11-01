@@ -169,6 +169,15 @@ public class SchematicBrowserScreen extends Screen {
         if (icon != null) {
             graphics.blit(RenderPipelines.GUI_TEXTURED, icon, left, layout.getHeaderHeight() + 8, 0, 0, size, size, full, full, full, full);
         }
+        // Modded schematics: say which mods, and that they stay off the cloud and the board.
+        java.util.Set<String> mods = com.sputnikboi.slopmatica.schematic.ModCheck.namespacesIfReady(selected.path);
+        if (mods != null && !mods.isEmpty()) {
+            int y = layout.getHeaderHeight() + 8 + size + 4;
+            for (var line : font.split(Component.translatable("slopmatica.browser.modded", String.join(", ", mods)), Math.max(60, width - left - 8))) {
+                graphics.text(font, line, left, y, 0xFFFFA030);
+                y += 10;
+            }
+        }
     }
 
     @Override

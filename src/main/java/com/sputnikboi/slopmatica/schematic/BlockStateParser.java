@@ -42,8 +42,10 @@ public final class BlockStateParser {
         Identifier id = Identifier.tryParse(name);
         Optional<Block> block = id == null ? Optional.empty() : BuiltInRegistries.BLOCK.getOptional(id);
         if (block.isEmpty()) {
+            // A block this game doesn't have (usually a mod that isn't installed): left out of the
+            // loaded build. Structure void means "no opinion", so the spot isn't demanded to be air.
             unknownBlocks.add(name);
-            return Blocks.AIR.defaultBlockState();
+            return Blocks.STRUCTURE_VOID.defaultBlockState();
         }
 
         BlockState state = block.get().defaultBlockState();
@@ -61,7 +63,13 @@ public final class BlockStateParser {
         return state;
     }
 
-    /** Block ids that exist in the file but not in this game version; they load as air. */
+    /** The block id a palette entry names, after upgrading, for reporting. */
+    public String nameOf(CompoundTag entry) {
+        CompoundTag tag = upgrade(entry);
+        return tag.getString("Name").or(() -> tag.getString("id")).orElse("minecraft:air");
+    }
+
+    /** Block ids that exist in the file but not in this game version; they are left out. */
     public Set<String> unknownBlocks() {
         return unknownBlocks;
     }

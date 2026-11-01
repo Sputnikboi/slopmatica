@@ -26,6 +26,8 @@ import net.minecraft.world.level.block.Rotation;
  */
 public final class SlopmaticaActions {
     public static final int ACCENT = 0xFF55CCFF;
+    /** Orange, like the outline around builds with missing blocks. */
+    public static final int WARNING = 0xFFFFA030;
     public static final int ERROR = 0xFFFF5555;
 
     private SlopmaticaActions() {
@@ -64,10 +66,44 @@ public final class SlopmaticaActions {
             var size = schematic.bounds();
             feedback.accept(prefix().append(String.format(Locale.ROOT, "Placed %s at %d %d %d (%d x %d x %d, %,d blocks)",
                 placement.name(), origin.getX(), origin.getY(), origin.getZ(), size.getXSpan(), size.getYSpan(), size.getZSpan(), schematic.blockCount())));
-            if (!schematic.unknownBlocks().isEmpty()) {
-                feedback.accept(Component.literal("[Slopmatica] Unknown blocks shown as air: " + String.join(", ", schematic.unknownBlocks())).withColor(ERROR));
+            if (schematic.incomplete()) {
+                feedback.accept(missingWarning(schematic));
             }
         }, Minecraft.getInstance());
+    }
+
+    /**
+     * "Left out 1,204 blocks this game doesn't have: create:shaft (800), create:cogwheel (300) and
+     * 3 more kinds". The most common first, so it is obvious which mod is missing.
+     */
+    public static Component missingWarning(Schematic schematic) {
+        StringBuilder text = new StringBuilder("[Slopmatica] ");
+        if (!schematic.missingBlocks().isEmpty()) {
+            long total = schematic.missingBlocks().values().stream().mapToLong(Long::longValue).sum();
+            text.append(String.format(Locale.ROOT, "Left out %,d %s this game doesn't have: ", total, total == 1 ? "block" : "blocks")).append(topList(schematic.missingBlocks()));
+        }
+        if (!schematic.missingEntities().isEmpty()) {
+            int total = schematic.missingEntities().values().stream().mapToInt(Integer::intValue).sum();
+            text.append(schematic.missingBlocks().isEmpty() ? "" : ". ")
+                .append(String.format(Locale.ROOT, "Left out %,d %s: ", total, total == 1 ? "entity" : "entities")).append(topList(schematic.missingEntities()));
+        }
+        if (!schematic.modNamespaces().isEmpty()) {
+            text.append(". Needs: ").append(String.join(", ", schematic.modNamespaces()));
+        }
+        return Component.literal(text.toString()).withColor(WARNING);
+    }
+
+    private static String topList(java.util.Map<String, ? extends Number> counts) {
+        java.util.List<String> parts = new java.util.ArrayList<>();
+        int shown = 0;
+        for (var e : counts.entrySet()) {
+            if (shown++ == 4) {
+                parts.add((counts.size() - 4) + " more kinds");
+                break;
+            }
+            parts.add(String.format(Locale.ROOT, "%s (%,d)", e.getKey(), e.getValue().longValue()));
+        }
+        return String.join(", ", parts);
     }
 
     public static void moveTo(Placement p, BlockPos origin, Consumer<Component> feedback) {

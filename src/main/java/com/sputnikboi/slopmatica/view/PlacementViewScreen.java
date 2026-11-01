@@ -157,13 +157,18 @@ public class PlacementViewScreen extends Screen {
                 continue;
             }
             boolean current = p == view.placement();
-            Component name = Component.literal((p.visible() ? "✔ " : "✖ ") + p.name())
+            boolean incomplete = p.schematic().incomplete();
+            Component name = Component.literal((p.visible() ? "✔ " : "✖ ") + (incomplete ? "⚠ " : "") + p.name())
                 .withStyle(current ? ChatFormatting.YELLOW : p.visible() ? ChatFormatting.WHITE : ChatFormatting.DARK_GRAY);
+            Component tip = Component.translatable("slopmatica.builds.toggle");
+            if (incomplete) {
+                tip = tip.copy().append("\n\n").append(SlopmaticaActions.missingWarning(p.schematic()));
+            }
             addRenderableWidget(Button.builder(name, b -> {
                 p.setVisible(!p.visible());
                 PlacementManager.INSTANCE.changed();
                 rebuildWidgets();
-            }).bounds(x, y, nameW, B).tooltip(Tooltip.create(Component.translatable("slopmatica.builds.toggle"))).build());
+            }).bounds(x, y, nameW, B).tooltip(Tooltip.create(tip)).build());
             addRenderableWidget(Button.builder(Component.literal("☰").withStyle(p.panelOpen ? ChatFormatting.AQUA : ChatFormatting.WHITE), b -> {
                 p.panelOpen = !p.panelOpen;
                 if (!p.panelOpen) {

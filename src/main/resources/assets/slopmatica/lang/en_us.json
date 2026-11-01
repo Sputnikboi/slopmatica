@@ -306,5 +306,6 @@
   "slopmatica.spawn.none": "No spots where mobs can spawn",
   "slopmatica.spawn.always": "   %s spots dark even by day (no sky light)",
   "slopmatica.spawn.night": "   %s more only at night",
-  "slopmatica.spawn.area": "Area %s x %s x %s"
+  "slopmatica.spawn.area": "Area %s x %s x %s",
+  "slopmatica.browser.modded": "Modded (%s): stays on this computer, not synced to the cloud or posted to the board"
 }

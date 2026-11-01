@@ -1,5 +1,6 @@
 package com.sputnikboi.slopmatica.cloud;
 
+import com.sputnikboi.slopmatica.schematic.ModCheck;
 import com.google.gson.Gson;
 import com.mojang.blaze3d.Blaze3D;
 import com.google.gson.GsonBuilder;
@@ -244,6 +245,12 @@ public final class CloudSync {
             SlopmaticaActions.actionBar(Component.literal("Log in to the cloud first (menu → Cloud)").withColor(SlopmaticaActions.ERROR));
             return;
         }
+        Set<String> mods = ModCheck.namespaces(file);
+        if (!mods.isEmpty()) {
+            SlopmaticaActions.actionBar(Component.literal("Schematics with modded blocks stay on this computer (uses " + String.join(", ", mods) + ")")
+                .withColor(SlopmaticaActions.ERROR));
+            return;
+        }
         worker.execute(() -> {
             try {
                 Path dir = cloudDir();
@@ -315,7 +322,7 @@ public final class CloudSync {
 
         Set<String> paths = new HashSet<>(remote.keySet());
         paths.addAll(local.keySet());
-        int up = 0, down = 0, removed = 0;
+        int up = 0, down = 0, removed = 0, keptModded = 0;
         boolean quotaHit = false;
         Path root = dir.toAbsolutePath().normalize();
         for (String path : paths) {
@@ -332,7 +339,9 @@ public final class CloudSync {
                     state.synced.put(path, r);
                     down++;
                 } else if (r.equals(base)) {
-                    if (quotaHit || !upload(dir, path, l)) {
+                    if (!ModCheck.namespaces(dir.resolve(path)).isEmpty()) {
+                        keptModded++;
+                    } else if (quotaHit || !upload(dir, path, l)) {
                         quotaHit = true;
                     } else {
                         state.synced.put(path, l);
@@ -353,6 +362,9 @@ public final class CloudSync {
                     trash(dir, path);
                     state.synced.remove(path);
                     removed++;
+                } else if (!ModCheck.namespaces(dir.resolve(path)).isEmpty()) {
+                    // Modded schematics never go to the cloud (they'd be broken for everyone without the mod).
+                    keptModded++;
                 } else if (quotaHit || !upload(dir, path, l)) {
                     quotaHit = true;
                 } else {
@@ -392,6 +404,9 @@ public final class CloudSync {
             CloudPresence.INSTANCE.refresh();
         }
         status = quotaHit ? "Cloud storage is full: some files were not uploaded" : "Synced " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm"));
+        if (keptModded > 0) {
+            status += " (" + keptModded + " modded file" + (keptModded == 1 ? "" : "s") + " kept on this computer)";
+        }
     }
 
     /** Uploads one file and its icon; false if the account's storage is full. */
