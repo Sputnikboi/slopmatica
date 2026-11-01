@@ -48,14 +48,17 @@ public class WelcomeScreen extends Screen {
     @Override
     protected void init() {
         int left = width / 2 - WIDTH / 2;
-        top = Math.max(6, (height - 250) / 2);
+        top = Math.max(6, (height - 274) / 2);
         int y = top + 48;
 
         // Keys made here survive re-init (resizing) because the buttons are rebuilt from pending values.
         List<InputConstants.@Nullable Key> pending = keyButtons.stream().map(b -> b.pending).toList();
         keyButtons.clear();
+        // Menu on the left; the Quick Menu over the build view on the right.
         keyButtons.add(addRenderableWidget(new KeyButton(left, y, SlopmaticaKeys.openMenu(), "slopmatica.welcome.key.menu", pending.isEmpty() ? null : pending.get(0))));
-        keyButtons.add(addRenderableWidget(new KeyButton(left + HALF + 10, y, SlopmaticaKeys.PLACEMENT_VIEW, "slopmatica.welcome.key.view", pending.size() < 2 ? null : pending.get(1))));
+        keyButtons.add(addRenderableWidget(new KeyButton(left + HALF + 10, y, SlopmaticaKeys.QUICK_MENU, "slopmatica.welcome.key.quick", pending.size() < 2 ? null : pending.get(1))));
+        keyButtons.add(addRenderableWidget(new KeyButton(left + HALF + 10, y + 24, SlopmaticaKeys.PLACEMENT_VIEW, "slopmatica.welcome.key.view", pending.size() < 3 ? null : pending.get(2))));
+        y += 24;
 
         if (Online.available()) {
             y += 44;
@@ -128,6 +131,7 @@ public class WelcomeScreen extends Screen {
 
         int y = top + 48;
         graphics.text(font, Component.translatable("slopmatica.welcome.keys").withStyle(ChatFormatting.BOLD), left, y - 11, -1);
+        y += 24; // the second row of keys
         if (Online.available()) {
             y += 44;
             graphics.text(font, Component.translatable("slopmatica.welcome.cloud").withStyle(ChatFormatting.BOLD), left, y - 11, -1);
