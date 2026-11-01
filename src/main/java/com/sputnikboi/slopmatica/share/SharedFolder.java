@@ -32,8 +32,6 @@ public final class SharedFolder {
     private static final Logger LOGGER = LoggerFactory.getLogger("Slopmatica");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final String SETTINGS = "settings.json";
-    /** Settings that belong to this instance alone. */
-    private static final Set<String> INSTANCE_ONLY = Set.of("shareSchematics", "shareSettings", "sharedFolder", "welcomeShown");
 
     private SharedFolder() {
     }
@@ -103,20 +101,9 @@ public final class SharedFolder {
             if (!shared.isJsonObject()) {
                 return false;
             }
-            JsonObject merged = GSON.toJsonTree(config).getAsJsonObject();
-            for (var e : shared.getAsJsonObject().entrySet()) {
-                if (!INSTANCE_ONLY.contains(e.getKey())) {
-                    merged.add(e.getKey(), e.getValue());
-                }
-            }
-            SlopmaticaConfig loaded = GSON.fromJson(merged, SlopmaticaConfig.class);
-            for (var field : SlopmaticaConfig.class.getFields()) {
-                if (!java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
-                    field.set(config, field.get(loaded));
-                }
-            }
+            config.applyShared(shared.getAsJsonObject());
             return true;
-        } catch (IOException | RuntimeException | IllegalAccessException e) {
+        } catch (IOException | RuntimeException e) {
             LOGGER.warn("Could not read shared settings {}", file, e);
             return false;
         }
@@ -126,8 +113,7 @@ public final class SharedFolder {
     public static void push(SlopmaticaConfig config) {
         Path file = folder(config).resolve(SETTINGS);
         try {
-            JsonObject json = GSON.toJsonTree(config).getAsJsonObject();
-            INSTANCE_ONLY.forEach(json::remove);
+            JsonObject json = config.shareableJson();
             Files.createDirectories(file.getParent());
             Path tmp = file.resolveSibling(SETTINGS + ".tmp");
             Files.writeString(tmp, GSON.toJson(json), StandardCharsets.UTF_8);

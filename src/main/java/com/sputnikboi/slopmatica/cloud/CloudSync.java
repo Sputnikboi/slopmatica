@@ -80,6 +80,7 @@ public final class CloudSync {
         public boolean autosync = true;
     }
 
+    private volatile @Nullable String applyUrl;
     private final HttpClient http = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NORMAL).build();
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "Slopmatica cloud");
@@ -124,6 +125,11 @@ public final class CloudSync {
 
     public boolean loggedIn() {
         return account.token != null && !account.url.isBlank();
+    }
+
+    /** Where to apply for access, while the server refuses this account as not whitelisted; else null. */
+    public @Nullable String applyUrl() {
+        return applyUrl;
     }
 
     public String status() {
@@ -196,6 +202,7 @@ public final class CloudSync {
                 readUsage(result);
                 saveAccount();
                 status = "Logged in as " + account.name;
+                SettingsProfiles.INSTANCE.onLogin();
                 syncNow();
             } catch (Exception e) {
                 status = "Login failed: " + message(e);
@@ -478,11 +485,11 @@ public final class CloudSync {
 
     // ---- HTTP -----------------------------------------------------------------------------
 
-    private JsonObject getJson(String path) throws Exception {
+    JsonObject getJson(String path) throws Exception {
         return parse(check(request("GET", path, HttpRequest.BodyPublishers.noBody(), Map.of(), true)));
     }
 
-    private JsonObject postJson(String path, JsonObject body, boolean auth) throws Exception {
+    JsonObject postJson(String path, JsonObject body, boolean auth) throws Exception {
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri(path)).timeout(Duration.ofSeconds(30))
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(body.toString()));
@@ -492,7 +499,7 @@ public final class CloudSync {
         return parse(check(http.send(builder.build(), HttpResponse.BodyHandlers.ofString())));
     }
 
-    private HttpResponse<String> request(String method, String path, HttpRequest.BodyPublisher body, Map<String, String> headers, boolean checked) throws Exception {
+    HttpResponse<String> request(String method, String path, HttpRequest.BodyPublisher body, Map<String, String> headers, boolean checked) throws Exception {
         HttpRequest.Builder builder = authorized(HttpRequest.newBuilder(uri(path))).timeout(Duration.ofMinutes(5)).method(method, body);
         headers.forEach(builder::header);
         HttpResponse<String> response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
@@ -513,12 +520,19 @@ public final class CloudSync {
         if (code / 100 != 2) {
             String error = "HTTP " + code;
             try {
-                error = JsonParser.parseString(response.body()).getAsJsonObject().get("error").getAsString();
+                JsonObject json = JsonParser.parseString(response.body()).getAsJsonObject();
+                error = json.get("error").getAsString();
+                if (code == 403 && json.has("code") && "not_whitelisted".equals(json.get("code").getAsString())) {
+                    // The cloud is for Fruitbowl members; the server says where to apply.
+                    applyUrl = json.has("apply") && !json.get("apply").isJsonNull() ? json.get("apply").getAsString() : account.url + "/apply";
+                    error = "Cloud access is for Fruitbowl members: apply in the Cloud menu";
+                }
             } catch (RuntimeException ignored) {
                 // Not our JSON error shape.
             }
             throw new IOException(error);
         }
+        applyUrl = null;
         return response;
     }
 

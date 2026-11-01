@@ -34,6 +34,8 @@ public class CloudScreen extends Screen {
     private Button loginButton;
     private Button websiteButton;
     private Button passwordButton;
+    private boolean applyShown;
+    private Button profilesButton;
     private Button syncButton;
     private Button autosyncButton;
 
@@ -83,6 +85,18 @@ public class CloudScreen extends Screen {
             refresh();
         }).width((WIDTH - 6) / 2).build());
 
+        applyShown = cloud.applyUrl() != null;
+        if (applyShown) {
+            // Only while the server turns this account away: a way to ask for access.
+            column.addChild(Button.builder(Component.translatable("slopmatica.cloud.apply"), b -> {
+                String apply = cloud.applyUrl();
+                if (apply != null) {
+                    net.minecraft.client.gui.screens.ConfirmLinkScreen.confirmLinkNow(this, java.net.URI.create(apply));
+                }
+            }).width(WIDTH).tooltip(Tooltip.create(Component.translatable("slopmatica.cloud.apply.tooltip"))).build());
+        }
+        profilesButton = column.addChild(Button.builder(Component.translatable("slopmatica.cloud.profiles"), b -> minecraft.gui.setScreen(new ProfilePickerScreen(this)))
+            .width(WIDTH).tooltip(Tooltip.create(Component.translatable("slopmatica.cloud.profiles.tooltip"))).build());
         passwordButton = column.addChild(Button.builder(Component.translatable("slopmatica.cloud.password"), b -> cloud.openWebsite("/account"))
             .width(WIDTH).tooltip(Tooltip.create(Component.translatable("slopmatica.cloud.password.tooltip"))).build());
         column.addChild(Button.builder(Component.translatable("slopmatica.cloud.folder"), b -> {
@@ -122,6 +136,11 @@ public class CloudScreen extends Screen {
         loginButton.active = !url.getValue().isBlank();
         websiteButton.active = in && !urlChanged;
         passwordButton.active = in && !urlChanged;
+        if ((cloud.applyUrl() != null) != applyShown) {
+            rebuildWidgets();
+            return;
+        }
+        profilesButton.active = in && !urlChanged;
         syncButton.active = in && !urlChanged && !cloud.syncing();
         autosyncButton.setMessage(Component.translatable(cloud.account().autosync ? "slopmatica.cloud.autosync_on" : "slopmatica.cloud.autosync_off"));
         layout.arrangeElements();

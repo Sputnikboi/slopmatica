@@ -101,6 +101,7 @@ public final class DevHarness {
                     case "welcome" -> new com.sputnikboi.slopmatica.gui.WelcomeScreen(null);
                     case "import" -> new com.sputnikboi.slopmatica.gui.LitematicaImportScreen(null);
                     case "plan" -> new com.sputnikboi.slopmatica.gui.InventoryPlanScreen(null);
+                    case "profiles" -> new com.sputnikboi.slopmatica.gui.ProfilePickerScreen(null);
                     case "inventory" -> new net.minecraft.client.gui.screens.inventory.InventoryScreen(mc.player);
                     case "materials" -> new MaterialListScreen(null, PlacementManager.INSTANCE.selected().orElseThrow());
                     case "keybinds" -> new KeyBindsScreen(null, mc.options);

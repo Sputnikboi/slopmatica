@@ -384,5 +384,19 @@
   "slopmatica.options.dev_build.tooltip": "Adds a synthetic build (about 60% filled with a mix of tricky blocks) at your feet. Test builds aren't saved; also /slopmatica dev stress x y z.",
   "slopmatica.options.dev_copies": "24 Copies of Selected",
   "slopmatica.options.dev_copies.tooltip": "Many placements at once, in a grid beside the selected build. Also /slopmatica dev copies <n>.",
-  "slopmatica.options.dev_clear": "Remove Test Builds"
+  "slopmatica.options.dev_clear": "Remove Test Builds",
+  "slopmatica.cloud.apply": "Apply for Access...",
+  "slopmatica.cloud.apply.tooltip": "Slopmatica Cloud is for players on the Fruitbowl server. Opens the website's application form.",
+  "slopmatica.cloud.profiles": "Settings Profiles...",
+  "slopmatica.cloud.profiles.tooltip": "Keep your Slopmatica settings in the cloud and use the same ones in other instances and on other computers.",
+  "slopmatica.profiles.title": "Settings Profiles",
+  "slopmatica.profiles.intro": "Choose the settings this instance follows (%s of %s profiles used)",
+  "slopmatica.profiles.use": "Use these settings here and keep them in sync. Last changed %s.",
+  "slopmatica.profiles.delete": "Delete this profile (instances using it keep their current settings)",
+  "slopmatica.profiles.name": "New profile name",
+  "slopmatica.profiles.save": "Save Current",
+  "slopmatica.profiles.save.tooltip": "Save this instance's settings as a new profile, and follow it.",
+  "slopmatica.profiles.stop": "Don't Follow a Profile",
+  "slopmatica.profiles.stop.tooltip": "Keep this instance's settings to itself. The profiles stay in the cloud.",
+  "slopmatica.profiles.intro_unknown": "Choose the settings this instance follows"
 }

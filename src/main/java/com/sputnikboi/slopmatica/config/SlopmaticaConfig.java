@@ -38,6 +38,14 @@ public final class SlopmaticaConfig {
     public boolean shareSettings = false;
     /** A custom shared folder, or null for the default one every install checks. */
     public @org.jspecify.annotations.Nullable String sharedFolder;
+    /** The cloud settings profile this instance follows (its id), or null. */
+    public @org.jspecify.annotations.Nullable String cloudProfile;
+    /** Changes here go to the cloud profile, and its changes come here. */
+    public boolean cloudProfileSync = false;
+    /** The "pick a settings profile" question was asked in this instance. */
+    public boolean profilePromptShown = false;
+    /** When the profile was last taken from the cloud (server time, seconds). */
+    public long cloudProfilePulled = 0;
     /** Developer frame-time overlay (advanced settings). */
     public boolean devOverlay = false;
     /** Opted in to sending anonymous usage data to the Slopmatica cloud server. Off unless chosen. */
@@ -102,6 +110,37 @@ public final class SlopmaticaConfig {
     /** Ghost items in empty inventory slots and container highlights. */
     public boolean planShowInInventory = true;
 
+    /** Settings that belong to one instance: never copied by shared folders or cloud profiles. */
+    public static final java.util.Set<String> INSTANCE_ONLY = java.util.Set.of("shareSchematics", "shareSettings", "sharedFolder", "welcomeShown",
+        "cloudProfile", "cloudProfileSync", "profilePromptShown", "cloudProfilePulled");
+
+    /** These settings as JSON, without the instance-only ones: what a shared copy or profile holds. */
+    public com.google.gson.JsonObject shareableJson() {
+        com.google.gson.JsonObject json = GSON.toJsonTree(this).getAsJsonObject();
+        INSTANCE_ONLY.forEach(json::remove);
+        return json;
+    }
+
+    /** Takes shared settings (from a shared folder or a profile), keeping this instance's own choices. */
+    public void applyShared(com.google.gson.JsonObject shared) {
+        com.google.gson.JsonObject merged = GSON.toJsonTree(this).getAsJsonObject();
+        for (var e : shared.entrySet()) {
+            if (!INSTANCE_ONLY.contains(e.getKey())) {
+                merged.add(e.getKey(), e.getValue());
+            }
+        }
+        SlopmaticaConfig loaded = GSON.fromJson(merged, SlopmaticaConfig.class).sanitized();
+        try {
+            for (var field : SlopmaticaConfig.class.getFields()) {
+                if (!java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
+                    field.set(this, field.get(loaded));
+                }
+            }
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     public static SlopmaticaConfig get() {
         if (instance == null) {
             instance = load();
@@ -164,6 +203,9 @@ public final class SlopmaticaConfig {
         }
         if (shareSettings) {
             com.sputnikboi.slopmatica.share.SharedFolder.push(this);
+        }
+        if (cloudProfileSync && cloudProfile != null) {
+            com.sputnikboi.slopmatica.cloud.SettingsProfiles.INSTANCE.onConfigSaved();
         }
     }
 

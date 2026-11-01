@@ -59,6 +59,7 @@ public final class SlopmaticaClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(PlacementBuilder.INSTANCE::tick);
         ClientTickEvents.END_CLIENT_TICK.register(SchematicThumbnails.INSTANCE::tick);
         ClientTickEvents.END_CLIENT_TICK.register(mc -> CloudSync.INSTANCE.tick());
+        ClientTickEvents.END_CLIENT_TICK.register(mc -> com.sputnikboi.slopmatica.cloud.SettingsProfiles.INSTANCE.tick());
         ClientLevelEvents.AFTER_CLIENT_LEVEL_CHANGE.register((mc, level) -> PlacementView.INSTANCE.exit(mc));
         // First run: the welcome screen, once, over the title screen.
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
