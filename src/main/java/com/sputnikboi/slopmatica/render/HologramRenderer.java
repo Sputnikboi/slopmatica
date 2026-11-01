@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.DynamicGpuData;
 import net.minecraft.client.renderer.RenderPipelines;
@@ -33,6 +34,7 @@ import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -57,9 +59,11 @@ public final class HologramRenderer {
     private static final Vector3f NO_OFFSET = new Vector3f();
     private static final Matrix4f IDENTITY = new Matrix4f();
 
+    private static final double BLOCK_ENTITY_RANGE = 64;
     private final Long2ObjectOpenHashMap<Section> sections = new Long2ObjectOpenHashMap<>();
     private final ConcurrentLinkedQueue<SectionMeshBuilder.Output> finished = new ConcurrentLinkedQueue<>();
-    private final int workerCount = Math.clamp(Runtime.getRuntime().availableProcessors() / 2, 1, 4);
+    /** Mesh-building threads: half the cores, at most 4. {@code -Dslopmatica.workers=1} simulates a weak CPU. */
+    private final int workerCount = Integer.getInteger("slopmatica.workers", Math.clamp(Runtime.getRuntime().availableProcessors() / 2, 1, 4));
     private final ExecutorService workers = Executors.newFixedThreadPool(workerCount, r -> {
         Thread t = new Thread(r, "Slopmatica mesh builder");
         t.setDaemon(true);
@@ -70,6 +74,8 @@ public final class HologramRenderer {
     private boolean layoutDirty = true;
     /** Set when a layout refresh starts; cleared (and logged) once every section has caught up. */
     private long rebuildStartedNanos;
+    /** How long the last full rebuild took, for the developer overlay; -1 before the first. */
+    private long lastRebuildMs = -1;
     private BlockStateModelSet lastModels;
     private boolean hidden;
     private boolean renderFailureLogged;
@@ -117,6 +123,27 @@ public final class HologramRenderer {
     }
 
     /** Placements were added, removed, moved or hidden. */
+    /** Whether any of a section can be on screen; sections behind you cost nothing to skip. */
+    private static boolean inView(Frustum frustum, long key) {
+        double x = SectionPos.sectionToBlockCoord(SectionPos.x(key)), y = SectionPos.sectionToBlockCoord(SectionPos.y(key)), z = SectionPos.sectionToBlockCoord(SectionPos.z(key));
+        // Grown a little: outlines sit just outside their blocks.
+        return frustum.isVisible(new AABB(x - 0.5, y - 0.5, z - 0.5, x + 16.5, y + 16.5, z + 16.5));
+    }
+
+    /** Block-entity ghosts (chests, signs, banners) only within vanilla's block entity range. */
+    private static boolean withinBlockEntityRange(long key, Vec3 camera) {
+        double cx = SectionPos.sectionToBlockCoord(SectionPos.x(key)) + 8, cy = SectionPos.sectionToBlockCoord(SectionPos.y(key)) + 8, cz = SectionPos.sectionToBlockCoord(SectionPos.z(key)) + 8;
+        double reach = BLOCK_ENTITY_RANGE + 14; // Section half-diagonal.
+        return camera.distanceToSqr(cx, cy, cz) < reach * reach;
+    }
+
+    /** One line for the developer overlay: sections, builds in flight, last rebuild time, threads. */
+    public String stats() {
+        long building = rebuildStartedNanos != 0 ? (System.nanoTime() - rebuildStartedNanos) / 1_000_000 : -1;
+        return String.format(java.util.Locale.ROOT, "Hologram: %d sections, %d building, last rebuild %s, %d threads",
+            sections.size(), inFlight.get(), building >= 0 ? "running " + building + " ms" : lastRebuildMs >= 0 ? lastRebuildMs + " ms" : "-", workerCount);
+    }
+
     public void onPlacementsChanged() {
         layoutDirty = true;
     }
@@ -191,8 +218,10 @@ public final class HologramRenderer {
         try {
             Vec3 camera = context.levelState().cameraRenderState.pos;
             List<List<SectionMeshBuilder.SpecialGhost>> nearby = new ArrayList<>();
+            Frustum frustum = Minecraft.getInstance().gameRenderer.mainCamera().getCullFrustum();
             for (Section section : sections.values()) {
-                if (!section.specials.isEmpty() && section.mesh != null && level.hasChunk(SectionPos.x(section.key), SectionPos.z(section.key))) {
+                if (!section.specials.isEmpty() && section.mesh != null && level.hasChunk(SectionPos.x(section.key), SectionPos.z(section.key))
+                    && withinBlockEntityRange(section.key, camera) && inView(frustum, section.key)) {
                     nearby.add(section.specials);
                 }
             }
@@ -229,7 +258,8 @@ public final class HologramRenderer {
         uploadFinished();
         scheduleBuilds(mc, level, camera, maxDistance);
         if (rebuildStartedNanos != 0 && inFlight.get() == 0 && finished.isEmpty() && !hasPendingWork(level, camera, maxDistance)) {
-            LOGGER.info("Hologram rebuilt: {} sections in {} ms", sections.size(), (System.nanoTime() - rebuildStartedNanos) / 1_000_000);
+            lastRebuildMs = (System.nanoTime() - rebuildStartedNanos) / 1_000_000;
+            LOGGER.info("Hologram rebuilt: {} sections in {} ms", sections.size(), lastRebuildMs);
             rebuildStartedNanos = 0;
         }
         if (!hidden) {
@@ -365,6 +395,7 @@ public final class HologramRenderer {
 
     private void draw(Minecraft mc, ClientLevel level, Vec3 camera, int maxDistance) {
         int camX = SectionPos.posToSectionCoord(camera.x), camZ = SectionPos.posToSectionCoord(camera.z);
+        Frustum frustum = mc.gameRenderer.mainCamera().getCullFrustum();
         List<Section> visible = new ArrayList<>();
         int maxQuadIndices = 0, maxLineIndices = 0;
         for (Section section : sections.values()) {
@@ -373,7 +404,7 @@ public final class HologramRenderer {
                 continue;
             }
             int x = SectionPos.x(section.key), z = SectionPos.z(section.key);
-            if (Math.abs(x - camX) > maxDistance || Math.abs(z - camZ) > maxDistance || !level.hasChunk(x, z)) {
+            if (Math.abs(x - camX) > maxDistance || Math.abs(z - camZ) > maxDistance || !level.hasChunk(x, z) || !inView(frustum, section.key)) {
                 continue;
             }
             visible.add(section);

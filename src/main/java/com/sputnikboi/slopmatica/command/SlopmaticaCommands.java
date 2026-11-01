@@ -130,6 +130,29 @@ public final class SlopmaticaCommands {
             return 1;
         })));
 
+        root.then(literal("dev")
+            .then(literal("stress").then(argument("x", integer(1, 512)).then(argument("y", integer(1, 384)).then(argument("z", integer(1, 512)).executes(c -> {
+                com.sputnikboi.slopmatica.dev.StressTest.INSTANCE.spawn(Minecraft.getInstance(), getInteger(c, "x"), getInteger(c, "y"), getInteger(c, "z"));
+                return 1;
+            })))))
+            .then(literal("copies").then(argument("count", integer(1, 400)).executes(c -> {
+                com.sputnikboi.slopmatica.dev.StressTest.INSTANCE.copies(Minecraft.getInstance(), getInteger(c, "count"));
+                return 1;
+            })))
+            .then(literal("rebuild").executes(c -> {
+                com.sputnikboi.slopmatica.dev.StressTest.INSTANCE.rebuild();
+                return 1;
+            }))
+            .then(literal("clear").executes(c -> {
+                com.sputnikboi.slopmatica.dev.StressTest.INSTANCE.clear();
+                return 1;
+            }))
+            .then(literal("overlay").executes(c -> {
+                var config = com.sputnikboi.slopmatica.config.SlopmaticaConfig.get();
+                config.devOverlay = !config.devOverlay;
+                config.save();
+                return 1;
+            })));
         root.then(literal("spawncheck").executes(c -> {
             SpawnCheck.INSTANCE.toggle(Minecraft.getInstance());
             return 1;

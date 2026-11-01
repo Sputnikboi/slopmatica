@@ -67,6 +67,7 @@ public final class SlopmaticaClient implements ClientModInitializer {
             }
         });
         com.sputnikboi.slopmatica.plan.InventoryOverlay.register();
+        HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "dev_overlay"), (graphics, delta) -> com.sputnikboi.slopmatica.dev.StressTest.INSTANCE.extractHud(graphics));
         ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> com.sputnikboi.slopmatica.plan.InventoryPlanner.INSTANCE.clear());
         DevHarness.install();
     }

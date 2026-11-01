@@ -180,6 +180,9 @@ public final class PlacementStore {
         JsonArray entries = new JsonArray();
         Placement selected = PlacementManager.INSTANCE.selected().orElse(null);
         for (Placement p : PlacementManager.INSTANCE.placements()) {
+            if (com.sputnikboi.slopmatica.dev.StressTest.INSTANCE.isTest(p)) {
+                continue; // Developer test builds are throwaway.
+            }
             Placement.Transform t = p.transform();
             JsonObject e = new JsonObject();
             e.addProperty("name", p.name());

@@ -158,6 +158,23 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
         }
 
         if (advanced) {
+            var dev = com.sputnikboi.slopmatica.dev.StressTest.INSTANCE;
+            list.addHeader(Component.translatable("slopmatica.options.developer"));
+            list.addSmall(
+                toggle("slopmatica.options.dev_overlay", c.devOverlay, v -> c.devOverlay = v, false).createButton(minecraft.options),
+                Button.builder(Component.translatable("slopmatica.options.dev_rebuild"), b -> dev.rebuild()).width(WIDE).build());
+            list.addSmall(
+                Button.builder(Component.literal("Test Build 64³"), b -> dev.spawn(minecraft, 64, 64, 64)).width(WIDE)
+                    .tooltip(Tooltip.create(Component.translatable("slopmatica.options.dev_build.tooltip"))).build(),
+                Button.builder(Component.literal("Test Build 128³"), b -> dev.spawn(minecraft, 128, 128, 128)).width(WIDE)
+                    .tooltip(Tooltip.create(Component.translatable("slopmatica.options.dev_build.tooltip"))).build());
+            list.addSmall(
+                Button.builder(Component.literal("Test Build 256×128×256"), b -> dev.spawn(minecraft, 256, 128, 256)).width(WIDE)
+                    .tooltip(Tooltip.create(Component.translatable("slopmatica.options.dev_build.tooltip"))).build(),
+                Button.builder(Component.translatable("slopmatica.options.dev_copies"), b -> dev.copies(minecraft, 24)).width(WIDE)
+                    .tooltip(Tooltip.create(Component.translatable("slopmatica.options.dev_copies.tooltip"))).build());
+            list.addSmall(Button.builder(Component.translatable("slopmatica.options.dev_clear"), b -> dev.clear()).width(WIDE).build(), null);
+
             list.addHeader(Component.translatable("slopmatica.options.cloud"));
             EditBox url = new EditBox(font, 0, 0, WIDE, 20, Component.translatable("slopmatica.cloud.server"));
             url.setMaxLength(256);

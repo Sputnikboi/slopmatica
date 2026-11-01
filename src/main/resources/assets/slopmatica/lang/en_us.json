@@ -376,5 +376,13 @@
   "slopmatica.browser.tab.shared.tooltip": "Schematics shared by every instance on this computer: %s",
   "slopmatica.welcome.shared": "Use Settings From My Other Instances",
   "slopmatica.welcome.shared.done": "Using shared settings and schematics",
-  "slopmatica.welcome.shared.tooltip": "Another Minecraft instance on this computer shares its Slopmatica settings. Use them here too (and the shared schematics folder)."
+  "slopmatica.welcome.shared.tooltip": "Another Minecraft instance on this computer shares its Slopmatica settings. Use them here too (and the shared schematics folder).",
+  "slopmatica.options.developer": "Developer",
+  "slopmatica.options.dev_overlay": "Frame-Time Overlay",
+  "slopmatica.options.dev_overlay.tooltip": "A graph of frame times with averages and the hologram's rebuild stats, bottom left. Also /slopmatica dev overlay.",
+  "slopmatica.options.dev_rebuild": "Force Rebuild",
+  "slopmatica.options.dev_build.tooltip": "Adds a synthetic build (about 60% filled with a mix of tricky blocks) at your feet. Test builds aren't saved; also /slopmatica dev stress x y z.",
+  "slopmatica.options.dev_copies": "24 Copies of Selected",
+  "slopmatica.options.dev_copies.tooltip": "Many placements at once, in a grid beside the selected build. Also /slopmatica dev copies <n>.",
+  "slopmatica.options.dev_clear": "Remove Test Builds"
 }

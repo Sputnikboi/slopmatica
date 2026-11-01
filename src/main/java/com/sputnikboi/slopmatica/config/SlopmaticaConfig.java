@@ -38,6 +38,8 @@ public final class SlopmaticaConfig {
     public boolean shareSettings = false;
     /** A custom shared folder, or null for the default one every install checks. */
     public @org.jspecify.annotations.Nullable String sharedFolder;
+    /** Developer frame-time overlay (advanced settings). */
+    public boolean devOverlay = false;
     /** Opted in to sending anonymous usage data to the Slopmatica cloud server. Off unless chosen. */
     public boolean telemetry = false;
     /** Outline colours, ARGB; null means the default. */
