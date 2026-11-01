@@ -842,7 +842,7 @@ def test_migrates_a_0_3_0_database(make_client, mojang, data_dir):
     assert listing == [{"path": "builds/Old.litematic", "size": len(body), "sha256": hashlib.sha256(body).hexdigest(),
                         "modified": 1_700_000_000_000, "hasThumbnail": True, "source": None}]
     store = c.app.state.store
-    assert store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 3
+    assert store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     tables = {r[0] for r in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"users", "tokens", "challenges", "files", "posts", "post_access", "votes", "post_tags"} <= tables
 

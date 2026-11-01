@@ -2,8 +2,14 @@
 {% block title %}Not found &middot; Slopmatica Cloud{% endblock %}
 {% block main %}
 <section class="hero">
+  {% if heading %}
+  <h1>{{ heading }}</h1>
+  <p class="lead">{{ lead }}</p>
+  <p><a class="btn" href="{{ base }}/">Go to the start page</a></p>
+  {% else %}
   <h1>That post isn&rsquo;t here.</h1>
   <p class="lead">It may have been deleted, or it is private and not shared with {% if user %}you{% else %}you while you are logged out{% endif %}.</p>
   <p><a class="btn" href="{{ base }}/board">Browse the board</a></p>
+  {% endif %}
 </section>
 {% endblock %}

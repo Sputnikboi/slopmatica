@@ -584,7 +584,7 @@ def test_migrates_a_v2_database(make_client, mojang, data_dir, caplog):
     c = make_client()
     h = bearer("tok")
     store = c.app.state.store
-    assert store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 3
+    assert store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     # the .litematic post (like the live one) is now .slopmatic, block for block
     ghost = c.get("/api/board/GhostShip1").json()
@@ -630,7 +630,7 @@ def test_migrates_a_v2_database(make_client, mojang, data_dir, caplog):
     mtime = (pdir / "Halloween Ghost Ship.slopmatic").stat().st_mtime_ns
     caplog.clear()
     c2 = make_client()
-    assert c2.app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert c2.app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     assert (pdir / "Halloween Ghost Ship.slopmatic").stat().st_mtime_ns == mtime
     assert c2.get("/api/board/GhostShip1").json() == {**ghost, "tags": ["statue"]}
     assert not any("convert" in r.message for r in caplog.records)

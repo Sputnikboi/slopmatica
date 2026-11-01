@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Feedback &middot; Admin &middot; Slopmatica Cloud{% endblock %}
+{% block main %}
+<div class="board-head">
+  <h1 class="page-title">Feedback</h1>
+</div>
+<nav class="tabs fb-tabs" aria-label="Status">
+  {% for key, label in (("open", "Open"), ("resolved", "Resolved"), ("all", "All")) %}
+  <a class="tab{{ ' on' if show == key else '' }}" href="{{ base }}/admin/feedback{{ '' if key == 'open' else '?status=' ~ key }}"{% if show == key %} aria-current="page"{% endif %}>{{ label }} ({{ counts[key] }})</a>
+  {% endfor %}
+</nav>
+{% if items %}
+<div class="fb-list">
+  {% for f in items %}
+  <article class="panel fb-item{{ ' resolved' if f.resolved else '' }}" id="feedback-{{ f.id }}">
+    <div class="fb-head">
+      <span class="badge fb-{{ f.type }}">{{ kinds[f.type] }}</span>
+      <span class="muted small grow">#{{ f.id }} &middot; <time datetime="{{ f.created|iso_utc }}">{{ f.created|pretty_utc }}</time> &middot;
+        {% if f.user %}{{ f.user.name }}{% else %}anonymous{% endif %}
+        {% if f.modVersion %} &middot; mod {{ f.modVersion }}{% endif %}{% if f.mcVersion %} &middot; Minecraft {{ f.mcVersion }}{% endif %}</span>
+      <button type="button" class="btn small ghost" data-resolve="{{ f.id }}" data-resolved="{{ 'true' if f.resolved else 'false' }}">{{ "Reopen" if f.resolved else "Mark resolved" }}</button>
+    </div>
+    <p class="desc">{{ f.message }}</p>
+    {% if f.contact %}<p class="small"><span class="muted">Contact:</span> {{ f.contact }}</p>{% endif %}
+    {% if f.resolved %}<p class="muted small">Resolved <time datetime="{{ f.resolved|iso_utc }}">{{ f.resolved|pretty_utc }}</time></p>{% endif %}
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<p class="muted empty">{{ "Nothing open." if show == "open" else "Nothing here." }}</p>
+{% endif %}
+<p class="form-msg small" data-fb-msg role="status"></p>
+{% endblock %}
+{% block scripts %}
+<script src="{{ base }}/static/feedback.js?v={{ v }}"></script>
+{% endblock %}

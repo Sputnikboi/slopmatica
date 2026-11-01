@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Releases &middot; Slopmatica Cloud{% endblock %}
+{% macro dl_url(r) %}{{ base }}/releases/{{ r.filename|urlencode }}{% endmacro %}
+{% block main %}
+{% if newest %}
+<section class="panel rel-hero">
+  <div class="rel-hero-head">
+    <div>
+      <p class="muted small rel-kicker">Latest release</p>
+      <h1 class="page-title">Slopmatica {{ newest.version }}</h1>
+      <p class="muted small">Released <time datetime="{{ newest.uploaded|iso_utc }}">{{ newest.uploaded|pretty_utc }}</time></p>
+    </div>
+    <a class="btn ghost small" href="{{ github }}" rel="noopener noreferrer">Source on GitHub</a>
+  </div>
+  <div class="rel-downloads">
+    {% for r in newest_builds %}
+    <a class="btn" href="{{ dl_url(r) }}">Download for Minecraft {{ r.mc }}{% if r.loader != default_loader %} ({{ r.loader }}){% endif %}</a>
+    {% endfor %}
+  </div>
+  <p class="muted small rel-file">{{ newest_builds[0].filename }} &middot; {{ newest_builds[0].size|human_size }}</p>
+  {% if newest.changelog %}
+  <div class="rel-notes">
+    <h2>What&rsquo;s new in {{ newest.version }}</h2>
+    <div class="md">{{ newest.changelog|changelog }}</div>
+  </div>
+  {% endif %}
+</section>
+{% else %}
+<section class="panel rel-hero">
+  <h1 class="page-title">Releases</h1>
+  <p>No release has been published yet. Meanwhile, the source is on <a href="{{ github }}" rel="noopener noreferrer">GitHub</a>.</p>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>How to install</h2>
+  <ol class="small install-steps">
+    <li>Install <a href="https://fabricmc.net/use/installer/" rel="noopener noreferrer">Fabric Loader</a> and <a href="https://modrinth.com/mod/fabric-api" rel="noopener noreferrer">Fabric API</a> for your Minecraft version.</li>
+    <li>Put the downloaded <code>.jar</code> in your <code>.minecraft/mods</code> folder, and remove any older <code>slopmatica</code> jar from it.</li>
+    <li>From then on the mod checks for updates itself and can install them for you.</li>
+  </ol>
+</section>
+
+{% if groups %}
+<h2 class="rel-history-title">All versions</h2>
+{% for mc, builds in groups %}
+<section class="panel rel-group" aria-labelledby="mc-{{ loop.index }}">
+  <h3 class="rel-mc" id="mc-{{ loop.index }}">Minecraft {{ mc }}</h3>
+  <div class="releases">
+    {% for r in builds %}
+    <article class="release{{ ' hl' if r.id in marked else '' }}" id="{{ anchors[r.id] }}">
+      <div class="release-head">
+        <strong class="release-ver">{{ r.version }}</strong>
+        {% if loop.first %}<span class="badge rel-latest">latest</span>{% endif %}
+        {% if r.loader != default_loader %}<span class="badge">{{ r.loader }}</span>{% endif %}
+        <span class="muted small grow"><time datetime="{{ r.uploaded|iso_utc }}">{{ r.uploaded|pretty_utc }}</time> &middot; {{ r.size|human_size }} &middot; {{ r.downloads|num }} download{{ "" if r.downloads == 1 else "s" }}</span>
+        <a class="btn small" href="{{ dl_url(r) }}">Download</a>
+      </div>
+      {% if r.changelog %}
+      <div class="md small">{{ r.changelog|changelog }}</div>
+      {% else %}
+      <p class="muted small rel-none">No notes.</p>
+      {% endif %}
+      <p class="muted small sha">{{ r.filename }} &middot; sha256 <code>{{ r.sha256 }}</code></p>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
+{% endif %}
+<p class="muted small rel-foot">Slopmatica is open source: <a href="{{ github }}" rel="noopener noreferrer">github.com/Sputnikboi/slopmatica</a>. Found a bug? <a href="{{ base }}/feedback">Tell us</a>.</p>
+{% endblock %}
+{% block scripts %}
+<script src="{{ base }}/static/releases.js?v={{ v }}"></script>
+{% endblock %}

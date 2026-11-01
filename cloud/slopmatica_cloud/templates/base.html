@@ -14,6 +14,7 @@
   <nav class="nav" aria-label="Main">
     {% if user %}<a class="btn small ghost nav-files{{ ' on' if nav == 'files' else '' }}" href="{{ base }}/"{% if nav == "files" %} aria-current="page"{% endif %}>My files</a>{% endif %}
     <a class="btn small nav-board{{ ' on' if nav == 'board' else '' }}" href="{{ base }}/board"{% if nav == "board" %} aria-current="page"{% endif %}><span class="long">Schematics board</span><span class="short">Board</span></a>
+    <a class="btn small ghost nav-releases{{ ' on' if nav == 'releases' else '' }}" href="{{ base }}/releases"{% if nav == "releases" %} aria-current="page"{% endif %}>Releases</a>
   </nav>
   {% if user %}
   <div class="who">
@@ -28,7 +29,7 @@
 <main class="wrap">
 {% block main %}{% endblock %}
 </main>
-<footer class="wrap foot">Slopmatica Cloud &middot; schematic sync for the Slopmatica mod</footer>
+<footer class="wrap foot">Slopmatica Cloud &middot; schematic sync for the Slopmatica mod &middot; <a href="{{ base }}/feedback">Made by Sputniknull + Claude</a></footer>
 <script src="{{ base }}/static/app.js?v={{ v }}"></script>
 {% block scripts %}{% endblock %}
 </body>

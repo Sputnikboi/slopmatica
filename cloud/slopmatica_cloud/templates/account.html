@@ -59,6 +59,13 @@
   <p class="muted small note">Changing or removing the password logs out your other browsers.</p>
 </section>
 
+{% if user.is_admin %}
+<section class="panel">
+  <h2>Admin</h2>
+  <p class="small"><a href="{{ base }}/admin/feedback">Feedback</a> &middot; <a href="{{ base }}/releases">Releases</a></p>
+</section>
+
+{% endif %}
 <section class="panel">
   <h2>Browsers</h2>
   <p class="small">Log out everywhere the website is open with this account, including here. Your game stays logged in.</p>

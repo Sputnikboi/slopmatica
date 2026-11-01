@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Credits and feedback &middot; Slopmatica Cloud{% endblock %}
+{% block main %}
+<section class="panel credits">
+  <img src="{{ base }}/static/icon.svg" alt="" width="56" height="56">
+  <div>
+    <h1 class="page-title">Made by Sputniknull + Claude</h1>
+    <p>Slopmatica is a schematic mod for Minecraft (Fabric). It shows a build as a hologram of what is missing,
+      correct or wrong, and reads its own <code>.slopmatic</code> files, vanilla <code>.nbt</code> structures and
+      Litematica <code>.litematic</code> files. This site keeps your schematics in sync between your game installs
+      and hosts the schematics board.</p>
+    <p class="small"><a href="{{ github }}" rel="noopener noreferrer">Source on GitHub</a> &middot; <a href="{{ base }}/releases">Releases</a> &middot; <a href="{{ base }}/board">Schematics board</a></p>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Report a bug or suggest something</h2>
+  <form id="feedback-form" class="post-form fb-form" novalidate>
+    <fieldset class="field">
+      <legend class="label">What is it?</legend>
+      <div class="tag-picks">
+        {% for key, label in kinds.items() %}
+        <label class="tag-pick"><input type="radio" name="type" value="{{ key }}"{% if key == kind %} checked{% endif %}><span>{{ label }}</span></label>
+        {% endfor %}
+      </div>
+    </fieldset>
+    <label class="field"><span class="label">Message</span>
+      <textarea name="message" rows="7" maxlength="{{ max_message }}" required placeholder="What happened, what you expected, and how to make it happen again. Or your idea."></textarea></label>
+    <div class="fb-row">
+      <label class="field"><span class="label">Mod version <span class="muted">(optional)</span></span>
+        <input type="text" name="modVersion" value="{{ mod_version }}" maxlength="{{ max_version }}" placeholder="e.g. 0.6.0"></label>
+      <label class="field"><span class="label">Minecraft version <span class="muted">(optional)</span></span>
+        <input type="text" name="mcVersion" value="{{ mc_version }}" maxlength="{{ max_version }}" placeholder="e.g. 26.3"></label>
+    </div>
+    <label class="field"><span class="label">Contact <span class="muted">(optional: Discord name, email&hellip; only admins see it)</span></span>
+      <input type="text" name="contact" maxlength="{{ max_contact }}" autocomplete="off"></label>
+    <p class="muted small">{% if user %}Sent as <strong>{{ user.name }}</strong>.{% else %}You are not logged in, so this is sent anonymously. Leave a contact if you would like an answer.{% endif %}</p>
+    <p class="form-msg" role="status"></p>
+    <div class="form-actions start"><button type="submit" class="btn">Send</button></div>
+  </form>
+  <div class="fb-thanks" hidden>
+    <p><strong>Thanks!</strong> Your message was sent.</p>
+    <div class="form-actions start"><button type="button" class="btn ghost" data-fb-again>Send another</button></div>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ base }}/static/feedback.js?v={{ v }}"></script>
+{% endblock %}

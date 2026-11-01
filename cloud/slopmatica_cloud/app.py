@@ -29,12 +29,14 @@ from pathlib import Path
 from typing import Any
 
 import jinja2
+import markupsafe
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -122,6 +124,29 @@ MODEL_CACHE_PREFIX = "model-"  # posts/<id>/model-<sha256[:16]>.json.gz (or .too
 TITLE_BAD_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 DESCRIPTION_BAD_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")  # tabs and newlines are fine
 
+# ---- mod releases
+RELEASES_DIR = "releases"  # <data>/releases/<filename>.jar
+GITHUB_URL = "https://github.com/Sputnikboi/slopmatica"
+VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([\w.]+))?$", re.ASCII)
+MAX_VERSION_LEN = 64
+MC_VERSION_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]{0,31}$")  # 26.3, 1.21.10, 25w14a, 26.3-pre1
+LOADER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,19}$")
+# A jar's file name: one plain segment, so it can't leave the releases folder or hide as a dot file.
+RELEASE_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,99}\.jar$")
+JAR_MAGIC = b"PK\x03\x04"
+MAX_CHANGELOG_LEN = 20000
+DEFAULT_LOADER = "fabric"
+
+# ---- feedback
+FEEDBACK_KINDS: dict[str, str] = {"bug": "Bug report", "suggestion": "Suggestion", "other": "Other"}
+FEEDBACK_STATUSES = ("open", "resolved", "all")
+MAX_FEEDBACK_LEN = 5000
+MAX_FEEDBACK_VERSION_LEN = 40
+MAX_CONTACT_LEN = 200
+# Submissions per LOGIN_WINDOW, counted in login_failures like failed logins.
+FEEDBACK_IP_LIMIT = 5  # logged out, per address
+FEEDBACK_USER_LIMIT = 20  # logged in, per account
+
 
 # --------------------------------------------------------------------------- settings
 
@@ -147,12 +172,21 @@ class Settings:
     export_slots: int = 2  # conversions running at once
     max_posts_per_user: int = 200
     board_page_size: int = 24
+    max_release_bytes: int = 64 * 1024 * 1024
 
     def __post_init__(self) -> None:
         self.data_dir = Path(self.data_dir).resolve()
         self.root_path = _normalize_root_path(self.root_path)
         self.admins = frozenset(a.strip().lower() for a in self.admins if a.strip())
         self.public_url = self.public_url.rstrip("/")
+
+    @property
+    def site_url(self) -> str:
+        """The site's absolute root URL: PUBLIC_URL plus ROOT_PATH, unless PUBLIC_URL already ends in it
+        (the proxy strips the prefix, so web-login links work either way, but these URLs end up in the game)."""
+        if self.root_path and self.public_url.endswith(self.root_path):
+            return self.public_url
+        return self.public_url + self.root_path
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -443,6 +477,36 @@ ALTER TABLE files ADD COLUMN source_title TEXT;       -- the post's title then
 ALTER TABLE files ADD COLUMN source_author_uuid TEXT; -- the post's author
 ALTER TABLE files ADD COLUMN source_author_name TEXT; -- the author's name then
 """,
+    # 0.6.0: mod releases (jars in <data>/releases/) and feedback from the website
+    4: """
+CREATE TABLE IF NOT EXISTS releases (
+    id INTEGER PRIMARY KEY,
+    version TEXT NOT NULL,         -- semver: 0.6.0, 0.7.0-beta.1
+    mc_version TEXT NOT NULL,      -- the Minecraft version the jar is built for
+    loader TEXT NOT NULL,          -- fabric
+    filename TEXT NOT NULL UNIQUE, -- releases/<filename>
+    sha256 TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    uploaded INTEGER NOT NULL,     -- unix ms
+    changelog TEXT NOT NULL DEFAULT '',
+    hidden INTEGER NOT NULL DEFAULT 0,
+    downloads INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (version, mc_version, loader)
+);
+CREATE TABLE IF NOT EXISTS feedback (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('bug', 'suggestion', 'other')),
+    message TEXT NOT NULL,
+    mod_version TEXT,
+    mc_version TEXT,
+    contact TEXT,
+    uuid TEXT,                     -- the logged-in sender, NULL if anonymous
+    name TEXT,                     -- their name then
+    created INTEGER NOT NULL,      -- unix ms
+    resolved INTEGER               -- unix ms, NULL while open
+);
+CREATE INDEX IF NOT EXISTS feedback_open ON feedback(resolved, created);
+""",
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -522,10 +586,13 @@ class Store:
         self.db.create_function("slop_fold", 1, _fold, deterministic=True)
         self.posts_root = self.root / "posts"
         self.posts_root.mkdir(exist_ok=True)
+        self.releases_dir = self.root / RELEASES_DIR
+        self.releases_dir.mkdir(exist_ok=True)
         self.migrate()
         self.prune()
         self.reconcile()
         self.reconcile_posts()
+        self.reconcile_releases()
 
     def migrate(self) -> None:
         """Create the 0.3.0 tables if missing, then apply MIGRATIONS past PRAGMA user_version, in place."""
@@ -698,6 +765,19 @@ class Store:
                 has_thumb = (pdir / POST_THUMB).is_file()
                 if has_thumb != bool(r["has_thumb"]):
                     self.db.execute("UPDATE posts SET has_thumb=? WHERE id=?", (int(has_thumb), post_id))
+
+    def reconcile_releases(self) -> None:
+        """Remove partial jars an interrupted publish left behind (older than an hour, so a publish_release.py
+        running right now keeps its own), and log releases whose jar is missing (their downloads are 404)."""
+        cutoff = time.time() - 3600
+        for p in self.releases_dir.glob(".*.part"):
+            if p.stat().st_mtime < cutoff:
+                p.unlink(missing_ok=True)
+        with self.lock:
+            names = [r["filename"] for r in self.db.execute("SELECT filename FROM releases")]
+        for name in names:
+            if not (self.releases_dir / name).is_file():
+                log.warning("release %s is in the database but its jar is missing", name)
 
     # ---- users and tokens
 
@@ -1006,6 +1086,74 @@ class Store:
             ).fetchall()
         return [PostRow.from_row(r) for r in rows], int(total)
 
+    # ---- releases
+
+    def list_releases(self, include_hidden: bool = False) -> list[ReleaseRow]:
+        """Releases, newest version first (semver), then newest Minecraft version."""
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT * FROM releases" + ("" if include_hidden else " WHERE hidden = 0")
+            ).fetchall()
+        out = [ReleaseRow.from_row(r) for r in rows]
+        out.sort(key=lambda r: (semver_key(r.version), mc_version_key(r.mc), r.loader), reverse=True)
+        return out
+
+    def latest_release(self, mc: str, loader: str) -> ReleaseRow | None:
+        """The highest version (by semver, not upload time) published for mc and loader and not hidden."""
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT * FROM releases WHERE hidden = 0 AND mc_version = ? AND loader = ?", (mc, loader)
+            ).fetchall()
+        best = max(rows, key=lambda r: semver_key(r["version"]), default=None)
+        return ReleaseRow.from_row(best) if best else None
+
+    def get_release(self, filename: str) -> ReleaseRow | None:
+        with self.lock:
+            r = self.db.execute("SELECT * FROM releases WHERE filename=?", (filename,)).fetchone()
+        return ReleaseRow.from_row(r) if r else None
+
+    def update_release(self, filename: str, values: dict[str, Any]) -> None:
+        with self.lock:
+            sets = ", ".join(f"{k}=:{k}" for k in values)
+            self.db.execute(f"UPDATE releases SET {sets} WHERE filename=:filename", {**values, "filename": filename})
+
+    def count_download(self, filename: str) -> None:
+        with self.lock:
+            self.db.execute("UPDATE releases SET downloads = downloads + 1 WHERE filename=?", (filename,))
+
+    # ---- feedback
+
+    def add_feedback(self, values: dict[str, Any]) -> int:
+        cols = ", ".join(values)
+        marks = ", ".join(":" + k for k in values)
+        with self.lock:
+            return int(self.db.execute(f"INSERT INTO feedback({cols}) VALUES({marks})", values).lastrowid)
+
+    def list_feedback(self, status: str) -> list[sqlite3.Row]:
+        """'open', 'resolved' or 'all'; open ones first, newest first."""
+        where = {"open": " WHERE resolved IS NULL", "resolved": " WHERE resolved IS NOT NULL", "all": ""}[status]
+        with self.lock:
+            return self.db.execute(
+                "SELECT * FROM feedback" + where + " ORDER BY resolved IS NOT NULL, created DESC, id DESC"
+            ).fetchall()
+
+    def feedback_counts(self) -> tuple[int, int]:
+        """(open, resolved)."""
+        with self.lock:
+            n_open, n_resolved = self.db.execute(
+                "SELECT COUNT(*) - COUNT(resolved), COUNT(resolved) FROM feedback"
+            ).fetchone()
+        return int(n_open), int(n_resolved)
+
+    def set_feedback_resolved(self, feedback_id: int, resolved: bool) -> sqlite3.Row | None:
+        with self.lock:
+            if resolved:  # resolving twice keeps the first time
+                self.db.execute("UPDATE feedback SET resolved=COALESCE(resolved, ?) WHERE id=?",
+                                (int(time.time() * 1000), feedback_id))
+            else:
+                self.db.execute("UPDATE feedback SET resolved=NULL WHERE id=?", (feedback_id,))
+            return self.db.execute("SELECT * FROM feedback WHERE id=?", (feedback_id,)).fetchone()
+
 
 def _hash_file(p: Path) -> str:
     h = hashlib.sha256()
@@ -1163,6 +1311,207 @@ def board_file_stem(title: str, ext: str) -> str:
     return stem or "schematic"
 
 
+# --------------------------------------------------------------------------- releases
+
+
+def semver_key(version: str) -> tuple:
+    """Sort key for semver precedence: 0.10.0 > 0.9.2, 1.0.0 > 1.0.0-rc.1 > 1.0.0-beta.2 > 1.0.0-beta.
+    Pre-release identifiers compare numerically when numeric, and numeric ones sort first."""
+    m = VERSION_RE.match(version)
+    if m is None:
+        return (-1,)
+    core = tuple(int(g) for g in m.group(1, 2, 3))
+    if m.group(4) is None:
+        return (*core, 1, ())
+    ids = tuple((0, int(p), "") if p.isdigit() else (1, 0, p) for p in m.group(4).split("."))
+    return (*core, 0, ids)
+
+
+def mc_version_key(mc: str) -> tuple:
+    """Sort key for Minecraft versions: by their numbers (26.3 > 26.2 > 1.21.10 > 1.21.9), then the text."""
+    return (tuple(int(n) for n in re.findall(r"\d+", mc)), mc)
+
+
+@dataclass
+class ReleaseRow:
+    id: int
+    version: str
+    mc: str
+    loader: str
+    filename: str
+    sha256: str
+    size: int
+    uploaded: int  # unix ms
+    changelog: str
+    hidden: bool
+    downloads: int
+
+    @classmethod
+    def from_row(cls, r: sqlite3.Row) -> "ReleaseRow":
+        return cls(
+            r["id"], r["version"], r["mc_version"], r["loader"], r["filename"], r["sha256"], r["size"],
+            r["uploaded"], r["changelog"], bool(r["hidden"]), r["downloads"],
+        )
+
+
+def clean_release_meta(version: Any, mc: Any, loader: Any, filename: Any, changelog: Any) -> tuple[str, str, str, str, str]:
+    """Validate a release's metadata (for the API and publish_release.py); ApiError(400) if anything is off."""
+    def text(value: Any, what: str) -> str:
+        if not isinstance(value, str):
+            raise ApiError(400, f"{what} is required")
+        return value.strip()
+
+    version, mc, loader, filename = text(version, "version"), text(mc, "mc"), text(loader, "loader"), text(filename, "filename")
+    if len(version) > MAX_VERSION_LEN or not VERSION_RE.match(version):
+        raise ApiError(400, "version must look like 1.2.3 or 1.2.3-beta.1")
+    if not MC_VERSION_RE.match(mc):
+        raise ApiError(400, "mc must be a Minecraft version such as 26.3")
+    if not LOADER_RE.match(loader):
+        raise ApiError(400, "loader must be a lowercase name such as fabric")
+    if not RELEASE_FILENAME_RE.match(filename) or ".." in filename:
+        raise ApiError(400, "filename must be a plain .jar name (letters, digits and ._+- only)")
+    if changelog is None:
+        changelog = ""
+    if not isinstance(changelog, str):
+        raise ApiError(400, "changelog must be text")
+    changelog = changelog.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if len(changelog) > MAX_CHANGELOG_LEN:
+        raise ApiError(400, f"changelog must be at most {MAX_CHANGELOG_LEN} characters")
+    if DESCRIPTION_BAD_CHARS.search(changelog):
+        raise ApiError(400, "changelog may not contain control characters")
+    return version, mc, loader, filename, changelog
+
+
+def release_path(releases_dir: Path, filename: str) -> Path:
+    """releases/<filename>, refusing any name that is not a plain jar name inside the folder."""
+    if not RELEASE_FILENAME_RE.match(filename) or ".." in filename:
+        raise ApiError(404, "no such release")
+    p = releases_dir / filename
+    if p.resolve().parent != releases_dir.resolve():  # defence in depth (symlinks)
+        raise ApiError(404, "no such release")
+    return p
+
+
+@contextmanager
+def immediate(db: sqlite3.Connection) -> Any:
+    """A write transaction on an autocommit connection, taken up front so other processes wait."""
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        db.execute("ROLLBACK")
+        raise
+    db.execute("COMMIT")
+
+
+def add_release(
+    db: sqlite3.Connection, releases_dir: Path, jar: Path, version: str, mc: str, loader: str, filename: str,
+    changelog: str = "", hidden: bool = False,
+) -> ReleaseRow:
+    """Copy jar into releases_dir as filename and record it. Shared by POST /api/releases (with the store's
+    lock held) and publish_release.py (its own connection: SQLite serialises the two processes).
+    400 for bad metadata or a file that isn't a jar, 409 if the version or file name is taken."""
+    version, mc, loader, filename, changelog = clean_release_meta(version, mc, loader, filename, changelog)
+    dest = release_path(releases_dir, filename)
+    part = releases_dir / f".{filename}.{secrets.token_hex(4)}.part"
+    try:
+        h = hashlib.sha256()
+        size = 0
+        with jar.open("rb") as src, part.open("wb") as out:
+            if src.read(len(JAR_MAGIC)) != JAR_MAGIC:
+                raise ApiError(400, "not a jar (zip) file")
+            src.seek(0)
+            for chunk in iter(lambda: src.read(1 << 20), b""):
+                h.update(chunk)
+                size += len(chunk)
+                out.write(chunk)
+            out.flush()
+            os.fsync(out.fileno())
+        with immediate(db):
+            if db.execute("SELECT 1 FROM releases WHERE version=? AND mc_version=? AND loader=?",
+                          (version, mc, loader)).fetchone():
+                raise ApiError(409, f"{version} for Minecraft {mc} ({loader}) is already published")
+            if db.execute("SELECT 1 FROM releases WHERE filename=?", (filename,)).fetchone():
+                raise ApiError(409, f"a release named {filename} already exists; pick another file name")
+            os.replace(part, dest)  # a stray jar of that name without a row is simply replaced
+            try:
+                cur = db.execute(
+                    """INSERT INTO releases(version, mc_version, loader, filename, sha256, size, uploaded, changelog, hidden)
+                       VALUES(?,?,?,?,?,?,?,?,?)""",
+                    (version, mc, loader, filename, h.hexdigest(), size, int(time.time() * 1000), changelog, int(hidden)),
+                )
+            except BaseException:
+                dest.unlink(missing_ok=True)
+                raise
+            row = db.execute("SELECT * FROM releases WHERE id=?", (cur.lastrowid,)).fetchone()
+    finally:
+        part.unlink(missing_ok=True)
+    return ReleaseRow.from_row(row)
+
+
+_MD_INLINE = re.compile(r"\*\*(.+?)\*\*|`([^`]+)`|\[([^\]\n]+)\]\((https?://[^)\s]+)\)")
+_MD_HEADING = re.compile(r"^(#{1,3})\s+(.*)$")
+_MD_BULLET = re.compile(r"^\s*[-*+]\s+(.*)$")
+_MD_NUMBERED = re.compile(r"^\s*\d+[.)]\s+(.*)$")
+
+
+def _md_inline(text: str) -> str:
+    out: list[str] = []
+    pos = 0
+    for m in _MD_INLINE.finditer(text):
+        out.append(str(markupsafe.escape(text[pos:m.start()])))
+        bold, code, label, href = m.groups()
+        if bold is not None:
+            out.append(f"<strong>{markupsafe.escape(bold)}</strong>")
+        elif code is not None:
+            out.append(f"<code>{markupsafe.escape(code)}</code>")
+        else:
+            out.append(f'<a href="{markupsafe.escape(href)}" rel="noopener noreferrer">{markupsafe.escape(label)}</a>')
+        pos = m.end()
+    out.append(str(markupsafe.escape(text[pos:])))
+    return "".join(out)
+
+
+def render_changelog(text: str) -> markupsafe.Markup:
+    """A changelog as HTML. Markdown-ish: # headings, - or 1. lists, **bold**, `code`, [links](https://...),
+    blank lines between paragraphs; single line breaks are kept. Every piece of text is escaped."""
+    blocks: list[str] = []
+    para: list[str] = []
+    items: list[str] = []
+    list_tag = ""
+
+    def flush() -> None:
+        nonlocal list_tag
+        if para:
+            blocks.append("<p>" + "<br>".join(_md_inline(line) for line in para) + "</p>")
+            para.clear()
+        if items:
+            blocks.append(f"<{list_tag}>" + "".join(f"<li>{_md_inline(i)}</li>" for i in items) + f"</{list_tag}>")
+            items.clear()
+
+    for raw in text.split("\n"):
+        line = raw.rstrip()
+        heading, bullet, numbered = _MD_HEADING.match(line), _MD_BULLET.match(line), _MD_NUMBERED.match(line)
+        if not line.strip():
+            flush()
+        elif heading:
+            flush()
+            level = len(heading.group(1)) + 2  # under the page's own headings
+            blocks.append(f"<h{level}>{_md_inline(heading.group(2))}</h{level}>")
+        elif bullet or numbered:
+            tag = "ul" if bullet else "ol"
+            if para or (items and tag != list_tag):
+                flush()
+            list_tag = tag
+            items.append((bullet or numbered).group(1))  # type: ignore[union-attr]
+        else:
+            if items:
+                flush()
+            para.append(line)
+    flush()
+    return markupsafe.Markup("".join(blocks))
+
+
 # --------------------------------------------------------------------------- request models
 
 
@@ -1210,6 +1559,58 @@ class MoveIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     src: str = Field(alias="from")
     dst: str = Field(alias="to")
+
+
+class FeedbackIn(BaseModel):
+    type: Any = None
+    message: Any = None
+    modVersion: Any = None
+    mcVersion: Any = None
+    contact: Any = None
+
+
+class ResolveIn(BaseModel):
+    resolved: Any = None
+
+
+class ReleasePatchIn(BaseModel):
+    hidden: Any = None
+    changelog: Any = None
+
+
+def parse_multipart(body: bytes, content_type: str) -> tuple[dict[str, str], dict[str, tuple[str, bytes]]]:
+    """multipart/form-data -> ({field: text}, {field: (file name, bytes)}). Small and in memory: it is only
+    used for release uploads by admins, and avoids the python-multipart dependency. ApiError(400) if malformed."""
+    m = re.search(r'boundary=(?:"([^"]+)"|([^;\s]+))', content_type)
+    if not content_type.lower().startswith("multipart/form-data") or m is None:
+        raise ApiError(400, "expected multipart/form-data")
+    delim = b"\r\n--" + (m.group(1) or m.group(2)).encode("latin-1")
+    pieces = (b"\r\n" + body).split(delim)
+    if len(pieces) < 3 or not pieces[-1].startswith(b"--"):
+        raise ApiError(400, "malformed multipart body")
+    fields: dict[str, str] = {}
+    files: dict[str, tuple[str, bytes]] = {}
+    for piece in pieces[1:-1]:
+        head, sep, content = piece.partition(b"\r\n\r\n")
+        if not sep:
+            raise ApiError(400, "malformed multipart body")
+        disposition = ""
+        for line in head.decode("utf-8", "replace").split("\r\n"):
+            key, _, value = line.partition(":")
+            if key.strip().lower() == "content-disposition":
+                disposition = value
+        name = re.search(r'\bname="([^"]*)"', disposition)
+        if name is None:
+            continue
+        filename = re.search(r'\bfilename="([^"]*)"', disposition)
+        if filename is not None:
+            files[name.group(1)] = (filename.group(1), content)
+        else:
+            try:
+                fields[name.group(1)] = content.decode("utf-8")
+            except UnicodeDecodeError:
+                raise ApiError(400, f"form field {name.group(1)} is not UTF-8")
+    return fields, files
 
 
 # --------------------------------------------------------------------------- middleware
@@ -1296,6 +1697,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     templates.filters["iso_utc"] = iso_utc
     templates.filters["pretty_utc"] = pretty_utc
     templates.filters["num"] = lambda n: f"{n:,}"
+    templates.filters["changelog"] = render_changelog
     static_dir = PKG_DIR / "static"
     static_version = str(max(int(p.stat().st_mtime) for p in static_dir.iterdir()))
     try:  # block id -> map colour; null for blocks that are clear on maps (glass, panes, ...)
@@ -2251,6 +2653,203 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise ApiError(409, "the post changed while its 3D view was built, try again")
             os.replace(tmp_name, dest)
 
+    # ---- mod releases
+
+    def require_admin(request: Request) -> User:
+        user = authenticate(request, mutating=True)
+        if not user.is_admin:
+            raise ApiError(403, "only admins can do that")
+        return user
+
+    def release_page_url(version: str, mc: str | None = None) -> str:
+        """The releases page (absolute) with version highlighted and scrolled to."""
+        params = {"highlight": version, **({"mc": mc} if mc else {})}
+        return f"{settings.site_url}/releases?{urllib.parse.urlencode(params)}#v{version}"
+
+    def release_download_url(r: ReleaseRow) -> str:
+        return f"{settings.site_url}/releases/{urllib.parse.quote(r.filename)}"
+
+    def release_api(r: ReleaseRow) -> dict[str, Any]:
+        return {
+            "version": r.version, "mc": r.mc, "loader": r.loader, "filename": r.filename, "sha256": r.sha256,
+            "size": r.size, "uploaded": r.uploaded, "changelog": r.changelog, "hidden": r.hidden,
+            "downloads": r.downloads, "download": release_download_url(r), "page": release_page_url(r.version, r.mc),
+        }
+
+    @app.get("/api/releases/latest")
+    def releases_latest(request: Request) -> JSONResponse:
+        # The mod's update check: keep these field names.
+        mc = (request.query_params.get("mc") or "").strip()
+        loader = (request.query_params.get("loader") or DEFAULT_LOADER).strip().lower()
+        if not MC_VERSION_RE.match(mc):
+            raise ApiError(400, "mc must be a Minecraft version such as 26.3")
+        if not LOADER_RE.match(loader):
+            raise ApiError(400, "loader must be a lowercase name such as fabric")
+        r = store.latest_release(mc, loader)
+        if r is None:
+            raise ApiError(404, f"no release for Minecraft {mc} ({loader})")
+        return JSONResponse({
+            "version": r.version, "download": release_download_url(r), "page": release_page_url(r.version, r.mc),
+            "sha256": r.sha256, "mc": r.mc, "loader": r.loader,
+        }, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/releases")
+    def releases_list(request: Request) -> dict[str, Any]:
+        user = optional_user(request)
+        admin = user is not None and user.is_admin
+        return {"releases": [release_api(r) for r in store.list_releases(include_hidden=admin)]}
+
+    @app.post("/api/releases")
+    async def releases_publish(request: Request) -> JSONResponse:
+        user = require_admin(request)
+        data, _, _ = await read_capped(request, settings.max_release_bytes + 64 * 1024)  # room for the form fields
+        fields, files = parse_multipart(data, request.headers.get("content-type", ""))
+        if "jar" not in files:
+            raise ApiError(400, "the jar file is required (form field jar)")
+        upload_name, content = files["jar"]
+        if len(content) > settings.max_release_bytes:
+            raise ApiError(413, "file too large", maxBytes=settings.max_release_bytes)
+        filename = fields.get("filename") or upload_name.replace("\\", "/").rsplit("/", 1)[-1]
+        hidden = fields.get("hidden", "").strip().lower() in ("1", "true", "yes", "on")
+        fd, tmp_name = tempfile.mkstemp(dir=store.tmp, suffix=".jar")
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(content)
+
+            def publish() -> ReleaseRow:
+                with store.lock:
+                    return add_release(
+                        store.db, store.releases_dir, tmp, fields.get("version"), fields.get("mc"),
+                        fields.get("loader") or DEFAULT_LOADER, filename, fields.get("changelog", ""), hidden,
+                    )
+
+            row = await run_in_threadpool(publish)
+        finally:
+            tmp.unlink(missing_ok=True)
+        log.info("%s published release %s (Minecraft %s, %s) as %s", user.name, row.version, row.mc, row.loader, row.filename)
+        return JSONResponse(release_api(row), status_code=201)
+
+    @app.patch("/api/releases/{filename}")
+    def releases_patch(filename: str, request: Request, body: ReleasePatchIn) -> dict[str, Any]:
+        require_admin(request)
+        if store.get_release(filename) is None:
+            raise ApiError(404, "no such release")
+        values: dict[str, Any] = {}
+        if "hidden" in body.model_fields_set:
+            if not isinstance(body.hidden, bool):
+                raise ApiError(400, "hidden must be true or false")
+            values["hidden"] = int(body.hidden)
+        if "changelog" in body.model_fields_set:
+            r = store.get_release(filename)
+            values["changelog"] = clean_release_meta(r.version, r.mc, r.loader, r.filename, body.changelog)[4]  # type: ignore[union-attr]
+        if values:
+            store.update_release(filename, values)
+        return release_api(store.get_release(filename))  # type: ignore[arg-type]
+
+    @app.get("/releases/{filename}")
+    def release_download(filename: str, request: Request) -> FileResponse:
+        r = store.get_release(filename) if RELEASE_FILENAME_RE.match(filename) else None
+        if r is not None and r.hidden:
+            user = optional_user(request)
+            if user is None or not user.is_admin:
+                r = None
+        if r is None:
+            raise ApiError(404, "no such release")
+        disk = release_path(store.releases_dir, r.filename)
+        if not disk.is_file():
+            raise ApiError(404, "no such release")
+        store.count_download(r.filename)
+        return FileResponse(
+            disk,
+            media_type="application/java-archive",
+            filename=r.filename,
+            headers={"X-Sha256": r.sha256, "Cache-Control": "no-cache"},
+        )
+
+    # ---- feedback
+
+    def clean_short(value: Any, what: str, limit: int) -> str | None:
+        """An optional one-line text field: None if missing or blank."""
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ApiError(400, f"{what} must be text")
+        value = value.strip()
+        if len(value) > limit:
+            raise ApiError(400, f"{what} must be at most {limit} characters")
+        if TITLE_BAD_CHARS.search(value):
+            raise ApiError(400, f"{what} may not contain control characters or line breaks")
+        return value or None
+
+    def feedback_api(r: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": r["id"], "type": r["kind"], "message": r["message"], "modVersion": r["mod_version"],
+            "mcVersion": r["mc_version"], "contact": r["contact"],
+            "user": {"uuid": r["uuid"], "name": r["name"]} if r["uuid"] else None,
+            "created": r["created"], "resolved": r["resolved"],
+        }
+
+    @app.post("/api/feedback")
+    def feedback_submit(request: Request, body: FeedbackIn) -> JSONResponse:
+        if request.headers.get("authorization"):
+            user: User | None = authenticate(request, mutating=True)
+        else:
+            # logged out too: the header keeps other sites from posting through a visitor's browser
+            if request.headers.get(CSRF_HEADER) != CSRF_VALUE:
+                raise ApiError(403, f"missing X-Requested-With: {CSRF_VALUE} header")
+            user = session_user(request)
+        if body.type not in FEEDBACK_KINDS:
+            raise ApiError(400, "type must be one of " + ", ".join(FEEDBACK_KINDS))
+        if not isinstance(body.message, str) or not body.message.strip():
+            raise ApiError(400, "message is required")
+        message = body.message.replace("\r\n", "\n").replace("\r", "\n").strip()
+        if len(message) > MAX_FEEDBACK_LEN:
+            raise ApiError(400, f"message must be at most {MAX_FEEDBACK_LEN} characters")
+        if DESCRIPTION_BAD_CHARS.search(message):
+            raise ApiError(400, "message may not contain control characters")
+        mod_version = clean_short(body.modVersion, "modVersion", MAX_FEEDBACK_VERSION_LEN)
+        mc_version = clean_short(body.mcVersion, "mcVersion", MAX_FEEDBACK_VERSION_LEN)
+        contact = clean_short(body.contact, "contact", MAX_CONTACT_LEN)
+        if user is not None:
+            key, limit = f"feedback-user:{user.uuid}", FEEDBACK_USER_LIMIT
+        else:
+            key, limit = f"feedback-ip:{client_ip(request)}", FEEDBACK_IP_LIMIT
+        with store.lock:
+            n, oldest = store.recent_failures(key)
+            if n >= limit:
+                wait = max(1, -(-((oldest or now_s()) + LOGIN_WINDOW - now_s()) // 60))
+                raise ApiError(429, f"too many messages for now, try again in {wait} minute{'s' if wait != 1 else ''}")
+            store.add_failure(key)
+            feedback_id = store.add_feedback({
+                "kind": body.type, "message": message, "mod_version": mod_version, "mc_version": mc_version,
+                "contact": contact, "uuid": user.uuid if user else None, "name": user.name if user else None,
+                "created": int(time.time() * 1000),
+            })
+            row = store.db.execute("SELECT * FROM feedback WHERE id=?", (feedback_id,)).fetchone()
+        return JSONResponse(feedback_api(row), status_code=201)
+
+    @app.get("/api/feedback")
+    def feedback_list(request: Request) -> dict[str, Any]:
+        user = authenticate(request, mutating=False)
+        if not user.is_admin:
+            raise ApiError(403, "only admins can do that")
+        status = request.query_params.get("status") or "open"
+        if status not in FEEDBACK_STATUSES:
+            raise ApiError(400, "status must be one of " + ", ".join(FEEDBACK_STATUSES))
+        n_open, n_resolved = store.feedback_counts()
+        return {"feedback": [feedback_api(r) for r in store.list_feedback(status)], "open": n_open, "resolved": n_resolved}
+
+    @app.post("/api/feedback/{feedback_id}/resolve")
+    def feedback_resolve(feedback_id: int, request: Request, body: ResolveIn) -> dict[str, Any]:
+        require_admin(request)
+        if not isinstance(body.resolved, bool):
+            raise ApiError(400, "resolved must be true or false")
+        row = store.set_feedback_resolved(feedback_id, body.resolved)
+        if row is None:
+            raise ApiError(404, "no such feedback")
+        return feedback_api(row)
+
     # ---- website
 
     def render(name: str, status: int = 200, **ctx: Any) -> HTMLResponse:
@@ -2426,6 +3025,86 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             password_set=password_set * 1000 if password_set else None,
             min_password=MIN_PASSWORD_LEN,
             max_password=MAX_PASSWORD_LEN,
+        )
+
+    @app.get("/releases", response_class=HTMLResponse)
+    def releases_page(request: Request) -> HTMLResponse:
+        user = session_user(request)
+        releases = store.list_releases()  # newest version first
+        highlight = request.query_params.get("highlight") or ""
+        if not VERSION_RE.match(highlight):
+            highlight = ""
+        # ?highlight=<version>&mc=<mc>: the mod's fallback when updating in place fails. Without mc (or
+        # for an mc it has no build for) every build of the version is highlighted.
+        marked = [r for r in releases if r.version == highlight]
+        hl_mc = request.query_params.get("mc") or ""
+        if any(r.mc == hl_mc for r in marked):
+            marked = [r for r in marked if r.mc == hl_mc]
+        groups: dict[str, list[ReleaseRow]] = {}
+        for r in sorted(releases, key=lambda r: mc_version_key(r.mc), reverse=True):  # stable: versions stay sorted
+            groups.setdefault(r.mc, []).append(r)
+        # Element ids: #v<version> on one build of each version (the highlighted one if any), so the
+        # mod's #v<version> lands right; other builds of the same version get #v<version>-mc<mc>-<loader>.
+        anchors: dict[int, str] = {}
+        if marked:
+            anchors[marked[0].id] = f"v{highlight}"
+        for group in groups.values():
+            for r in group:
+                if r.id not in anchors:
+                    bare = f"v{r.version}"
+                    anchors[r.id] = bare if bare not in anchors.values() else f"v{r.version}-mc{r.mc}-{r.loader}"
+        newest = releases[0] if releases else None
+        return render(
+            "releases.html",
+            user=user,
+            nav="releases",
+            newest=newest,
+            newest_builds=[r for r in releases if newest and r.version == newest.version],
+            groups=list(groups.items()),
+            anchors=anchors,
+            marked={r.id for r in marked},
+            highlight=highlight,
+            github=GITHUB_URL,
+            default_loader=DEFAULT_LOADER,
+        )
+
+    @app.get("/feedback", response_class=HTMLResponse)
+    def feedback_page(request: Request) -> HTMLResponse:
+        # The mod's Credits button opens this; ?mod=&mc= fill in the versions, ?type= picks the kind.
+        q = request.query_params
+        kind = q.get("type") if q.get("type") in FEEDBACK_KINDS else "bug"
+        return render(
+            "feedback.html",
+            user=session_user(request),
+            nav="feedback",
+            kinds=FEEDBACK_KINDS,
+            kind=kind,
+            mod_version=(q.get("mod") or "").strip()[:MAX_FEEDBACK_VERSION_LEN],
+            mc_version=(q.get("mc") or "").strip()[:MAX_FEEDBACK_VERSION_LEN],
+            max_message=MAX_FEEDBACK_LEN,
+            max_version=MAX_FEEDBACK_VERSION_LEN,
+            max_contact=MAX_CONTACT_LEN,
+            github=GITHUB_URL,
+        )
+
+    @app.get("/admin/feedback", response_class=HTMLResponse)
+    def admin_feedback_page(request: Request) -> HTMLResponse:
+        user = session_user(request)
+        if user is None or not user.is_admin:
+            return render("not_found.html", status=404, user=user, heading="This page isn’t here.",
+                          lead="There is nothing at this address.")
+        status = request.query_params.get("status") or "open"
+        if status not in FEEDBACK_STATUSES:
+            status = "open"
+        n_open, n_resolved = store.feedback_counts()
+        return render(
+            "admin_feedback.html",
+            user=user,
+            nav="admin",
+            items=[feedback_api(r) for r in store.list_feedback(status)],
+            show=status,
+            counts={"open": n_open, "resolved": n_resolved, "all": n_open + n_resolved},
+            kinds=FEEDBACK_KINDS,
         )
 
     @app.get("/login/{token}")

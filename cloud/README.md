@@ -39,7 +39,7 @@ It reads optional overrides from `~/.config/slopmatica-cloud/env`.
 | `SLOPMATICA_ROOT_PATH` | *(empty)* | URL prefix when mounted under a path, e.g. `/slopmatica`. Works whether or not the proxy strips the prefix. |
 | `SLOPMATICA_ADMINS` | `sputnikboi` | Comma-separated Minecraft names with unlimited storage. Names are matched case-insensitively at login, and the account's uuid then stays an admin even after a rename. |
 | `SLOPMATICA_QUOTA_BYTES` | `1073741824` | Per-account quota (1 GiB) |
-| `SLOPMATICA_PUBLIC_URL` | `http://127.0.0.1:8095` | External origin used to build web-login links (`<PUBLIC_URL><ROOT_PATH>/login/<token>`). If it is `https://`, session cookies are marked Secure. |
+| `SLOPMATICA_PUBLIC_URL` | `http://127.0.0.1:8095` | External origin used to build web-login links (`<PUBLIC_URL><ROOT_PATH>/login/<token>`) and the absolute release URLs (`<PUBLIC_URL><ROOT_PATH>/...`, with ROOT_PATH left out if PUBLIC_URL already ends in it). If it is `https://`, session cookies are marked Secure. |
 | `SLOPMATICA_MOJANG_HASJOINED` | `https://sessionserver.mojang.com/session/minecraft/hasJoined` | Override for tests |
 | `SLOPMATICA_MOJANG_PROFILE` | `https://api.mojang.com/users/profiles/minecraft` | Name to uuid lookups (`<url>/<name>`) for private board posts. Override for tests |
 
@@ -154,13 +154,51 @@ difference from the previous one (the first from 0). Several Litematica regions 
 enclosing box as for `.nbt` exports.
 Logged out is fine for public and unlisted posts, except voting and saving (401). Website pages: `/board`, `/board/<id>`.
 
+### Releases
+
+Mod jars live in `<data>/releases/<filename>`, their metadata in the `releases` table. A version is semver-ish
+(`1.2.3` or `1.2.3-beta.1`), `mc` a Minecraft version (`26.3`), `loader` a lowercase name (default `fabric`), and a
+file name one plain `.jar` name (letters, digits, `._+-`, not starting with `.` or `-`). Each (version, mc, loader)
+and each file name can be published once (409 otherwise). "Newest" is semver precedence, never upload time.
+A release is `{"version","mc","loader","filename","sha256","size","uploaded"(unix ms),"changelog","hidden","downloads","download","page"}`.
+
+| Method & path | Result |
+|---|---|
+| `GET /api/releases/latest?mc=26.3&loader=fabric` | The mod's update check: `{"version","download","page","sha256","mc","loader"}` for the highest non-hidden version for that mc and loader (`loader` defaults to `fabric`). `download` is the jar's absolute URL, `page` the releases page with that build highlighted (`.../releases?highlight=<v>&mc=<mc>#v<v>`). 404 `{"error"}` if there is none, 400 for a malformed mc or loader. |
+| `GET /api/releases` | `{"releases":[release]}`, newest first. Hidden ones only for admins. |
+| `POST /api/releases` | Admins only (403 otherwise; cookie requests need `X-Requested-With`). `multipart/form-data` with `jar` (the file; it must start like a zip), `version`, `mc`, `loader`?, `changelog`?, `filename`? (else the upload's own name, without folders), `hidden`? (`true`/`1`/`on`). 201 with the release; at most 64 MiB (413). |
+| `PATCH /api/releases/{filename}` | Admins only: `{"hidden"?: bool, "changelog"?: text}`. |
+| `GET /releases/{filename}` | The jar, `Content-Disposition: attachment`, `X-Sha256`; counts a download. 404 for hidden releases (except for admins). |
+
+The page `/releases` shows the newest version with a download per Minecraft version, then every version grouped by
+Minecraft version with its changelog (markdown-ish: `#` headings, `-`/`1.` lists, `**bold**`, `` `code` ``,
+`[text](https://...)`; everything else is escaped). `?highlight=<version>` (plus `&mc=`) highlights and scrolls to
+that build, which also carries the id `v<version>`.
+
+`publish_release.py <jar> --mc 26.3 [--loader fabric] [--changelog-file notes.md|-] [--version V] [--filename F] [--hidden] [--data DIR]`
+publishes on this machine without HTTP, for deploy scripts. The version defaults to the one in the jar's
+`fabric.mod.json`; the data directory to `--data`, `SLOPMATICA_DATA`, then `SLOPMATICA_DATA` in
+`~/.config/slopmatica-cloud/env`. It runs itself under `.venv` if started with a Python without FastAPI, needs the
+database at schema 4 (start the 0.6.0 server once), and may run while the server does. Exit status 0 or 1.
+
+### Feedback
+
+`/feedback` (the mod's Credits button; `?mod=&mc=&type=` prefill the form) takes bug reports, suggestions and other
+messages, logged in or not. `POST /api/feedback` `{"type":"bug"|"suggestion"|"other","message","modVersion"?,"mcVersion"?,"contact"?}`
+needs `X-Requested-With: slopmatica` unless it has a bearer token, and records the logged-in account. Message at most
+5000 characters, versions 40, contact 200. Limits per 15 minutes: 5 per address logged out, 20 per account
+(429 past that; counted in `login_failures` under `feedback-ip:`/`feedback-user:` keys). Admins only:
+`GET /api/feedback?status=open|resolved|all` returns `{"feedback":[...],"open","resolved"}`,
+`POST /api/feedback/{id}/resolve` `{"resolved": bool}`, and the page `/admin/feedback` (404 to anyone else).
+A feedback item is `{"id","type","message","modVersion","mcVersion","contact","user":{"uuid","name"}|null,"created","resolved"(unix ms|null)}`.
+
 ### Database
 
 `PRAGMA user_version` records the schema. At startup, `cloud.db` is brought up to date in place,
 one transaction per step: 0 is the 0.3.0 schema; 1 adds `posts`, `post_access` and `votes`;
 2 adds `users.password_hash`, `users.password_set`, `tokens.next` and `login_failures`;
 3 (0.5.0) adds `posts.size_class` (filled from the stored block counts), `post_tags`, and `files.source_post`,
-`source_title`, `source_author_uuid`, `source_author_name`. Before step 3, board snapshots that aren't
+`source_title`, `source_author_uuid`, `source_author_name`. 4 (0.6.0) adds `releases` and `feedback`. Before step 3, board snapshots that aren't
 `.slopmatic` are converted in place, each committed on its own (size, hash, format, file name, so quota
 usage follows); one that fails to convert is left as it is and logged. An interrupted run converts the
 rest at the next start.
