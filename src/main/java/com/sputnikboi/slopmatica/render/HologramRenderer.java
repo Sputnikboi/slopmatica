@@ -197,7 +197,7 @@ public final class HologramRenderer {
                 }
             }
             specialGhosts.submit(context.submitNodeCollector(), context.poseStack(), camera, context.levelState().cameraRenderState,
-                Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(false), nearby, SlopmaticaConfig.get().ghostOpacity);
+                Minecraft.getInstance().getDeltaTracker().getGameTimeDeltaPartialTick(false), nearby, SlopmaticaConfig.get().effectiveGhostOpacity());
         } catch (RuntimeException e) {
             if (!renderFailureLogged) {
                 renderFailureLogged = true;
@@ -390,7 +390,7 @@ public final class HologramRenderer {
         // Uniforms and index buffers are written before the pass opens; nothing may allocate inside it.
         Matrix4f modelView = RenderSystem.getModelViewMatrixCopy();
         SlopmaticaConfig config = SlopmaticaConfig.get();
-        Vector4f ghostColor = new Vector4f(1.0F, 1.0F, 1.0F, config.ghostOpacity);
+        Vector4f ghostColor = new Vector4f(1.0F, 1.0F, 1.0F, config.effectiveGhostOpacity());
         // The line shader reads its settings from TextureMat[3] (lines have no texture): xy is the
         // fade range, where an end at or before the start means "never fade"; z = 1 keeps lines
         // solid when they shrink below a pixel. Wrong and variant outlines use both, so they stay

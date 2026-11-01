@@ -28,7 +28,7 @@ abstract class MouseHandlerMixin {
 
     @WrapWithCondition(method = "turnPlayer", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;turn(DD)V"))
     private boolean slopmatica$turnView(LocalPlayer player, double dx, double dy) {
-        if (PlacementView.INSTANCE.active()) {
+        if (PlacementView.INSTANCE.freecam()) {
             PlacementView.INSTANCE.turn(dx, dy);
             return false;
         }

@@ -95,6 +95,28 @@ public final class CloudSync {
         account = loadAccount();
     }
 
+    /** A cloud file added from the schematics board: the post's author and title. */
+    public record Source(String author, String title, String postId) {
+    }
+
+    /** Board origins by cloud-relative path, from the last sync (or the saved state before one). */
+    private volatile Map<String, Source> sources = Map.of();
+    private boolean sourcesLoaded;
+
+    /** Where a file in the cloud folder came from, if it was added from the board. */
+    public @Nullable Source sourceOf(Path file) {
+        if (!sourcesLoaded && account.uuid != null) {
+            sourcesLoaded = true;
+            Map<String, Source> saved = SyncState.load(account.uuid).sources;
+            if (sources.isEmpty() && saved != null) {
+                sources = saved;
+            }
+        }
+        Path dir = cloudDir().toAbsolutePath().normalize();
+        Path abs = file.toAbsolutePath().normalize();
+        return abs.startsWith(dir) ? sources.get(dir.relativize(abs).toString().replace('\\', '/')) : null;
+    }
+
     public Account account() {
         return account;
     }
@@ -271,10 +293,20 @@ public final class CloudSync {
         JsonObject listing = getJson("/api/files");
         readUsage(listing);
         Map<String, String> remote = new HashMap<>();
+        Map<String, Source> sourcesNow = new HashMap<>();
         for (JsonElement e : listing.getAsJsonArray("files")) {
             JsonObject f = e.getAsJsonObject();
             remote.put(f.get("path").getAsString(), f.get("sha256").getAsString());
+            if (f.has("source") && f.get("source").isJsonObject()) {
+                JsonObject src = f.getAsJsonObject("source");
+                sourcesNow.put(f.get("path").getAsString(), new Source(
+                    src.has("author") ? src.get("author").getAsString() : "?",
+                    src.has("title") ? src.get("title").getAsString() : "",
+                    src.has("postId") ? src.get("postId").getAsString() : ""));
+            }
         }
+        sources = sourcesNow;
+        state.sources = new HashMap<>(sourcesNow);
         Map<String, String> local = scanLocal(dir, state);
 
         Set<String> paths = new HashSet<>(remote.keySet());
@@ -565,6 +597,8 @@ public final class CloudSync {
     private static final class SyncState {
         Map<String, String> synced = new HashMap<>();
         Map<String, Hash> hashes = new HashMap<>();
+        /** Where board-sourced files came from, as of the last sync. */
+        Map<String, Source> sources = new HashMap<>();
         transient Path file;
 
         record Hash(long size, long mtime, String sha) {
@@ -586,6 +620,9 @@ public final class CloudSync {
             }
             if (state.hashes == null) {
                 state.hashes = new HashMap<>();
+            }
+            if (state.sources == null) {
+                state.sources = new HashMap<>();
             }
             state.file = file;
             return state;

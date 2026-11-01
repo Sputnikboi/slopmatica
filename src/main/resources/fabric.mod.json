@@ -4,11 +4,15 @@
   "version": "${version}",
   "name": "Slopmatica",
   "description": "Schematic holograms for building: shows what is missing, correct, or wrong. Reads its own .slopmatic files, vanilla .nbt structures and Litematica .litematic files.",
-  "authors": ["Sputnikboi"],
+  "authors": [
+    "Sputnikboi"
+  ],
   "license": "All-Rights-Reserved",
   "environment": "client",
   "entrypoints": {
-    "client": ["com.sputnikboi.slopmatica.SlopmaticaClient"]
+    "client": [
+      "com.sputnikboi.slopmatica.SlopmaticaClient"
+    ]
   },
   "mixins": [
     "slopmatica.mixins.json"
@@ -17,5 +21,10 @@
     "fabricloader": ">=0.19.5",
     "minecraft": ">=26.3",
     "fabric-api": "*"
+  },
+  "icon": "assets/slopmatica/icon.png",
+  "contact": {
+    "homepage": "https://homeserver.taila182df.ts.net/slopmatica",
+    "sources": "https://github.com/Sputnikboi/slopmatica"
   }
 }

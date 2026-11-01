@@ -2,6 +2,7 @@ package com.sputnikboi.slopmatica.gui;
 
 import com.mojang.blaze3d.Blaze3D;
 import com.sputnikboi.slopmatica.cloud.CloudSync;
+import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Locale;
@@ -48,12 +49,16 @@ public class CloudScreen extends Screen {
         LinearLayout column = layout.addToContents(LinearLayout.vertical().spacing(6));
         column.defaultCellSetting().alignHorizontallyCenter();
 
-        column.addChild(new StringWidget(Component.translatable("slopmatica.cloud.server").withColor(DETAIL_COLOR), font));
-        url = column.addChild(new EditBox(font, 0, 0, WIDTH, 18, Component.translatable("slopmatica.cloud.server")));
+        // The server address is a technical setting: shown only with advanced settings on.
+        url = new EditBox(font, 0, 0, WIDTH, 18, Component.translatable("slopmatica.cloud.server"));
         url.setMaxLength(256);
         url.setValue(cloud.account().url);
         url.setHint(Component.literal("https://...").withStyle(EditBox.SEARCH_HINT_STYLE));
         url.setResponder(text -> refresh());
+        if (SlopmaticaConfig.get().showAdvanced) {
+            column.addChild(new StringWidget(Component.translatable("slopmatica.cloud.server").withColor(DETAIL_COLOR), font));
+            column.addChild(url);
+        }
 
         account = column.addChild(new StringWidget(WIDTH, 9, Component.empty(), font));
         usage = column.addChild(new StringWidget(WIDTH, 9, Component.empty(), font));

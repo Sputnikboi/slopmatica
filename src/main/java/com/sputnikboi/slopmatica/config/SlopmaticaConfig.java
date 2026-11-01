@@ -26,6 +26,18 @@ public final class SlopmaticaConfig {
 
     public float ghostOpacity = 0.65F;
     public boolean showGhosts = true;
+    /** Ghost blocks drawn fully solid instead of see-through. */
+    public boolean solidGhosts = false;
+    /** Show the technical options (thickness, fading, formats, cloud address...). */
+    public boolean showAdvanced = false;
+    /** Outline colours, ARGB; null means the default. */
+    public Integer colorMissing, colorMatch, colorVariant, colorWrong;
+    /** The placement view detaches the camera; off keeps you in your body (no freecam). */
+    public boolean viewFreecam = true;
+    /** Which missing block Easy Place places first on a right click. */
+    public EasyPlaceOrder easyPlaceOrder = EasyPlaceOrder.FURTHEST;
+    /** Keys listed in vanilla's Controls screen; null means the default set (the main ones). */
+    public java.util.Set<String> controlsKeys;
     /** Master switch for every outline, flipped by its hotkey; the per-status switches below stay as set. */
     public boolean showOutlines = true;
     public boolean outlineMissing = true;
@@ -63,6 +75,40 @@ public final class SlopmaticaConfig {
             instance = load();
         }
         return instance;
+    }
+
+    public enum EasyPlaceOrder {
+        /** Furthest reachable missing block in front of you first, so near blocks never get in the way. */
+        FURTHEST,
+        NEAREST,
+        /** Lowest layer first. */
+        BOTTOM_UP,
+        /** Exactly the ghost under the crosshair (Litematica's behaviour). */
+        CROSSHAIR
+    }
+
+    /** Solid view draws ghosts at full opacity, whatever the opacity slider says. */
+    public float effectiveGhostOpacity() {
+        return solidGhosts ? 1.0F : ghostOpacity;
+    }
+
+    public int colorFor(BlockStatus status) {
+        Integer custom = switch (status) {
+            case MISSING -> colorMissing;
+            case MATCH -> colorMatch;
+            case VARIANT -> colorVariant;
+            case WRONG -> colorWrong;
+        };
+        return custom != null ? custom | 0xFF000000 : status.defaultColor();
+    }
+
+    public void setColor(BlockStatus status, @org.jspecify.annotations.Nullable Integer argb) {
+        switch (status) {
+            case MISSING -> colorMissing = argb;
+            case MATCH -> colorMatch = argb;
+            case VARIANT -> colorVariant = argb;
+            case WRONG -> colorWrong = argb;
+        }
     }
 
     public boolean showsOutline(BlockStatus status) {
@@ -106,6 +152,9 @@ public final class SlopmaticaConfig {
         outlineWidth = Math.clamp(outlineWidth, 0.01F, 4.0F);
         fadeStart = Math.clamp(fadeStart, 4, 256);
         fadeEnd = Math.clamp(fadeEnd, fadeStart + 4, 260);
+        if (easyPlaceOrder == null) {
+            easyPlaceOrder = EasyPlaceOrder.FURTHEST;
+        }
         if (copyFormat == null) {
             copyFormat = SchematicFormats.SLOPMATIC;
         }

@@ -20,6 +20,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.options.controls.KeyBindsScreen;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
@@ -92,6 +93,8 @@ public final class DevHarness {
                     case "options" -> new SlopmaticaOptionsScreen(null);
                     case "cloud" -> new CloudScreen(null);
                     case "slopkeys" -> new SlopmaticaKeyBindsScreen(null);
+                    case "color" -> new com.sputnikboi.slopmatica.gui.ColorPickerScreen(null, com.sputnikboi.slopmatica.verify.BlockStatus.MISSING);
+                    case "controls-keys" -> new com.sputnikboi.slopmatica.gui.ControlsKeysScreen(null);
                     case "materials" -> new MaterialListScreen(null, PlacementManager.INSTANCE.selected().orElseThrow());
                     case "keybinds" -> new KeyBindsScreen(null, mc.options);
                     default -> null;
@@ -107,6 +110,9 @@ public final class DevHarness {
                 };
                 boolean handled = mc.gui.screen().keyPressed(event);
                 LOGGER.info("dev key {} handled={} focus={}", step, handled, mc.gui.screen() == null ? null : mc.gui.screen().getFocused());
+            } else if (step.startsWith("scroll ") && mc.gui.screen() != null) {
+                Screen screen = mc.gui.screen();
+                screen.mouseScrolled(screen.width / 2.0, screen.height / 2.0, 0, Double.parseDouble(step.substring(7).trim()));
             } else if (step.startsWith("press ")) {
                 KeyMapping mapping = KeyMapping.get(step.substring(6).trim());
                 KeyMapping.click(InputConstants.getKey(mapping.saveString()));

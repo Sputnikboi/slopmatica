@@ -11,14 +11,18 @@ public enum BlockStatus {
     /** A different block entirely. */
     WRONG(0xFFFF4040);
 
-    private final int color;
+    private final int defaultColor;
 
-    BlockStatus(int color) {
-        this.color = color;
+    BlockStatus(int defaultColor) {
+        this.defaultColor = defaultColor;
     }
 
-    /** Outline colour, ARGB. */
+    /** Outline colour, ARGB, as set in Options (colourblind players may change them). */
     public int color() {
-        return color;
+        return com.sputnikboi.slopmatica.config.SlopmaticaConfig.get().colorFor(this);
+    }
+
+    public int defaultColor() {
+        return defaultColor;
     }
 }

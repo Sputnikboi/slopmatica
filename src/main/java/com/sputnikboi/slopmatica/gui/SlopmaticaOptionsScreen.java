@@ -1,18 +1,21 @@
 package com.sputnikboi.slopmatica.gui;
 
-import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
-import com.sputnikboi.slopmatica.render.HologramRenderer;
-import java.util.function.Consumer;
-import net.minecraft.client.Minecraft;
 import com.mojang.serialization.Codec;
 import com.sputnikboi.slopmatica.build.PlacementBuilder;
+import com.sputnikboi.slopmatica.cloud.CloudSync;
+import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
+import com.sputnikboi.slopmatica.render.HologramRenderer;
 import com.sputnikboi.slopmatica.schematic.SchematicFormats;
+import com.sputnikboi.slopmatica.verify.BlockStatus;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Consumer;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
-import net.minecraft.client.gui.components.Tooltip;
-import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.Options;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.options.OptionsSubScreen;
 import net.minecraft.network.chat.Component;
@@ -20,10 +23,13 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Slopmatica's settings, built from vanilla option widgets so they look and behave like the rest of
- * the options menu. Keybinds are not here on purpose: they are in Controls > Key Binds.
+ * the options menu. The page shows what most players want; technical settings (thickness, fading,
+ * file formats, the cloud address...) only appear with "Advanced settings" on, so the mod stays
+ * approachable. Keybinds are not here on purpose: they are behind the Key Binds button.
  */
 public class SlopmaticaOptionsScreen extends OptionsSubScreen {
     private static final int KEYS_BUTTON_WIDTH = 90;
+    private static final int WIDE = 150;
     private @Nullable Button keyBindsButton;
 
     public SlopmaticaOptionsScreen(@Nullable Screen parent) {
@@ -33,40 +39,49 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
     @Override
     protected void addOptions() {
         SlopmaticaConfig c = SlopmaticaConfig.get();
+        boolean advanced = c.showAdvanced;
+
+        list.addSmall(OptionInstance.createBoolean("slopmatica.options.advanced",
+            OptionInstance.cachedConstantTooltip(Component.translatable("slopmatica.options.advanced.tooltip")), c.showAdvanced, v -> {
+                c.showAdvanced = v;
+                // Rebuild so the advanced rows appear or go.
+                minecraft.gui.setScreen(new SlopmaticaOptionsScreen(lastScreen));
+            }));
 
         list.addHeader(Component.translatable("slopmatica.options.ghosts"));
         list.addSmall(
             toggle("slopmatica.options.show_ghosts", c.showGhosts, v -> c.showGhosts = v, false),
-            slider("slopmatica.options.ghost_opacity", 5, 100, Math.round(c.ghostOpacity * 100), "%", v -> c.ghostOpacity = v / 100.0F, false)
+            slider("slopmatica.options.ghost_opacity", 5, 100, Math.round(c.ghostOpacity * 100), "%", v -> c.ghostOpacity = v / 100.0F, false),
+            toggle("slopmatica.options.solid_ghosts", c.solidGhosts, v -> c.solidGhosts = v, false),
+            toggle("slopmatica.options.block_info", c.blockInfo, v -> c.blockInfo = v, false)
         );
-
-        list.addSmall(toggle("slopmatica.options.block_info", c.blockInfo, v -> c.blockInfo = v, false));
 
         list.addHeader(Component.translatable("slopmatica.options.outlines"));
-        list.addSmall(
-            toggle("slopmatica.options.show_outlines", c.showOutlines, v -> c.showOutlines = v, false),
-            slider("slopmatica.options.outline_width", 1, 400, Math.round(c.outlineWidth * 100), "%", v -> c.outlineWidth = v / 100.0F, true)
-        );
-        list.addSmall(
-            toggle("slopmatica.options.outline_missing", c.outlineMissing, v -> c.outlineMissing = v, true),
-            toggle("slopmatica.options.outline_match", c.outlineMatch, v -> c.outlineMatch = v, true),
-            toggle("slopmatica.options.outline_variant", c.outlineVariant, v -> c.outlineVariant = v, true),
-            toggle("slopmatica.options.outline_wrong", c.outlineWrong, v -> c.outlineWrong = v, true)
-        );
-        list.addSmall(
-            toggle("slopmatica.options.fade_outlines", c.fadeOutlines, v -> c.fadeOutlines = v, false),
-            slider("slopmatica.options.fade_start", 4, 128, c.fadeStart, " blocks", v -> {
-                c.fadeStart = v;
-                c.fadeEnd = Math.max(c.fadeEnd, v + 4);
-            }, false),
-            slider("slopmatica.options.fade_end", 8, 256, c.fadeEnd, " blocks", v -> {
-                c.fadeEnd = v;
-                c.fadeStart = Math.min(c.fadeStart, v - 4);
-            }, false)
-        );
+        list.addSmall(toggle("slopmatica.options.show_outlines", c.showOutlines, v -> c.showOutlines = v, false),
+            slider("slopmatica.options.outline_width", 1, 400, Math.round(c.outlineWidth * 100), "%", v -> c.outlineWidth = v / 100.0F, true));
+        list.addSmall(colorButton(BlockStatus.MISSING), colorButton(BlockStatus.MATCH));
+        list.addSmall(colorButton(BlockStatus.VARIANT), colorButton(BlockStatus.WRONG));
+        if (advanced) {
+            list.addSmall(
+                toggle("slopmatica.options.outline_missing", c.outlineMissing, v -> c.outlineMissing = v, true),
+                toggle("slopmatica.options.outline_match", c.outlineMatch, v -> c.outlineMatch = v, true),
+                toggle("slopmatica.options.outline_variant", c.outlineVariant, v -> c.outlineVariant = v, true),
+                toggle("slopmatica.options.outline_wrong", c.outlineWrong, v -> c.outlineWrong = v, true),
+                toggle("slopmatica.options.fade_outlines", c.fadeOutlines, v -> c.fadeOutlines = v, false),
+                slider("slopmatica.options.fade_start", 4, 128, c.fadeStart, " blocks", v -> {
+                    c.fadeStart = v;
+                    c.fadeEnd = Math.max(c.fadeEnd, v + 4);
+                }, false),
+                slider("slopmatica.options.fade_end", 8, 256, c.fadeEnd, " blocks", v -> {
+                    c.fadeEnd = v;
+                    c.fadeStart = Math.min(c.fadeStart, v - 4);
+                }, false)
+            );
+        }
 
         list.addHeader(Component.translatable("slopmatica.options.view"));
         list.addSmall(
+            toggle("slopmatica.options.view_freecam", c.viewFreecam, v -> c.viewFreecam = v, false),
             toggle("slopmatica.options.view_collision", c.viewCollision, v -> c.viewCollision = v, false),
             toggle("slopmatica.options.exit_view_when_hurt", c.exitViewWhenHurt, v -> c.exitViewWhenHurt = v, false)
         );
@@ -74,29 +89,56 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
         list.addHeader(Component.translatable("slopmatica.options.easy_place"));
         list.addSmall(
             toggle("slopmatica.options.easy_place_on", c.easyPlace, v -> c.easyPlace = v, false),
+            cycle("slopmatica.options.easy_place_order", SlopmaticaConfig.EasyPlaceOrder.values(), c.easyPlaceOrder, v -> c.easyPlaceOrder = v),
             toggle("slopmatica.options.easy_place_restrict", c.easyPlaceRestrict, v -> c.easyPlaceRestrict = v, false),
-            toggle("slopmatica.options.easy_place_rotate", c.easyPlaceRotate, v -> c.easyPlaceRotate = v, false),
             toggle("slopmatica.options.easy_place_angel", c.easyPlaceAngel, v -> c.easyPlaceAngel = v, false)
         );
+        if (advanced) {
+            list.addSmall(toggle("slopmatica.options.easy_place_rotate", c.easyPlaceRotate, v -> c.easyPlaceRotate = v, false));
+        }
 
         list.addHeader(Component.translatable("slopmatica.options.paste"));
-        list.addSmall(toggle("slopmatica.options.include_nbt", c.includeNbt, v -> c.includeNbt = v, false));
-        list.addSmall(new OptionInstance<>(
-            "slopmatica.options.paste_replace",
-            v -> Tooltip.create(Component.translatable("slopmatica.options.paste_replace." + v.name().toLowerCase(Locale.ROOT) + ".tooltip")),
-            // Cycle buttons add the caption themselves.
-            (caption, v) -> Component.translatable("slopmatica.options.paste_replace." + v.name().toLowerCase(Locale.ROOT)),
-            new OptionInstance.Enum<>(List.of(PlacementBuilder.Replace.values()), Codec.STRING.xmap(PlacementBuilder.Replace::valueOf, Enum::name)),
-            c.pasteReplace,
-            v -> c.pasteReplace = v
-        ), new OptionInstance<>(
-            "slopmatica.options.copy_format",
-            v -> Tooltip.create(Component.translatable("slopmatica.options.copy_format." + v.name().toLowerCase(Locale.ROOT) + ".tooltip")),
-            (caption, v) -> Component.literal(v.extension),
-            new OptionInstance.Enum<>(List.of(SchematicFormats.values()), Codec.STRING.xmap(SchematicFormats::valueOf, Enum::name)),
-            c.copyFormat,
-            v -> c.copyFormat = v
-        ));
+        list.addSmall(
+            toggle("slopmatica.options.include_nbt", c.includeNbt, v -> c.includeNbt = v, false),
+            cycle("slopmatica.options.paste_replace", PlacementBuilder.Replace.values(), c.pasteReplace, v -> c.pasteReplace = v)
+        );
+        if (advanced) {
+            list.addSmall(new OptionInstance<>(
+                "slopmatica.options.copy_format",
+                v -> Tooltip.create(Component.translatable("slopmatica.options.copy_format." + v.name().toLowerCase(Locale.ROOT) + ".tooltip")),
+                (caption, v) -> Component.literal(v.extension),
+                new OptionInstance.Enum<>(List.of(SchematicFormats.values()), Codec.STRING.xmap(SchematicFormats::valueOf, Enum::name)),
+                c.copyFormat,
+                v -> c.copyFormat = v
+            ));
+        }
+
+        list.addHeader(Component.translatable("slopmatica.options.controls"));
+        list.addSmall(
+            Button.builder(Component.translatable("slopmatica.options.keybinds_all"), b -> minecraft.gui.setScreen(new SlopmaticaKeyBindsScreen(this))).width(WIDE).build(),
+            Button.builder(Component.translatable("slopmatica.options.controls_keys"), b -> minecraft.gui.setScreen(new ControlsKeysScreen(this)))
+                .tooltip(Tooltip.create(Component.translatable("slopmatica.options.controls_keys.tooltip"))).width(WIDE).build()
+        );
+
+        if (advanced) {
+            list.addHeader(Component.translatable("slopmatica.options.cloud"));
+            EditBox url = new EditBox(font, 0, 0, WIDE, 20, Component.translatable("slopmatica.cloud.server"));
+            url.setMaxLength(256);
+            url.setValue(CloudSync.INSTANCE.account().url);
+            url.setHint(Component.literal(CloudSync.DEFAULT_URL).withStyle(EditBox.SEARCH_HINT_STYLE));
+            url.setResponder(text -> pendingUrl = text);
+            url.setTooltip(Tooltip.create(Component.translatable("slopmatica.options.cloud_url.tooltip")));
+            list.addSmall(url, Button.builder(Component.translatable("slopmatica.options.cloud_url.reset"), b -> url.setValue(CloudSync.DEFAULT_URL)).width(WIDE).build());
+        }
+    }
+
+    private @Nullable String pendingUrl;
+
+    private Button colorButton(BlockStatus status) {
+        String key = "slopmatica.options.outline_" + status.name().toLowerCase(Locale.ROOT);
+        return Button.builder(Component.translatable("slopmatica.options.color_of", Component.translatable(key)).withColor(status.color()),
+            b -> minecraft.gui.setScreen(new ColorPickerScreen(this, status))).width(WIDE)
+            .tooltip(Tooltip.create(Component.translatable("slopmatica.options.color.tooltip"))).build();
     }
 
     @Override
@@ -141,6 +183,20 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
         );
     }
 
+    /** A cycle button over an enum; labels and tooltips come from {@code key.<value>} and {@code key.<value>.tooltip}. */
+    private static <E extends Enum<E>> OptionInstance<E> cycle(String key, E[] values, E value, Consumer<E> setter) {
+        Class<E> type = values[0].getDeclaringClass();
+        return new OptionInstance<E>(
+            key,
+            v -> Tooltip.create(Component.translatable(key + "." + v.name().toLowerCase(Locale.ROOT) + ".tooltip")),
+            // Cycle buttons add the caption themselves.
+            (caption, v) -> Component.translatable(key + "." + v.name().toLowerCase(Locale.ROOT)),
+            new OptionInstance.Enum<E>(List.of(values), Codec.STRING.xmap(name -> Enum.valueOf(type, name), Enum::name)),
+            value,
+            setter::accept
+        );
+    }
+
     private static void changed(boolean baked) {
         if (baked) {
             HologramRenderer.INSTANCE.rebuildAll();
@@ -150,6 +206,9 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
     @Override
     public void removed() {
         super.removed();
+        if (pendingUrl != null && !pendingUrl.isBlank()) {
+            CloudSync.INSTANCE.setUrl(pendingUrl);
+        }
         SlopmaticaConfig.get().save();
     }
 }

@@ -14,6 +14,7 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.PauseScreen;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
@@ -72,6 +73,14 @@ public final class PlacementView {
 
     public boolean active() {
         return placement != null;
+    }
+
+    /**
+     * Whether the camera is detached right now. With freecam turned off in Options the view
+     * keeps you in your body: you walk and look as usual, and only clicks and keys go to the view.
+     */
+    public boolean freecam() {
+        return placement != null && SlopmaticaConfig.get().viewFreecam;
     }
 
     public @Nullable Placement placement() {
@@ -168,12 +177,15 @@ public final class PlacementView {
         return new Vec3(Mth.lerp(partialTicks, xo, x), Mth.lerp(partialTicks, yo, y), Mth.lerp(partialTicks, zo, z));
     }
 
+    /** Facing of the view: the free camera's, or with freecam off, the player's own. */
     public float yRot() {
-        return yRot;
+        LocalPlayer player = Minecraft.getInstance().player;
+        return !freecam() && player != null ? player.getYRot() : yRot;
     }
 
     public float xRot() {
-        return xRot;
+        LocalPlayer player = Minecraft.getInstance().player;
+        return !freecam() && player != null ? player.getXRot() : xRot;
     }
 
     public boolean carrying() {
@@ -211,7 +223,15 @@ public final class PlacementView {
         if (mc.gui.screen() != null) {
             return;
         }
-        fly(mc);
+        if (freecam()) {
+            fly(mc);
+        } else {
+            // No freecam: the view looks out of the player's eyes.
+            Vec3 eye = mc.player.getEyePosition();
+            x = xo = eye.x;
+            y = yo = eye.y;
+            z = zo = eye.z;
+        }
 
         while (mc.options.keyAttack.consumeClick()) {
             if (carryOffset == null) {
@@ -287,7 +307,7 @@ public final class PlacementView {
             amount = 5;
             lastShiftNudge = Util.getMillis();
         }
-        Direction facing = Direction.fromYRot(yRot);
+        Direction facing = Direction.fromYRot(yRot());
         Direction[] directions = {facing, facing.getOpposite(), facing.getCounterClockWise(), facing.getClockWise(), Direction.UP, Direction.DOWN};
         SlopmaticaActions.nudge(p, directions[direction], amount, SlopmaticaActions::actionBar);
         rebaseCarry(p);
@@ -346,7 +366,7 @@ public final class PlacementView {
     }
 
     private Vec3 look() {
-        float pitch = xRot * Mth.DEG_TO_RAD, yaw = -yRot * Mth.DEG_TO_RAD;
+        float pitch = xRot() * Mth.DEG_TO_RAD, yaw = -yRot() * Mth.DEG_TO_RAD;
         float cp = Mth.cos(pitch);
         return new Vec3(Mth.sin(yaw) * cp, -Mth.sin(pitch), Mth.cos(yaw) * cp);
     }

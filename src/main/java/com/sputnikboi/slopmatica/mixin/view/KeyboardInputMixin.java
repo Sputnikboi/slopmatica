@@ -15,7 +15,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 abstract class KeyboardInputMixin extends ClientInput {
     @Inject(method = "tick", at = @At("TAIL"))
     private void slopmatica$freezePlayer(CallbackInfo ci) {
-        if (PlacementView.INSTANCE.active()) {
+        if (PlacementView.INSTANCE.freecam()) {
             keyPresses = Input.EMPTY;
             moveVector = Vec2.ZERO;
         }

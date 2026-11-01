@@ -25,7 +25,7 @@ abstract class CameraMixin {
     @Inject(method = "alignWithEntity", at = @At("TAIL"))
     private void slopmatica$placementView(float partialTicks, CallbackInfo ci) {
         PlacementView view = PlacementView.INSTANCE;
-        if (view.active()) {
+        if (view.freecam()) {
             Vec3 pos = view.position(partialTicks);
             setRotation(view.yRot(), view.xRot());
             setPosition(pos);

@@ -420,6 +420,13 @@ public class SchematicBrowserScreen extends Screen {
                 : (CloudPresence.INSTANCE.inCloud(path) ? "in cloud" : null);
             int badgeWidth = badge == null ? 0 : font.width(badge) + 8;
             String shown = font.plainSubstrByWidth(label, getContentRight() - textX - detailWidth - badgeWidth - 14);
+            // Files added from the schematics board name their author underneath.
+            CloudSync.Source source = kind == Kind.FILE && cloudTab ? CloudSync.INSTANCE.sourceOf(path) : null;
+            if (source != null) {
+                y -= 5;
+                String by = font.plainSubstrByWidth("by " + source.author() + "  ·  from the board", getContentRight() - textX - detailWidth - 14);
+                graphics.text(font, by, textX, y + 11, DETAIL_COLOR);
+            }
             graphics.text(font, shown, textX, y, kind == Kind.FILE ? -1 : DIR_COLOR);
             if (badge != null) {
                 int bx = textX + font.width(shown) + 6;

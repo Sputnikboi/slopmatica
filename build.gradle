@@ -38,6 +38,10 @@ java {
 
 test {
     useJUnitPlatform()
+    // Passes -Dslopmatica.colors=<file> through to BlockColorTableTool (website colour table).
+    if (System.getProperty('slopmatica.colors')) {
+        systemProperty 'slopmatica.colors', System.getProperty('slopmatica.colors')
+    }
 }
 
 loom {

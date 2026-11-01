@@ -84,6 +84,33 @@ public final class SlopmaticaKeys {
         return mapping.getCategory().id().getNamespace().equals("slopmatica");
     }
 
+    /** All of our mappings, in category and declaration order. */
+    public static java.util.List<KeyMapping> all() {
+        return java.util.Arrays.stream(Minecraft.getInstance().options.keyMappings).filter(SlopmaticaKeys::isOurs).sorted().toList();
+    }
+
+    /**
+     * Whether one of our keys is listed in vanilla's Controls screen. By default only the main
+     * ones are, so Controls isn't flooded; Options > Keys in Controls changes that.
+     */
+    public static boolean shownInControls(KeyMapping mapping) {
+        java.util.Set<String> chosen = SlopmaticaConfig.get().controlsKeys;
+        return chosen != null ? chosen.contains(mapping.getName()) : mapping.getCategory() == MAIN;
+    }
+
+    public static void setShownInControls(KeyMapping mapping, boolean shown) {
+        SlopmaticaConfig config = SlopmaticaConfig.get();
+        if (config.controlsKeys == null) {
+            config.controlsKeys = new java.util.TreeSet<>();
+            all().stream().filter(k -> k.getCategory() == MAIN).forEach(k -> config.controlsKeys.add(k.getName()));
+        }
+        if (shown) {
+            config.controlsKeys.add(mapping.getName());
+        } else {
+            config.controlsKeys.remove(mapping.getName());
+        }
+    }
+
     private static KeyMapping.Category category(String name) {
         return KeyMapping.Category.register(Identifier.fromNamespaceAndPath("slopmatica", name));
     }

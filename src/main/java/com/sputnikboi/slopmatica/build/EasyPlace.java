@@ -4,7 +4,9 @@ import com.sputnikboi.slopmatica.SlopmaticaActions;
 import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.mixin.BlockItemInvoker;
 import com.sputnikboi.slopmatica.placement.Placement;
+import com.sputnikboi.slopmatica.verify.BlockMatcher;
 import com.sputnikboi.slopmatica.verify.BlockStatus;
+import net.minecraft.world.phys.shapes.CollisionContext;
 import com.sputnikboi.slopmatica.verify.SchematicRaycast;
 import java.util.List;
 import net.minecraft.client.Minecraft;
@@ -91,41 +93,116 @@ public final class EasyPlace {
         if (transforms.isEmpty()) {
             return false;
         }
+        SlopmaticaConfig.EasyPlaceOrder order = SlopmaticaConfig.get().easyPlaceOrder;
+        if (order != SlopmaticaConfig.EasyPlaceOrder.CROSSHAIR) {
+            List<BlockPos> candidates = reachableMissing(player, level, transforms, order);
+            if (!candidates.isEmpty()) {
+                // Try them in order; the first that can be placed right now wins. Report why the
+                // first one couldn't, if none could.
+                Component firstProblem = null;
+                for (BlockPos pos : candidates) {
+                    BlockState want = SchematicRaycast.wantedAt(transforms, pos.getX(), pos.getY(), pos.getZ());
+                    Component problem = attempt(mc, player, level, pos, want);
+                    if (problem == null) {
+                        return true;
+                    }
+                    if (firstProblem == null) {
+                        firstProblem = problem;
+                    }
+                }
+                fail(firstProblem);
+                return true;
+            }
+        }
         SchematicRaycast.Hit target = SchematicRaycast.trace(level, transforms, player.getEyePosition(), player.getViewVector(1.0F), player.blockInteractionRange());
         if (target != null && target.status() == BlockStatus.MISSING && target.actual().canBeReplaced()) {
-            return place(mc, player, level, target);
+            Component problem = attempt(mc, player, level, target.pos(), target.want());
+            if (problem != null && problem != NOT_AN_ITEM) {
+                fail(problem);
+            }
+            return problem != NOT_AN_ITEM;
         }
         return SlopmaticaConfig.get().easyPlaceRestrict && refuseWrongPlacement(mc, player, level, transforms);
     }
 
-    private boolean place(Minecraft mc, LocalPlayer player, ClientLevel level, SchematicRaycast.Hit target) {
-        BlockState want = target.want();
+    /** At most this many reachable missing blocks are tried per click. */
+    private static final int MAX_TRIES = 48;
+    /** Only blocks roughly in front of the player count: within about 60 degrees of where they look. */
+    private static final double CONE_COS = 0.5;
+    private static final Component NOT_AN_ITEM = Component.empty();
+
+    /**
+     * Missing schematic blocks the player can reach (vanilla interaction range) in front of them,
+     * in the chosen order: furthest first by default, so blocks placed nearby never block the way
+     * to ones further off.
+     */
+    private static List<BlockPos> reachableMissing(LocalPlayer player, ClientLevel level, List<Placement.Transform> transforms,
+                                                   SlopmaticaConfig.EasyPlaceOrder order) {
+        Vec3 eye = player.getEyePosition();
+        Vec3 look = player.getViewVector(1.0F);
+        double reach = player.blockInteractionRange();
+        int r = (int) Math.ceil(reach) + 1;
+        BlockPos center = BlockPos.containing(eye);
+        List<BlockPos> found = new java.util.ArrayList<>();
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dy = -r; dy <= r; dy++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    pos.set(center.getX() + dx, center.getY() + dy, center.getZ() + dz);
+                    Vec3 mid = Vec3.atCenterOf(pos);
+                    Vec3 to = mid.subtract(eye);
+                    double dist = to.length();
+                    if (dist > reach || dist < 0.5 || to.scale(1 / dist).dot(look) < CONE_COS) {
+                        continue;
+                    }
+                    BlockState want = SchematicRaycast.wantedAt(transforms, pos.getX(), pos.getY(), pos.getZ());
+                    if (want == null || want.isAir()) {
+                        continue;
+                    }
+                    BlockState actual = level.getBlockState(pos);
+                    if (BlockMatcher.compare(want, actual) == BlockStatus.MISSING && actual.canBeReplaced()) {
+                        found.add(pos.immutable());
+                    }
+                }
+            }
+        }
+        java.util.Comparator<BlockPos> byDistance = java.util.Comparator.comparingDouble(p -> Vec3.atCenterOf(p).distanceToSqr(eye));
+        found.sort(switch (order) {
+            case NEAREST -> byDistance;
+            case BOTTOM_UP -> java.util.Comparator.<BlockPos>comparingInt(BlockPos::getY).thenComparing(byDistance.reversed());
+            default -> byDistance.reversed();
+        });
+        return found.size() > MAX_TRIES ? found.subList(0, MAX_TRIES) : found;
+    }
+
+    /** Places {@code want} at {@code pos}; null on success, otherwise why not. */
+    private @Nullable Component attempt(Minecraft mc, LocalPlayer player, ClientLevel level, BlockPos pos, BlockState want) {
         if (!(want.getBlock().asItem() instanceof BlockItem item)) {
-            return false; // Fluids, fire and the like: nothing to hold.
+            return NOT_AN_ITEM; // Fluids, fire and the like: nothing to hold.
+        }
+        if (!player.hasInfiniteMaterials() && !has(player, item)) {
+            return Component.translatable("slopmatica.easy_place.no_item", item.getName(new ItemStack(item)));
         }
         ItemStack stack = new ItemStack(item);
         boolean mayTurn = SlopmaticaConfig.get().easyPlaceRotate;
         // Without turning, only the way the player already faces counts.
         float[] yaws = mayTurn ? YAWS : new float[] {player.getYRot()};
         float[] pitches = mayTurn ? PITCHES : new float[] {player.getXRot()};
-        Candidate best = bestCandidate(player, level, target.pos(), want, stack, yaws, pitches);
-        if (best == null) {
-            fail(Component.translatable("slopmatica.easy_place.no_support", want.getBlock().getName()));
-            return true;
+        Candidate best = bestCandidate(player, level, pos, want, stack, yaws, pitches);
+        if (best == null || !player.isWithinBlockInteractionRange(best.hit().getBlockPos(), 1.0)) {
+            return Component.translatable("slopmatica.easy_place.no_support", want.getBlock().getName());
         }
         if (!mayTurn && best.result() != want) {
             // Say which way would work rather than placing it wrong. "Better", not "exact": some
             // properties (a stair's corner shape) only come from neighbours and never match yet.
-            Candidate needed = bestCandidate(player, level, target.pos(), want, stack, YAWS, PITCHES);
+            Candidate needed = bestCandidate(player, level, pos, want, stack, YAWS, PITCHES);
             if (needed != null && needed.score() > best.score()) {
                 String look = Direction.fromYRot(needed.yaw()).getName() + (needed.pitch() > 45 ? ", looking down" : needed.pitch() < -45 ? ", looking up" : "");
-                fail(Component.translatable("slopmatica.easy_place.face", look));
-                return true;
+                return Component.translatable("slopmatica.easy_place.face", look);
             }
         }
         if (!holdItem(mc, player, item)) {
-            fail(Component.translatable("slopmatica.easy_place.no_item", item.getName(new ItemStack(item))));
-            return true;
+            return Component.translatable("slopmatica.easy_place.no_item", item.getName(new ItemStack(item)));
         }
 
         float yaw = player.getYRot(), pitch = player.getXRot();
@@ -141,7 +218,17 @@ public final class EasyPlace {
         if (result instanceof InteractionResult.Success success && success.swingSource() == InteractionResult.SwingSource.PREDICTED) {
             player.swing(InteractionHand.MAIN_HAND, player.getMainHandItem().getInteractAnimation(), false);
         }
-        return true;
+        return null;
+    }
+
+    private static boolean has(LocalPlayer player, Item item) {
+        Inventory inventory = player.getInventory();
+        for (int slot = 0; slot < 36; slot++) {
+            if (inventory.getItem(slot).is(item)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Turns the player for one placement, here and on the server. */
@@ -159,7 +246,7 @@ public final class EasyPlace {
     private static @Nullable Candidate bestCandidate(LocalPlayer player, ClientLevel level, BlockPos pos, BlockState want, ItemStack stack,
                                                      float[] yaws, float[] pitches) {
         float savedYaw = player.getYRot(), savedPitch = player.getXRot();
-        Search search = new Search(player, pos, want, stack, yaws, pitches);
+        Search search = new Search(player, level, pos, want, stack, yaws, pitches);
         try {
             // A normal click on a neighbouring block's face, as a player would.
             for (Direction toNeighbour : Direction.values()) {
@@ -191,6 +278,7 @@ public final class EasyPlace {
     /** The best placement found so far while trying faces, points on them, and facings. */
     private static final class Search {
         final LocalPlayer player;
+        final ClientLevel level;
         final BlockPos pos;
         final BlockState want;
         final ItemStack stack;
@@ -198,8 +286,9 @@ public final class EasyPlace {
         @Nullable Candidate best;
         int bestScore = -1;
 
-        Search(LocalPlayer player, BlockPos pos, BlockState want, ItemStack stack, float[] yaws, float[] pitches) {
+        Search(LocalPlayer player, ClientLevel level, BlockPos pos, BlockState want, ItemStack stack, float[] yaws, float[] pitches) {
             this.player = player;
+            this.level = level;
             this.pos = pos;
             this.want = want;
             this.stack = stack;
@@ -226,7 +315,8 @@ public final class EasyPlace {
                             continue;
                         }
                         BlockState result = ((BlockItemInvoker) stack.getItem()).slopmatica$getPlacementState(context);
-                        if (result == null) {
+                        // As BlockItem does: no placing into the player or another entity.
+                        if (result == null || !level.isUnobstructed(result, pos, CollisionContext.placementContext(player))) {
                             continue;
                         }
                         int score = score(result, want);

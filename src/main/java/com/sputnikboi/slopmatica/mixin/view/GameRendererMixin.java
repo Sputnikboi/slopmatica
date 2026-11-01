@@ -20,7 +20,7 @@ abstract class GameRendererMixin {
 
     @Inject(method = "extractOptions", at = @At("TAIL"))
     private void slopmatica$hideHand(CallbackInfo ci) {
-        if (PlacementView.INSTANCE.active()) {
+        if (PlacementView.INSTANCE.freecam()) {
             gameRenderState.optionsRenderState.cameraType = CameraType.THIRD_PERSON_BACK;
         }
     }
