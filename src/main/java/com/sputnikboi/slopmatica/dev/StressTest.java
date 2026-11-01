@@ -135,7 +135,7 @@ public final class StressTest {
         long now = Util.getNanos();
         if (lastFrame != 0) {
             frameNanos[frame++ % FRAMES] = now - lastFrame;
-            com.sputnikboi.slopmatica.telemetry.Telemetry.INSTANCE.frame(now - lastFrame);
+            com.sputnikboi.slopmatica.online.Online.frame(now - lastFrame);
         }
         lastFrame = now;
         if (!com.sputnikboi.slopmatica.config.SlopmaticaConfig.get().devOverlay) {

@@ -2,10 +2,10 @@ package com.sputnikboi.slopmatica.gui;
 
 import com.sputnikboi.slopmatica.build.Clipboard;
 import com.sputnikboi.slopmatica.build.Selection;
-import com.sputnikboi.slopmatica.cloud.CloudSync;
 import com.sputnikboi.slopmatica.placement.Placement;
 import com.sputnikboi.slopmatica.spawn.SpawnCheck;
-import com.sputnikboi.slopmatica.update.Updates;
+import com.sputnikboi.slopmatica.SlopmaticaVersion;
+import com.sputnikboi.slopmatica.online.Online;
 import java.net.URI;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.ConfirmLinkScreen;
@@ -40,7 +40,7 @@ public class SlopmaticaMenuScreen extends Screen {
     private LinearLayout column;
     private @Nullable Button updateButton;
     private Button creditsButton;
-    private Button reportButton;
+    private @Nullable Button reportButton;
 
     private boolean shownBefore;
 
@@ -56,7 +56,7 @@ public class SlopmaticaMenuScreen extends Screen {
 
     @Override
     protected void init() {
-        Updates.INSTANCE.check(false);
+        Online.checkUpdates();
         layout.addTitleHeader(title, font);
         column = layout.addToContents(LinearLayout.vertical().spacing(8));
         column.defaultCellSetting().alignHorizontallyCenter();
@@ -87,11 +87,13 @@ public class SlopmaticaMenuScreen extends Screen {
         }).width((BUTTON_WIDTH - 8) / 3).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.paste.tooltip"))).build());
         copyRow.addChild(Button.builder(Component.translatable("slopmatica.menu.clear_selection"), b -> Selection.INSTANCE.clear())
             .width(BUTTON_WIDTH - 8 - 2 * ((BUTTON_WIDTH - 8) / 3)).build());
-        LinearLayout cloudRow = column.addChild(LinearLayout.horizontal().spacing(4));
-        cloudRow.addChild(Button.builder(Component.translatable("slopmatica.menu.cloud"), b -> minecraft.gui.setScreen(new CloudScreen(this)))
-            .width((BUTTON_WIDTH - 4) / 2).build());
-        cloudRow.addChild(Button.builder(Component.translatable("slopmatica.menu.board"), b -> minecraft.gui.setScreen(new BoardBrowserScreen(this)))
-            .width((BUTTON_WIDTH - 4) / 2).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.board.tooltip"))).build());
+        if (Online.available()) {
+            LinearLayout cloudRow = column.addChild(LinearLayout.horizontal().spacing(4));
+            cloudRow.addChild(Button.builder(Component.translatable("slopmatica.menu.cloud"), b -> minecraft.gui.setScreen(Online.cloudScreen(this)))
+                .width((BUTTON_WIDTH - 4) / 2).build());
+            cloudRow.addChild(Button.builder(Component.translatable("slopmatica.menu.board"), b -> minecraft.gui.setScreen(Online.boardBrowser(this)))
+                .width((BUTTON_WIDTH - 4) / 2).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.board.tooltip"))).build());
+        }
         column.addChild(Button.builder(Component.translatable("slopmatica.menu.options"), b -> minecraft.gui.setScreen(new SlopmaticaOptionsScreen(this)))
             .width(BUTTON_WIDTH).build());
         LinearLayout toggleRow = column.addChild(LinearLayout.horizontal().spacing(4));
@@ -109,20 +111,17 @@ public class SlopmaticaMenuScreen extends Screen {
         layout.visitWidgets(this::addRenderableWidget);
 
         // Bottom right: credits, linking to the website's feedback page.
-        reportButton = addRenderableWidget(Button.builder(Component.translatable("slopmatica.menu.report"), b -> minecraft.gui.setScreen(new BugReportScreen(this)))
-            .width(CREDITS_WIDTH).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.report.tooltip"))).build());
+        reportButton = Online.available() ? addRenderableWidget(Button.builder(Component.translatable("slopmatica.menu.report"), b -> minecraft.gui.setScreen(Online.bugReport(this)))
+            .width(CREDITS_WIDTH).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.report.tooltip"))).build()) : null;
+        // The local edition has no website to give feedback on: credits link to the source instead.
+        String creditsUrl = !Online.available() ? Online.websiteUrl() : Online.websiteUrl() + "/feedback?mod="
+            + java.net.URLEncoder.encode(SlopmaticaVersion.get(), java.nio.charset.StandardCharsets.UTF_8)
+            + "&mc=" + java.net.URLEncoder.encode(net.minecraft.SharedConstants.getCurrentVersion().name(), java.nio.charset.StandardCharsets.UTF_8);
         creditsButton = addRenderableWidget(Button.builder(Component.translatable("slopmatica.menu.credits"),
-            b -> ConfirmLinkScreen.confirmLinkNow(this, URI.create(CloudSync.INSTANCE.account().url + "/feedback?mod="
-                + java.net.URLEncoder.encode(Updates.modVersion(), java.nio.charset.StandardCharsets.UTF_8)
-                + "&mc=" + java.net.URLEncoder.encode(net.minecraft.SharedConstants.getCurrentVersion().name(), java.nio.charset.StandardCharsets.UTF_8))))
+            b -> ConfirmLinkScreen.confirmLinkNow(this, URI.create(creditsUrl)))
             .tooltip(Tooltip.create(Component.translatable("slopmatica.menu.credits.tooltip"))).width(CREDITS_WIDTH).build());
         // Top right, beside the version: a download icon when a newer release exists.
-        updateButton = addRenderableWidget(Button.builder(Component.literal("⬇"), b -> {
-            Updates.Release release = Updates.INSTANCE.update();
-            if (release != null && !Updates.INSTANCE.pending()) {
-                Updates.INSTANCE.install(release);
-            }
-        }).width(20).build());
+        updateButton = Online.available() ? addRenderableWidget(Button.builder(Component.literal("⬇"), b -> Online.installUpdate()).width(20).build()) : null;
         repositionElements();
     }
 
@@ -143,26 +142,30 @@ public class SlopmaticaMenuScreen extends Screen {
 
         // Status, top right: version (+ update), server reachable, cloud account.
         int right = width - 6;
-        Updates.Release update = Updates.INSTANCE.update();
-        updateButton.visible = update != null;
-        updateButton.active = update != null && !Updates.INSTANCE.pending();
-        updateButton.setTooltip(update == null ? null : Tooltip.create(Component.translatable(
-            Updates.INSTANCE.pending() ? "slopmatica.menu.update_pending" : "slopmatica.menu.update", update.version())));
-        String version = "Slopmatica " + Updates.modVersion();
+        String update = Online.updateVersion();
+        if (updateButton != null) {
+            updateButton.visible = update != null;
+            updateButton.active = update != null && !Online.updatePending();
+            updateButton.setTooltip(update == null ? null : Tooltip.create(Component.translatable(
+                Online.updatePending() ? "slopmatica.menu.update_pending" : "slopmatica.menu.update", update)));
+        }
+        String version = "Slopmatica " + SlopmaticaVersion.get();
         int versionRight = update != null ? right - 24 : right;
         graphics.text(font, version, versionRight - font.width(version), 8, 0xFFE0E0E0);
 
-        Updates.Online online = Updates.INSTANCE.online();
-        Component status = switch (online) {
-            case ONLINE -> Component.translatable("slopmatica.menu.online").withColor(0xFF55DD55);
-            case OFFLINE -> Component.translatable("slopmatica.menu.offline").withColor(0xFFFF6060);
-            case UNKNOWN -> Component.translatable("slopmatica.menu.checking").withColor(0xFFA0A0A0);
+        Component status = switch (Online.connection()) {
+            case "online" -> Component.translatable("slopmatica.menu.online").withColor(0xFF55DD55);
+            case "offline" -> Component.translatable("slopmatica.menu.offline").withColor(0xFFFF6060);
+            case "local" -> Component.translatable("slopmatica.menu.local").withColor(0xFFA0A0A0);
+            default -> Component.translatable("slopmatica.menu.checking").withColor(0xFFA0A0A0);
         };
         graphics.text(font, status, right - font.width(status), 20, -1);
-        Component cloud = CloudSync.INSTANCE.loggedIn()
-            ? Component.translatable("slopmatica.menu.linked", CloudSync.INSTANCE.account().name).withColor(0xFF55CCFF)
-            : Component.translatable("slopmatica.menu.not_linked").withColor(0xFFA0A0A0);
-        graphics.text(font, cloud, right - font.width(cloud), 32, -1);
+        if (Online.available()) {
+            Component cloud = Online.loggedIn()
+                ? Component.translatable("slopmatica.menu.linked", Online.accountName()).withColor(0xFF55CCFF)
+                : Component.translatable("slopmatica.menu.not_linked").withColor(0xFFA0A0A0);
+            graphics.text(font, cloud, right - font.width(cloud), 32, -1);
+        }
     }
 
     private static Component spawnLabel() {
@@ -178,7 +181,9 @@ public class SlopmaticaMenuScreen extends Screen {
         layout.arrangeElements();
         if (creditsButton != null) {
             creditsButton.setPosition(width - CREDITS_WIDTH - 6, height - 26);
-            reportButton.setPosition(width - CREDITS_WIDTH - 6, height - 50);
+            if (reportButton != null) {
+                reportButton.setPosition(width - CREDITS_WIDTH - 6, height - 50);
+            }
         }
         if (updateButton != null) {
             updateButton.setPosition(width - 26, 2);

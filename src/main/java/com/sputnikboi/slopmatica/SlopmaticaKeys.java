@@ -90,7 +90,7 @@ public final class SlopmaticaKeys {
     /** One click of a key, counted for usage reports when those are switched on. */
     public static boolean pressed(KeyMapping key) {
         if (key.consumeClick()) {
-            com.sputnikboi.slopmatica.telemetry.Telemetry.INSTANCE.key(key.getName());
+            com.sputnikboi.slopmatica.online.Online.keyUsed(key.getName());
             return true;
         }
         return false;

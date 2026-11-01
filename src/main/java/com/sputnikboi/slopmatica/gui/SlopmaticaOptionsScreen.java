@@ -2,7 +2,7 @@ package com.sputnikboi.slopmatica.gui;
 
 import com.mojang.serialization.Codec;
 import com.sputnikboi.slopmatica.build.PlacementBuilder;
-import com.sputnikboi.slopmatica.cloud.CloudSync;
+import com.sputnikboi.slopmatica.online.Online;
 import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.render.HologramRenderer;
 import com.sputnikboi.slopmatica.schematic.SchematicFormats;
@@ -117,11 +117,13 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
         );
 
         list.addHeader(Component.translatable("slopmatica.options.other"));
-        list.addSmall(
-            toggle("slopmatica.options.telemetry", c.telemetry, v -> c.telemetry = v, false).createButton(minecraft.options),
-            Button.builder(Component.translatable("slopmatica.options.import_litematica"), b -> minecraft.gui.setScreen(new LitematicaImportScreen(this)))
-                .tooltip(Tooltip.create(Component.translatable("slopmatica.options.import_litematica.tooltip"))).width(WIDE).build()
-        );
+        Button importButton = Button.builder(Component.translatable("slopmatica.options.import_litematica"), b -> minecraft.gui.setScreen(new LitematicaImportScreen(this)))
+            .tooltip(Tooltip.create(Component.translatable("slopmatica.options.import_litematica.tooltip"))).width(WIDE).build();
+        if (Online.available()) {
+            list.addSmall(toggle("slopmatica.options.telemetry", c.telemetry, v -> c.telemetry = v, false).createButton(minecraft.options), importButton);
+        } else {
+            list.addSmall(importButton, null);
+        }
         list.addSmall(Button.builder(Component.translatable("slopmatica.options.welcome"), b -> minecraft.gui.setScreen(new WelcomeScreen(this))).width(WIDE).build(),
             Button.builder(Component.translatable("slopmatica.options.plan"), b -> minecraft.gui.setScreen(new InventoryPlanScreen(this))).width(WIDE)
                 .tooltip(Tooltip.create(Component.translatable("slopmatica.menu.plan.tooltip"))).build());
@@ -172,14 +174,16 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
                     .tooltip(Tooltip.create(Component.translatable("slopmatica.options.dev_copies.tooltip"))).build());
             list.addSmall(Button.builder(Component.translatable("slopmatica.options.dev_clear"), b -> dev.clear()).width(WIDE).build(), null);
 
+        }
+        if (Online.available() && advanced) {
             list.addHeader(Component.translatable("slopmatica.options.cloud"));
             EditBox url = new EditBox(font, 0, 0, WIDE, 20, Component.translatable("slopmatica.cloud.server"));
             url.setMaxLength(256);
-            url.setValue(CloudSync.INSTANCE.account().url);
-            url.setHint(Component.literal(CloudSync.DEFAULT_URL).withStyle(EditBox.SEARCH_HINT_STYLE));
+            url.setValue(Online.cloudUrl());
+            url.setHint(Component.literal(Online.defaultCloudUrl()).withStyle(EditBox.SEARCH_HINT_STYLE));
             url.setResponder(text -> pendingUrl = text);
             url.setTooltip(Tooltip.create(Component.translatable("slopmatica.options.cloud_url.tooltip")));
-            list.addSmall(url, Button.builder(Component.translatable("slopmatica.options.cloud_url.reset"), b -> url.setValue(CloudSync.DEFAULT_URL)).width(WIDE).build());
+            list.addSmall(url, Button.builder(Component.translatable("slopmatica.options.cloud_url.reset"), b -> url.setValue(Online.defaultCloudUrl())).width(WIDE).build());
         }
     }
 
@@ -271,7 +275,7 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
     public void removed() {
         super.removed();
         if (pendingUrl != null && !pendingUrl.isBlank()) {
-            CloudSync.INSTANCE.setUrl(pendingUrl);
+            Online.setCloudUrl(pendingUrl);
         }
         if (pendingFolder != null) {
             SlopmaticaConfig c = SlopmaticaConfig.get();

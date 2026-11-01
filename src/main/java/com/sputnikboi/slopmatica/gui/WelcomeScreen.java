@@ -2,7 +2,7 @@ package com.sputnikboi.slopmatica.gui;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.sputnikboi.slopmatica.SlopmaticaKeys;
-import com.sputnikboi.slopmatica.cloud.CloudSync;
+import com.sputnikboi.slopmatica.online.Online;
 import com.sputnikboi.slopmatica.compat.LitematicaImport;
 import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.share.SharedFolder;
@@ -37,7 +37,7 @@ public class WelcomeScreen extends Screen {
     private final List<KeyButton> keyButtons = new ArrayList<>();
     private @Nullable KeyButton listening;
     private boolean telemetry = SlopmaticaConfig.get().telemetry;
-    private Button loginButton, websiteButton;
+    private @Nullable Button loginButton, websiteButton;
     private int top;
 
     public WelcomeScreen(@Nullable Screen parent) {
@@ -57,12 +57,13 @@ public class WelcomeScreen extends Screen {
         keyButtons.add(addRenderableWidget(new KeyButton(left, y, SlopmaticaKeys.openMenu(), "slopmatica.welcome.key.menu", pending.isEmpty() ? null : pending.get(0))));
         keyButtons.add(addRenderableWidget(new KeyButton(left + HALF + 10, y, SlopmaticaKeys.PLACEMENT_VIEW, "slopmatica.welcome.key.view", pending.size() < 2 ? null : pending.get(1))));
 
-        y += 44;
-        CloudSync cloud = CloudSync.INSTANCE;
-        loginButton = addRenderableWidget(Button.builder(Component.translatable("slopmatica.welcome.login"), b -> cloud.login())
-            .bounds(left, y, HALF, 20).tooltip(Tooltip.create(Component.translatable("slopmatica.welcome.login.tooltip"))).build());
-        websiteButton = addRenderableWidget(Button.builder(Component.translatable("slopmatica.cloud.website"), b -> cloud.openWebsite())
-            .bounds(left + HALF + 10, y, HALF, 20).build());
+        if (Online.available()) {
+            y += 44;
+            loginButton = addRenderableWidget(Button.builder(Component.translatable("slopmatica.welcome.login"), b -> Online.login())
+                .bounds(left, y, HALF, 20).tooltip(Tooltip.create(Component.translatable("slopmatica.welcome.login.tooltip"))).build());
+            websiteButton = addRenderableWidget(Button.builder(Component.translatable("slopmatica.cloud.website"), b -> Online.openWebsite())
+                .bounds(left + HALF + 10, y, HALF, 20).build());
+        }
 
         y += 44;
         boolean found = LitematicaImport.local() != null;
@@ -86,9 +87,11 @@ public class WelcomeScreen extends Screen {
             y += 24;
         }
         y += 8;
-        addRenderableWidget(CycleButton.onOffBuilder(telemetry)
-            .withTooltip(v -> Tooltip.create(Component.translatable("slopmatica.options.telemetry.tooltip")))
-            .create(left, y, WIDTH, 20, Component.translatable("slopmatica.options.telemetry"), (b, v) -> telemetry = v));
+        if (Online.available()) {
+            addRenderableWidget(CycleButton.onOffBuilder(telemetry)
+                .withTooltip(v -> Tooltip.create(Component.translatable("slopmatica.options.telemetry.tooltip")))
+                .create(left, y, WIDTH, 20, Component.translatable("slopmatica.options.telemetry"), (b, v) -> telemetry = v));
+        }
 
         int bottom = Math.max(y + 32, Math.min(height - 28, y + 50));
         addRenderableWidget(Button.builder(Component.translatable("slopmatica.welcome.skip"), b -> skip())
@@ -103,11 +106,13 @@ public class WelcomeScreen extends Screen {
     }
 
     private void refreshCloud() {
-        CloudSync cloud = CloudSync.INSTANCE;
-        boolean in = cloud.loggedIn();
+        if (loginButton == null || websiteButton == null) {
+            return;
+        }
+        boolean in = Online.loggedIn();
         loginButton.active = !in;
         loginButton.setMessage(in
-            ? Component.translatable("slopmatica.welcome.logged_in", cloud.account().name)
+            ? Component.translatable("slopmatica.welcome.logged_in", Online.accountName())
             : Component.translatable("slopmatica.welcome.login"));
         websiteButton.active = in;
     }
@@ -123,11 +128,13 @@ public class WelcomeScreen extends Screen {
 
         int y = top + 48;
         graphics.text(font, Component.translatable("slopmatica.welcome.keys").withStyle(ChatFormatting.BOLD), left, y - 11, -1);
-        y += 44;
-        graphics.text(font, Component.translatable("slopmatica.welcome.cloud").withStyle(ChatFormatting.BOLD), left, y - 11, -1);
-        String status = CloudSync.INSTANCE.status();
-        if (status != null && !status.isBlank() && !CloudSync.INSTANCE.loggedIn()) {
-            graphics.text(font, font.plainSubstrByWidth(status, WIDTH), left, y + 23, 0xFFA0A0A0);
+        if (Online.available()) {
+            y += 44;
+            graphics.text(font, Component.translatable("slopmatica.welcome.cloud").withStyle(ChatFormatting.BOLD), left, y - 11, -1);
+            String status = Online.status();
+            if (status != null && !status.isBlank() && !Online.loggedIn()) {
+                graphics.text(font, font.plainSubstrByWidth(status, WIDTH), left, y + 23, 0xFFA0A0A0);
+            }
         }
         y += 44;
         graphics.text(font, Component.translatable("slopmatica.welcome.litematica").withStyle(ChatFormatting.BOLD), left, y - 11, -1);

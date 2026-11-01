@@ -5,8 +5,8 @@ import com.sputnikboi.slopmatica.build.Clipboard;
 import com.sputnikboi.slopmatica.build.EasyPlace;
 import com.sputnikboi.slopmatica.build.Selection;
 import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
-import com.sputnikboi.slopmatica.gui.CloudScreen;
 import com.sputnikboi.slopmatica.gui.InventoryPlanScreen;
+import com.sputnikboi.slopmatica.online.Online;
 import com.sputnikboi.slopmatica.gui.MaterialListScreen;
 import com.sputnikboi.slopmatica.gui.PlacementsScreen;
 import com.sputnikboi.slopmatica.gui.SaveSelectionScreen;
@@ -60,12 +60,10 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
             mc -> PlacementManager.INSTANCE.selected().isPresent(), null);
         // Optional ones, for the player to add.
         add("load", Items.MAP, mc -> mc.gui.setScreen(new SchematicBrowserScreen(null, false)), false, null, null);
-        add("cloud_browser", Items.FILLED_MAP, mc -> mc.gui.setScreen(new SchematicBrowserScreen(null, true)), false, null, null);
         add("placements", Items.ITEM_FRAME, mc -> mc.gui.setScreen(new PlacementsScreen(null)), false, null, null);
         add("plan_screen", Items.ENDER_CHEST, mc -> mc.gui.setScreen(new InventoryPlanScreen(null)), false, null, null);
         add("options", Items.COMPARATOR, mc -> mc.gui.setScreen(new SlopmaticaOptionsScreen(null)), false, null, null);
         add("keybinds", Items.TRIPWIRE_HOOK, mc -> mc.gui.setScreen(new SlopmaticaKeyBindsScreen(null)), false, null, null);
-        add("cloud", Items.PHANTOM_MEMBRANE, mc -> mc.gui.setScreen(new CloudScreen(null)), false, null, null);
         add("spawn_check", Items.ZOMBIE_HEAD, mc -> SpawnCheck.INSTANCE.toggle(mc), false, null, () -> SpawnCheck.INSTANCE.active());
         add("hologram", Items.GLASS, mc -> HologramRenderer.INSTANCE.setHidden(!HologramRenderer.INSTANCE.hidden()), false, null,
             () -> !HologramRenderer.INSTANCE.hidden());
@@ -87,8 +85,12 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
         add("copy", Items.WRITABLE_BOOK, mc -> Clipboard.INSTANCE.copy(mc), false, mc -> Selection.INSTANCE.box() != null, null);
         add("save_selection", Items.WRITTEN_BOOK, mc -> mc.gui.setScreen(new SaveSelectionScreen(null)), false, mc -> Selection.INSTANCE.box() != null, null);
         add("paste", Items.SLIME_BALL, mc -> Clipboard.INSTANCE.paste(mc), false, null, null);
-        add("board_browser", Items.KNOWLEDGE_BOOK, mc -> mc.gui.setScreen(new com.sputnikboi.slopmatica.gui.BoardBrowserScreen(null)), false, null, null);
-        add("bug_report", Items.SPIDER_EYE, mc -> mc.gui.setScreen(new com.sputnikboi.slopmatica.gui.BugReportScreen(null)), false, null, null);
+        if (Online.available()) {
+            add("cloud_browser", Items.FILLED_MAP, mc -> mc.gui.setScreen(new SchematicBrowserScreen(null, true)), false, null, null);
+            add("cloud", Items.PHANTOM_MEMBRANE, mc -> mc.gui.setScreen(Online.cloudScreen(null)), false, null, null);
+            add("board_browser", Items.KNOWLEDGE_BOOK, mc -> mc.gui.setScreen(Online.boardBrowser(null)), false, null, null);
+            add("bug_report", Items.SPIDER_EYE, mc -> mc.gui.setScreen(Online.bugReport(null)), false, null, null);
+        }
     }
 
     private static void add(String id, net.minecraft.world.item.Item icon, Consumer<Minecraft> run, boolean standard,

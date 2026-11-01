@@ -26,6 +26,66 @@ processResources {
     }
 }
 
+// Online features (cloud, profiles, updates, usage reports, board, bug reports) live in
+// src/online and reach the rest of the mod only through online/Online.java. The normal build
+// includes them; the local-only edition compiles src/main with src/local's stand-in instead,
+// so it doesn't contain the online code at all. -PlocalEdition runs the dev client as the
+// local edition.
+sourceSets {
+    main {
+        java {
+            srcDir project.hasProperty('localEdition') ? 'src/local/java' : 'src/online/java'
+        }
+    }
+}
+
+def localClasses = layout.buildDirectory.dir('classes/java/local')
+
+tasks.register('compileLocalJava', JavaCompile) {
+    description = 'Compiles the local-only edition (no online code).'
+    source = files('src/main/java', 'src/local/java')
+    classpath = sourceSets.main.compileClasspath
+    destinationDirectory = localClasses
+    options.release = 25
+}
+
+tasks.register('verifyLocalJava') {
+    description = 'Fails if the local-only edition refers to anything online.'
+    dependsOn 'compileLocalJava'
+    inputs.dir(localClasses)
+    doLast {
+        def forbidden = ['com/sputnikboi/slopmatica/cloud/', 'com/sputnikboi/slopmatica/telemetry/', 'com/sputnikboi/slopmatica/update/',
+                         'java/net/http/', 'java/net/URLConnection', 'java/net/Socket']
+        def bad = []
+        localClasses.get().asFile.eachFileRecurse { f ->
+            if (f.name.endsWith('.class')) {
+                def text = new String(f.bytes, 'ISO-8859-1')
+                forbidden.each { if (text.contains(it)) bad << "${f.name}: ${it}" }
+            }
+        }
+        if (!bad.isEmpty()) {
+            throw new GradleException("Local-only edition refers to online code:\n" + bad.join('\n'))
+        }
+    }
+}
+
+tasks.register('localJar', Jar) {
+    description = 'Packs the local-only edition: slopmatica-local-<version>.jar.'
+    dependsOn 'verifyLocalJava', 'processResources'
+    archiveBaseName = 'slopmatica-local'
+    from(localClasses)
+    from(sourceSets.main.output.resourcesDir) {
+        filesMatching('fabric.mod.json') {
+            filter { line -> line.replace('"name": "Slopmatica"', '"name": "Slopmatica (local only)"')
+                .replace('https://homeserver.taila182df.ts.net/slopmatica', 'https://github.com/Sputnikboi/slopmatica') }
+        }
+    }
+}
+
+tasks.named('build') {
+    dependsOn 'localJar'
+}
+
 tasks.withType(JavaCompile).configureEach {
     it.options.release = 25
 }

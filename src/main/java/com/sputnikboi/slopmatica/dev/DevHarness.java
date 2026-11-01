@@ -1,8 +1,6 @@
 package com.sputnikboi.slopmatica.dev;
 
 import com.sputnikboi.slopmatica.SlopmaticaActions;
-import com.sputnikboi.slopmatica.cloud.CloudSync;
-import com.sputnikboi.slopmatica.gui.CloudScreen;
 import com.sputnikboi.slopmatica.gui.MaterialListScreen;
 import com.sputnikboi.slopmatica.gui.SlopmaticaKeyBindsScreen;
 import com.sputnikboi.slopmatica.gui.PlacementsScreen;
@@ -94,16 +92,16 @@ public final class DevHarness {
                     case "cloud-browser" -> new SchematicBrowserScreen(null, true);
                     case "placements" -> new PlacementsScreen(null);
                     case "options" -> new SlopmaticaOptionsScreen(null);
-                    case "cloud" -> new CloudScreen(null);
+                    case "cloud" -> com.sputnikboi.slopmatica.online.Online.cloudScreen(null);
                     case "slopkeys" -> new SlopmaticaKeyBindsScreen(null);
                     case "color" -> new com.sputnikboi.slopmatica.gui.ColorPickerScreen(null, com.sputnikboi.slopmatica.verify.BlockStatus.MISSING);
                     case "controls-keys" -> new com.sputnikboi.slopmatica.gui.ControlsKeysScreen(null);
                     case "welcome" -> new com.sputnikboi.slopmatica.gui.WelcomeScreen(null);
                     case "import" -> new com.sputnikboi.slopmatica.gui.LitematicaImportScreen(null);
                     case "plan" -> new com.sputnikboi.slopmatica.gui.InventoryPlanScreen(null);
-                    case "profiles" -> new com.sputnikboi.slopmatica.gui.ProfilePickerScreen(null);
-                    case "board" -> new com.sputnikboi.slopmatica.gui.BoardBrowserScreen(null);
-                    case "report" -> new com.sputnikboi.slopmatica.gui.BugReportScreen(null);
+                    case "profiles" -> com.sputnikboi.slopmatica.online.Online.profiles(null);
+                    case "board" -> com.sputnikboi.slopmatica.online.Online.boardBrowser(null);
+                    case "report" -> com.sputnikboi.slopmatica.online.Online.bugReport(null);
                     case "inventory" -> new net.minecraft.client.gui.screens.inventory.InventoryScreen(mc.player);
                     case "materials" -> new MaterialListScreen(null, PlacementManager.INSTANCE.selected().orElseThrow());
                     case "keybinds" -> new KeyBindsScreen(null, mc.options);
@@ -168,15 +166,10 @@ public final class DevHarness {
                 }
             } else if (step.startsWith("cloud ")) {
                 String[] parts = step.split(" ", 3);
-                switch (parts[1]) {
-                    case "login" -> CloudSync.INSTANCE.login();
-                    case "sync" -> CloudSync.INSTANCE.syncNow();
-                    case "upload" -> CloudSync.INSTANCE.upload(SlopmaticaActions.schematicsDir().resolve(parts[2]));
-                    default -> LOGGER.warn("Unknown cloud step: {}", step);
-                }
-                LOGGER.info("dev cloud status: {}", CloudSync.INSTANCE.status());
+                LOGGER.info("dev cloud status: {}", com.sputnikboi.slopmatica.online.Online.devCloud(parts[1],
+                    parts.length > 2 ? SlopmaticaActions.schematicsDir().resolve(parts[2]) : null));
             } else if (step.equals("status")) {
-                LOGGER.info("dev cloud status: {} (used {} of {})", CloudSync.INSTANCE.status(), CloudSync.INSTANCE.usedBytes(), CloudSync.INSTANCE.quotaBytes());
+                LOGGER.info("dev cloud status: {}", com.sputnikboi.slopmatica.online.Online.devCloud("status", null));
             } else if (step.startsWith("set ")) {
                 // set <config field> <true|false>: flip an option without the options screen.
                 String[] parts = step.split(" ");

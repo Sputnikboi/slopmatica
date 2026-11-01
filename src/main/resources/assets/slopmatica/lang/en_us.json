@@ -197,6 +197,7 @@
   "slopmatica.menu.update_pending": "Slopmatica %s is downloaded and will be installed when you close Minecraft",
   "slopmatica.menu.online": "● Online",
   "slopmatica.menu.offline": "● Offline",
+  "slopmatica.menu.local": "● Local edition",
   "slopmatica.menu.checking": "● Checking...",
   "slopmatica.menu.linked": "Cloud: %s",
   "slopmatica.menu.not_linked": "Cloud: not linked",

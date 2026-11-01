@@ -2,7 +2,6 @@ package com.sputnikboi.slopmatica;
 
 import com.sputnikboi.slopmatica.build.PlacementBuilder;
 import com.sputnikboi.slopmatica.build.Selection;
-import com.sputnikboi.slopmatica.cloud.CloudSync;
 import com.sputnikboi.slopmatica.command.SlopmaticaCommands;
 import com.sputnikboi.slopmatica.dev.DevHarness;
 import com.sputnikboi.slopmatica.placement.PlacementManager;
@@ -60,8 +59,6 @@ public final class SlopmaticaClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(PlacementBuilder.INSTANCE::tick);
         ClientTickEvents.END_CLIENT_TICK.register(com.sputnikboi.slopmatica.build.EasyPlace.INSTANCE::tick);
         ClientTickEvents.END_CLIENT_TICK.register(SchematicThumbnails.INSTANCE::tick);
-        ClientTickEvents.END_CLIENT_TICK.register(mc -> CloudSync.INSTANCE.tick());
-        ClientTickEvents.END_CLIENT_TICK.register(mc -> com.sputnikboi.slopmatica.cloud.SettingsProfiles.INSTANCE.tick());
         ClientLevelEvents.AFTER_CLIENT_LEVEL_CHANGE.register((mc, level) -> PlacementView.INSTANCE.exit(mc));
         // First run: the welcome screen, once, over the title screen.
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
@@ -80,13 +77,8 @@ public final class SlopmaticaClient implements ClientModInitializer {
                 hotbar.extractRenderState(graphics, delta);
             }
         });
-        var telemetry = com.sputnikboi.slopmatica.telemetry.Telemetry.INSTANCE;
-        PlacementManager.INSTANCE.addListener(telemetry::placementsChanged);
-        ClientTickEvents.END_CLIENT_TICK.register(mc -> telemetry.tick());
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> mc.execute(telemetry::finishSession));
-        // Joining starts a fresh session (and sends anything left from the last one).
-        ClientPlayConnectionEvents.JOIN.register((handler, sender, mc) -> mc.execute(telemetry::finishSession));
-        net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> telemetry.finishSession());
+// Syncing, profiles and usage reports (none of it in the local-only edition).
+        com.sputnikboi.slopmatica.online.Online.register();
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "dev_overlay"), (graphics, delta) -> com.sputnikboi.slopmatica.dev.StressTest.INSTANCE.extractHud(graphics));
         ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> com.sputnikboi.slopmatica.plan.InventoryPlanner.INSTANCE.onLeave());
         ClientTickEvents.END_CLIENT_TICK.register(com.sputnikboi.slopmatica.plan.InventoryPlanner.INSTANCE::tick);

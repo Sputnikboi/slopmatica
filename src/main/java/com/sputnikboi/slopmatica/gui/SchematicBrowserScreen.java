@@ -4,8 +4,7 @@ import com.mojang.blaze3d.Blaze3D;
 import com.sputnikboi.slopmatica.SlopmaticaActions;
 import com.sputnikboi.slopmatica.schematic.SchematicFormats;
 import net.minecraft.nbt.ListTag;
-import com.sputnikboi.slopmatica.cloud.CloudPresence;
-import com.sputnikboi.slopmatica.cloud.CloudSync;
+import com.sputnikboi.slopmatica.online.Online;
 import net.minecraft.client.gui.components.Tooltip;
 import com.sputnikboi.slopmatica.render.SchematicThumbnails;
 import net.minecraft.client.renderer.RenderPipelines;
@@ -78,7 +77,7 @@ public class SchematicBrowserScreen extends Screen {
     private Path root;
     private Path current;
     private Button localTabButton;
-    private Button cloudTabButton;
+    private @Nullable Button cloudTabButton;
     private @Nullable Button sharedTabButton;
     private String filter = "";
     private FileList list;
@@ -98,11 +97,13 @@ public class SchematicBrowserScreen extends Screen {
         super(Component.translatable("slopmatica.browser.title"));
         this.parent = parent;
         this.schematics = SlopmaticaActions.schematicsDir();
-        this.cloudDir = CloudSync.cloudDir();
-        this.cloudTab = lastCloudTab = cloud;
+        Path cd = Online.cloudDir();
+        // The local edition has no cloud tab; its "cloud" folder (if any) is just another folder.
+        this.cloudDir = cd != null ? cd : schematics.resolve(".no-cloud");
+        this.cloudTab = lastCloudTab = cloud && cd != null;
         this.root = cloudTab ? cloudDir : schematics;
         this.current = root;
-        CloudPresence.INSTANCE.refresh();
+        Online.refreshPresence();
     }
 
     private void showTab(boolean cloud) {
@@ -132,7 +133,9 @@ public class SchematicBrowserScreen extends Screen {
         header.addChild(new StringWidget(title, font));
         LinearLayout tabs = header.addChild(LinearLayout.horizontal().spacing(4));
         localTabButton = tabs.addChild(Button.builder(Component.translatable("slopmatica.browser.tab.local"), b -> showTab(false)).width(110).build());
-        cloudTabButton = tabs.addChild(Button.builder(Component.translatable("slopmatica.browser.tab.cloud"), b -> showTab(true)).width(110).build());
+        cloudTabButton = Online.available()
+            ? tabs.addChild(Button.builder(Component.translatable("slopmatica.browser.tab.cloud"), b -> showTab(true)).width(110).build())
+            : null;
         sharedTabButton = SlopmaticaConfig.get().shareSchematics
             ? tabs.addChild(Button.builder(Component.translatable("slopmatica.browser.tab.shared"), b -> showShared()).width(110)
                 .tooltip(Tooltip.create(Component.translatable("slopmatica.browser.tab.shared.tooltip", SharedFolder.display(SharedFolder.schematicsDir())))).build())
@@ -156,7 +159,7 @@ public class SchematicBrowserScreen extends Screen {
         uploadButton = buttons.addChild(Button.builder(Component.translatable("slopmatica.browser.upload"), b -> {
             FileEntry selected = list.getSelected();
             if (selected != null && selected.kind == Kind.FILE) {
-                CloudSync.INSTANCE.upload(selected.path);
+                Online.upload(selected.path);
             }
         }).width(100).tooltip(Tooltip.create(Component.translatable("slopmatica.browser.upload.tooltip"))).build());
         buttons.addChild(Button.builder(Component.translatable("slopmatica.info.button"), b -> {
@@ -256,14 +259,16 @@ public class SchematicBrowserScreen extends Screen {
         list.replaceEntries(entries);
         list.setScrollAmount(0);
         localTabButton.active = cloudTab || sharedTab;
-        cloudTabButton.active = !cloudTab;
+        if (cloudTabButton != null) {
+            cloudTabButton.active = !cloudTab;
+        }
         if (sharedTabButton != null) {
             sharedTabButton.active = !sharedTab;
         }
-        uploadButton.visible = !cloudTab;
+        uploadButton.visible = !cloudTab && Online.available();
         String where = cloudTab ? "cloud/" : sharedTab ? "shared/" : "schematics/";
         String label = filter.isEmpty() ? where + pathFromRoot(current) : cloudTab ? "Searching the cloud" : "Searching all folders";
-        if (cloudTab && !CloudSync.INSTANCE.loggedIn()) {
+        if (cloudTab && !Online.loggedIn()) {
             label = "Not logged in to the cloud: menu → Cloud";
         }
         setLabel(pathLabel, Component.literal(label).withColor(DETAIL_COLOR));
@@ -297,7 +302,7 @@ public class SchematicBrowserScreen extends Screen {
 
     private void onSelectionChanged(@Nullable FileEntry entry) {
         loadButton.active = entry != null && entry.kind == Kind.FILE;
-        uploadButton.active = loadButton.active && CloudSync.INSTANCE.loggedIn() && !CloudPresence.INSTANCE.inCloud(entry.path);
+        uploadButton.active = loadButton.active && Online.loggedIn() && !Online.inCloud(entry.path);
         if (entry == null || entry.kind != Kind.FILE) {
             setLabel(infoLabel, Component.empty());
             return;
@@ -460,16 +465,16 @@ public class SchematicBrowserScreen extends Screen {
             }
             // "in cloud" / "on disk": the same schematic exists on the other side too.
             String badge = kind != Kind.FILE ? null
-                : cloudTab ? (CloudPresence.INSTANCE.onDisk(path) ? "on disk" : null)
-                : (CloudPresence.INSTANCE.inCloud(path) ? "in cloud" : null);
+                : cloudTab ? (Online.onDisk(path) ? "on disk" : null)
+                : (Online.inCloud(path) ? "in cloud" : null);
             int badgeWidth = badge == null ? 0 : font.width(badge) + 8;
             String shown = font.plainSubstrByWidth(label, getContentRight() - textX - detailWidth - badgeWidth - 14);
             // Files added from the schematics board name their author underneath.
-            CloudSync.Source source = kind == Kind.FILE && cloudTab ? CloudSync.INSTANCE.sourceOf(path) : null;
-            String listed = kind == Kind.FILE && cloudTab ? CloudSync.INSTANCE.listingOf(path) : null;
-            if (source != null) {
+            String author = kind == Kind.FILE && cloudTab ? Online.boardAuthor(path) : null;
+            String listed = kind == Kind.FILE && cloudTab ? Online.listingOf(path) : null;
+            if (author != null) {
                 y -= 5;
-                String by = font.plainSubstrByWidth("by " + source.author() + "  ·  from the board", getContentRight() - textX - detailWidth - 14);
+                String by = font.plainSubstrByWidth("by " + author + "  ·  from the board", getContentRight() - textX - detailWidth - 14);
                 graphics.text(font, by, textX, y + 11, DETAIL_COLOR);
             } else if (listed != null) {
                 // One of your own files that is posted on the board, and how visible it is.

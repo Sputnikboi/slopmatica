@@ -239,7 +239,7 @@ public final class SlopmaticaConfig {
             com.sputnikboi.slopmatica.share.SharedFolder.push(this);
         }
         if (cloudProfileSync && cloudProfile != null) {
-            com.sputnikboi.slopmatica.cloud.SettingsProfiles.INSTANCE.onConfigSaved();
+            com.sputnikboi.slopmatica.online.Online.settingsSaved();
         }
     }
 
