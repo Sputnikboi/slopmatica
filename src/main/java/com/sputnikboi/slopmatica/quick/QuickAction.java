@@ -87,6 +87,8 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
         add("copy", Items.WRITABLE_BOOK, mc -> Clipboard.INSTANCE.copy(mc), false, mc -> Selection.INSTANCE.box() != null, null);
         add("save_selection", Items.WRITTEN_BOOK, mc -> mc.gui.setScreen(new SaveSelectionScreen(null)), false, mc -> Selection.INSTANCE.box() != null, null);
         add("paste", Items.SLIME_BALL, mc -> Clipboard.INSTANCE.paste(mc), false, null, null);
+        add("board_browser", Items.KNOWLEDGE_BOOK, mc -> mc.gui.setScreen(new com.sputnikboi.slopmatica.gui.BoardBrowserScreen(null)), false, null, null);
+        add("bug_report", Items.SPIDER_EYE, mc -> mc.gui.setScreen(new com.sputnikboi.slopmatica.gui.BugReportScreen(null)), false, null, null);
     }
 
     private static void add(String id, net.minecraft.world.item.Item icon, Consumer<Minecraft> run, boolean standard,

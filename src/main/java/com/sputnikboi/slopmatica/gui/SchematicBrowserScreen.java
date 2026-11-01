@@ -466,10 +466,15 @@ public class SchematicBrowserScreen extends Screen {
             String shown = font.plainSubstrByWidth(label, getContentRight() - textX - detailWidth - badgeWidth - 14);
             // Files added from the schematics board name their author underneath.
             CloudSync.Source source = kind == Kind.FILE && cloudTab ? CloudSync.INSTANCE.sourceOf(path) : null;
+            String listed = kind == Kind.FILE && cloudTab ? CloudSync.INSTANCE.listingOf(path) : null;
             if (source != null) {
                 y -= 5;
                 String by = font.plainSubstrByWidth("by " + source.author() + "  ·  from the board", getContentRight() - textX - detailWidth - 14);
                 graphics.text(font, by, textX, y + 11, DETAIL_COLOR);
+            } else if (listed != null) {
+                // One of your own files that is posted on the board, and how visible it is.
+                y -= 5;
+                graphics.text(font, Component.translatable("slopmatica.browser.listed." + listed), textX, y + 11, "public".equals(listed) ? 0xFF60E060 : DETAIL_COLOR);
             }
             graphics.text(font, shown, textX, y, kind == Kind.FILE ? -1 : DIR_COLOR);
             if (badge != null) {

@@ -40,6 +40,7 @@ public class SlopmaticaMenuScreen extends Screen {
     private LinearLayout column;
     private @Nullable Button updateButton;
     private Button creditsButton;
+    private Button reportButton;
 
     private boolean shownBefore;
 
@@ -86,8 +87,11 @@ public class SlopmaticaMenuScreen extends Screen {
         }).width((BUTTON_WIDTH - 8) / 3).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.paste.tooltip"))).build());
         copyRow.addChild(Button.builder(Component.translatable("slopmatica.menu.clear_selection"), b -> Selection.INSTANCE.clear())
             .width(BUTTON_WIDTH - 8 - 2 * ((BUTTON_WIDTH - 8) / 3)).build());
-        column.addChild(Button.builder(Component.translatable("slopmatica.menu.cloud"), b -> minecraft.gui.setScreen(new CloudScreen(this)))
-            .width(BUTTON_WIDTH).build());
+        LinearLayout cloudRow = column.addChild(LinearLayout.horizontal().spacing(4));
+        cloudRow.addChild(Button.builder(Component.translatable("slopmatica.menu.cloud"), b -> minecraft.gui.setScreen(new CloudScreen(this)))
+            .width((BUTTON_WIDTH - 4) / 2).build());
+        cloudRow.addChild(Button.builder(Component.translatable("slopmatica.menu.board"), b -> minecraft.gui.setScreen(new BoardBrowserScreen(this)))
+            .width((BUTTON_WIDTH - 4) / 2).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.board.tooltip"))).build());
         column.addChild(Button.builder(Component.translatable("slopmatica.menu.options"), b -> minecraft.gui.setScreen(new SlopmaticaOptionsScreen(this)))
             .width(BUTTON_WIDTH).build());
         LinearLayout toggleRow = column.addChild(LinearLayout.horizontal().spacing(4));
@@ -105,6 +109,8 @@ public class SlopmaticaMenuScreen extends Screen {
         layout.visitWidgets(this::addRenderableWidget);
 
         // Bottom right: credits, linking to the website's feedback page.
+        reportButton = addRenderableWidget(Button.builder(Component.translatable("slopmatica.menu.report"), b -> minecraft.gui.setScreen(new BugReportScreen(this)))
+            .width(CREDITS_WIDTH).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.report.tooltip"))).build());
         creditsButton = addRenderableWidget(Button.builder(Component.translatable("slopmatica.menu.credits"),
             b -> ConfirmLinkScreen.confirmLinkNow(this, URI.create(CloudSync.INSTANCE.account().url + "/feedback?mod="
                 + java.net.URLEncoder.encode(Updates.modVersion(), java.nio.charset.StandardCharsets.UTF_8)
@@ -172,6 +178,7 @@ public class SlopmaticaMenuScreen extends Screen {
         layout.arrangeElements();
         if (creditsButton != null) {
             creditsButton.setPosition(width - CREDITS_WIDTH - 6, height - 26);
+            reportButton.setPosition(width - CREDITS_WIDTH - 6, height - 50);
         }
         if (updateButton != null) {
             updateButton.setPosition(width - 26, 2);

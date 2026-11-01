@@ -105,6 +105,16 @@ public final class CloudSync {
     private volatile Map<String, Source> sources = Map.of();
     private boolean sourcesLoaded;
 
+    /** Your files that are posted on the board, by cloud-relative path: the post's visibility. */
+    private volatile Map<String, String> listings = Map.of();
+
+    /** "public", "unlisted" or "private" if this cloud file is one of your board posts; else null. */
+    public @Nullable String listingOf(Path file) {
+        Path dir = cloudDir().toAbsolutePath().normalize();
+        Path abs = file.toAbsolutePath().normalize();
+        return abs.startsWith(dir) ? listings.get(dir.relativize(abs).toString().replace('\\', '/')) : null;
+    }
+
     /** Where a file in the cloud folder came from, if it was added from the board. */
     public @Nullable Source sourceOf(Path file) {
         if (!sourcesLoaded && account.uuid != null) {
@@ -314,9 +324,14 @@ public final class CloudSync {
         readUsage(listing);
         Map<String, String> remote = new HashMap<>();
         Map<String, Source> sourcesNow = new HashMap<>();
+        Map<String, String> listingsNow = new HashMap<>();
         for (JsonElement e : listing.getAsJsonArray("files")) {
             JsonObject f = e.getAsJsonObject();
             remote.put(f.get("path").getAsString(), f.get("sha256").getAsString());
+            if (f.has("listing") && f.get("listing").isJsonObject()) {
+                JsonObject l = f.getAsJsonObject("listing");
+                listingsNow.put(f.get("path").getAsString(), l.has("hidden") && l.get("hidden").getAsBoolean() ? "hidden" : string(l, "visibility", "public"));
+            }
             if (f.has("source") && f.get("source").isJsonObject()) {
                 JsonObject src = f.getAsJsonObject("source");
                 sourcesNow.put(f.get("path").getAsString(), new Source(
@@ -324,6 +339,7 @@ public final class CloudSync {
             }
         }
         sources = sourcesNow;
+        listings = listingsNow;
         state.sources = new HashMap<>(sourcesNow);
         Map<String, String> local = scanLocal(dir, state);
 
@@ -484,6 +500,16 @@ public final class CloudSync {
     }
 
     // ---- HTTP -----------------------------------------------------------------------------
+
+    /** A GET returning raw bytes (thumbnails, files); IOException with the server's message if it fails. */
+    byte[] requestBytes(String path) throws Exception {
+        HttpRequest.Builder builder = authorized(HttpRequest.newBuilder(uri(path))).timeout(Duration.ofMinutes(2)).GET();
+        HttpResponse<byte[]> response = http.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
+        if (response.statusCode() / 100 != 2) {
+            throw new IOException("HTTP " + response.statusCode());
+        }
+        return response.body();
+    }
 
     JsonObject getJson(String path) throws Exception {
         return parse(check(request("GET", path, HttpRequest.BodyPublishers.noBody(), Map.of(), true)));
