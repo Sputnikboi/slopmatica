@@ -5,6 +5,7 @@ import com.sputnikboi.slopmatica.SlopmaticaKeys;
 import com.sputnikboi.slopmatica.cloud.CloudSync;
 import com.sputnikboi.slopmatica.compat.LitematicaImport;
 import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
+import com.sputnikboi.slopmatica.share.SharedFolder;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.ChatFormatting;
@@ -70,7 +71,21 @@ public class WelcomeScreen extends Screen {
             .bounds(left, y, WIDTH, 20)
             .tooltip(Tooltip.create(Component.translatable(found ? "slopmatica.welcome.import.found.tooltip" : "slopmatica.welcome.import.tooltip"))).build());
 
-        y += 32;
+        y += 24;
+        SlopmaticaConfig config = SlopmaticaConfig.get();
+        if (!config.shareSettings && SharedFolder.defaultHasSettings()) {
+            // Another instance on this computer already shares its settings: offer to follow them.
+            addRenderableWidget(Button.builder(Component.translatable("slopmatica.welcome.shared"), b -> {
+                    config.shareSettings = true;
+                    config.shareSchematics = true;
+                    SharedFolder.pull(config);
+                    config.save();
+                    b.active = false;
+                    b.setMessage(Component.translatable("slopmatica.welcome.shared.done"));
+                }).bounds(left, y, WIDTH, 20).tooltip(Tooltip.create(Component.translatable("slopmatica.welcome.shared.tooltip"))).build());
+            y += 24;
+        }
+        y += 8;
         addRenderableWidget(CycleButton.onOffBuilder(telemetry)
             .withTooltip(v -> Tooltip.create(Component.translatable("slopmatica.options.telemetry.tooltip")))
             .create(left, y, WIDTH, 20, Component.translatable("slopmatica.options.telemetry"), (b, v) -> telemetry = v));

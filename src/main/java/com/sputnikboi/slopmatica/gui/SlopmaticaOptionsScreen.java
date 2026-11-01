@@ -6,6 +6,7 @@ import com.sputnikboi.slopmatica.cloud.CloudSync;
 import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.render.HologramRenderer;
 import com.sputnikboi.slopmatica.schematic.SchematicFormats;
+import com.sputnikboi.slopmatica.share.SharedFolder;
 import com.sputnikboi.slopmatica.verify.BlockStatus;
 import java.util.List;
 import java.util.Locale;
@@ -128,6 +129,34 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
         );
         list.addSmall(Button.builder(Component.translatable("slopmatica.options.welcome"), b -> minecraft.gui.setScreen(new WelcomeScreen(this))).width(WIDE).build(), null);
 
+        // Sharing between instances on this computer.
+        list.addHeader(Component.translatable("slopmatica.options.sharing"));
+        list.addSmall(
+            toggle("slopmatica.options.share_schematics", c.shareSchematics, v -> c.shareSchematics = v, false),
+            OptionInstance.createBoolean("slopmatica.options.share_settings",
+                OptionInstance.cachedConstantTooltip(Component.translatable("slopmatica.options.share_settings.tooltip")), c.shareSettings, v -> {
+                    c.shareSettings = v;
+                    if (v && !SharedFolder.pull(c)) {
+                        SharedFolder.push(c); // Nothing shared yet: this instance's settings start it off.
+                    }
+                    c.save();
+                    HologramRenderer.INSTANCE.rebuildAll();
+                    minecraft.gui.setScreen(new SlopmaticaOptionsScreen(lastScreen)); // Settings may have changed.
+                })
+        );
+        if (advanced) {
+            EditBox folder = new EditBox(font, 0, 0, WIDE, 20, Component.translatable("slopmatica.options.shared_folder"));
+            folder.setMaxLength(1024);
+            folder.setValue(c.sharedFolder == null ? "" : c.sharedFolder);
+            folder.setHint(Component.literal(SharedFolder.display(SharedFolder.defaultFolder())).withStyle(EditBox.SEARCH_HINT_STYLE));
+            folder.setResponder(text -> pendingFolder = text);
+            folder.setTooltip(Tooltip.create(Component.translatable("slopmatica.options.shared_folder.tooltip", SharedFolder.display(SharedFolder.defaultFolder()))));
+            if (SharedFolder.isCustom()) {
+                folder.setTextColor(0xFFFFA030);
+            }
+            list.addSmall(folder, Button.builder(Component.translatable("slopmatica.options.shared_folder.default"), b -> folder.setValue("")).width(WIDE).build());
+        }
+
         if (advanced) {
             list.addHeader(Component.translatable("slopmatica.options.cloud"));
             EditBox url = new EditBox(font, 0, 0, WIDE, 20, Component.translatable("slopmatica.cloud.server"));
@@ -141,6 +170,7 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
     }
 
     private @Nullable String pendingUrl;
+    private @Nullable String pendingFolder;
 
     private Button colorButton(BlockStatus status) {
         String key = "slopmatica.options.outline_" + status.name().toLowerCase(Locale.ROOT);
@@ -216,6 +246,15 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
         super.removed();
         if (pendingUrl != null && !pendingUrl.isBlank()) {
             CloudSync.INSTANCE.setUrl(pendingUrl);
+        }
+        if (pendingFolder != null) {
+            SlopmaticaConfig c = SlopmaticaConfig.get();
+            c.sharedFolder = pendingFolder.isBlank() ? null : pendingFolder.trim();
+            if (SharedFolder.isCustom()) {
+                // New installs only ever look in the default folder.
+                com.sputnikboi.slopmatica.SlopmaticaActions.chat(Component.translatable("slopmatica.options.shared_folder.warning",
+                    SharedFolder.display(SharedFolder.defaultFolder())).withColor(com.sputnikboi.slopmatica.SlopmaticaActions.WARNING));
+            }
         }
         SlopmaticaConfig.get().save();
     }

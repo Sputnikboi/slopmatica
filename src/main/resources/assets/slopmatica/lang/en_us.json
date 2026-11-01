@@ -362,5 +362,19 @@
   "slopmatica.plan.ghost": "Bring %s %s",
   "slopmatica.plan.box": "Shulker box #%s:",
   "slopmatica.plan.ender": "+ %s shulker boxes from the ender chest",
-  "slopmatica.plan.overflow": "Doesn't fit:"
+  "slopmatica.plan.overflow": "Doesn't fit:",
+  "slopmatica.options.sharing": "Sharing Between Instances",
+  "slopmatica.options.share_schematics": "Shared Schematics",
+  "slopmatica.options.share_schematics.tooltip": "Show the schematics folder shared by every Minecraft instance on this computer as a \"Shared\" tab in the browser.",
+  "slopmatica.options.share_settings": "Shared Settings",
+  "slopmatica.options.share_settings.tooltip": "This instance uses the settings shared by your other instances, and changes here go to them too. Turning it on takes the shared settings (or shares this instance's if there are none yet).",
+  "slopmatica.options.shared_folder": "Shared folder",
+  "slopmatica.options.shared_folder.tooltip": "Leave empty for the default folder, %s, which every new install checks on its own. Another folder works, but each instance has to be pointed at it.",
+  "slopmatica.options.shared_folder.default": "Default Folder",
+  "slopmatica.options.shared_folder.warning": "Custom shared folder set. New installs won't find it on their own: they only look in %s.",
+  "slopmatica.browser.tab.shared": "Shared",
+  "slopmatica.browser.tab.shared.tooltip": "Schematics shared by every instance on this computer: %s",
+  "slopmatica.welcome.shared": "Use Settings From My Other Instances",
+  "slopmatica.welcome.shared.done": "Using shared settings and schematics",
+  "slopmatica.welcome.shared.tooltip": "Another Minecraft instance on this computer shares its Slopmatica settings. Use them here too (and the shared schematics folder)."
 }

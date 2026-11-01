@@ -43,6 +43,8 @@ import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Util;
 import org.jspecify.annotations.Nullable;
+import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
+import com.sputnikboi.slopmatica.share.SharedFolder;
 
 /**
  * Browses {@code <gamedir>/schematics} (Litematica's folder) and loads the chosen file at the
@@ -64,16 +66,20 @@ public class SchematicBrowserScreen extends Screen {
     private static final int BADGE_COLOR = 0xFF55CCFF;
     /** The tab the browser last showed, so reopening it lands in the same place. */
     private static boolean lastCloudTab;
+    private static boolean lastSharedTab;
 
     private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, 82, 53);
     private final Path schematics;
     private final Path cloudDir;
     /** Cloud tab: browse {@code schematics/cloud/}; otherwise everything else in {@code schematics/}. */
     private boolean cloudTab;
+    /** Shared tab: the folder shared by every instance on this computer (when this one uses it). */
+    private boolean sharedTab;
     private Path root;
     private Path current;
     private Button localTabButton;
     private Button cloudTabButton;
+    private @Nullable Button sharedTabButton;
     private String filter = "";
     private FileList list;
     private StringWidget pathLabel;
@@ -83,6 +89,9 @@ public class SchematicBrowserScreen extends Screen {
 
     public SchematicBrowserScreen(@Nullable Screen parent) {
         this(parent, lastCloudTab);
+        if (lastSharedTab && SlopmaticaConfig.get().shareSchematics) {
+            showShared();
+        }
     }
 
     public SchematicBrowserScreen(@Nullable Screen parent, boolean cloud) {
@@ -98,9 +107,22 @@ public class SchematicBrowserScreen extends Screen {
 
     private void showTab(boolean cloud) {
         cloudTab = lastCloudTab = cloud;
+        sharedTab = lastSharedTab = false;
         root = cloud ? cloudDir : schematics;
         current = root;
-        refresh();
+        if (list != null) {
+            refresh();
+        }
+    }
+
+    private void showShared() {
+        cloudTab = lastCloudTab = false;
+        sharedTab = lastSharedTab = true;
+        root = SharedFolder.schematicsDir();
+        current = root;
+        if (list != null) {
+            refresh();
+        }
     }
 
     @Override
@@ -111,6 +133,10 @@ public class SchematicBrowserScreen extends Screen {
         LinearLayout tabs = header.addChild(LinearLayout.horizontal().spacing(4));
         localTabButton = tabs.addChild(Button.builder(Component.translatable("slopmatica.browser.tab.local"), b -> showTab(false)).width(110).build());
         cloudTabButton = tabs.addChild(Button.builder(Component.translatable("slopmatica.browser.tab.cloud"), b -> showTab(true)).width(110).build());
+        sharedTabButton = SlopmaticaConfig.get().shareSchematics
+            ? tabs.addChild(Button.builder(Component.translatable("slopmatica.browser.tab.shared"), b -> showShared()).width(110)
+                .tooltip(Tooltip.create(Component.translatable("slopmatica.browser.tab.shared.tooltip", SharedFolder.display(SharedFolder.schematicsDir())))).build())
+            : null;
         pathLabel = header.addChild(new StringWidget(Math.min(width - 20, 400), 9, Component.empty(), font));
         EditBox search = header.addChild(new EditBox(font, 0, 0, 200, 15, Component.translatable("slopmatica.browser.search")));
         search.setHint(Component.translatable("slopmatica.browser.search").withStyle(EditBox.SEARCH_HINT_STYLE));
@@ -223,10 +249,13 @@ public class SchematicBrowserScreen extends Screen {
         }
         list.replaceEntries(entries);
         list.setScrollAmount(0);
-        localTabButton.active = cloudTab;
+        localTabButton.active = cloudTab || sharedTab;
         cloudTabButton.active = !cloudTab;
+        if (sharedTabButton != null) {
+            sharedTabButton.active = !sharedTab;
+        }
         uploadButton.visible = !cloudTab;
-        String where = cloudTab ? "cloud/" : "schematics/";
+        String where = cloudTab ? "cloud/" : sharedTab ? "shared/" : "schematics/";
         String label = filter.isEmpty() ? where + pathFromRoot(current) : cloudTab ? "Searching the cloud" : "Searching all folders";
         if (cloudTab && !CloudSync.INSTANCE.loggedIn()) {
             label = "Not logged in to the cloud: menu → Cloud";

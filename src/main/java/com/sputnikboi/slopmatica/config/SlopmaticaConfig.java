@@ -32,6 +32,12 @@ public final class SlopmaticaConfig {
     public boolean showAdvanced = false;
     /** The welcome screen has been seen (finished or skipped), so it no longer opens by itself. */
     public boolean welcomeShown = false;
+    /** This instance uses the shared folder's schematics (a "Shared" tab in the browser). */
+    public boolean shareSchematics = false;
+    /** This instance's settings follow the shared folder's (and changes here go there too). */
+    public boolean shareSettings = false;
+    /** A custom shared folder, or null for the default one every install checks. */
+    public @org.jspecify.annotations.Nullable String sharedFolder;
     /** Opted in to sending anonymous usage data to the Slopmatica cloud server. Off unless chosen. */
     public boolean telemetry = false;
     /** Outline colours, ARGB; null means the default. */
@@ -154,6 +160,9 @@ public final class SlopmaticaConfig {
         } catch (IOException e) {
             LOGGER.error("Could not save {}", file, e);
         }
+        if (shareSettings) {
+            com.sputnikboi.slopmatica.share.SharedFolder.push(this);
+        }
     }
 
     private static SlopmaticaConfig load() {
@@ -162,6 +171,10 @@ public final class SlopmaticaConfig {
             try (Reader reader = Files.newBufferedReader(file)) {
                 SlopmaticaConfig config = GSON.fromJson(reader, SlopmaticaConfig.class);
                 if (config != null) {
+                    if (config.shareSettings) {
+                        // Another instance may have changed the shared settings since this one last ran.
+                        com.sputnikboi.slopmatica.share.SharedFolder.pull(config);
+                    }
                     return config.sanitized();
                 }
             } catch (IOException | JsonParseException e) {
