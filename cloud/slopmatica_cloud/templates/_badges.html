@@ -1,0 +1,4 @@
+{% macro user_badges(badges) %}
+{# Badges an admin gave a player (verified, mod, dev), shown after their name. #}
+{% for b in badges %}<span class="ubadge ub-{{ b }}" title="{{ badge_labels[b] }}">{% if b == "verified" %}&#10003;<span class="sr"> {{ badge_labels[b] }}</span>{% else %}{{ badge_labels[b] }}{% endif %}</span>{% endfor %}
+{% endmacro %}

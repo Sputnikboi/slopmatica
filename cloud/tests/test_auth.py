@@ -27,7 +27,8 @@ def test_verify_happy_path(client, mojang):
 
     me = client.get("/api/me", headers=bearer(data["token"]))
     assert me.status_code == 200
-    assert me.json() == {"uuid": data["uuid"], "name": "Alice", "usedBytes": 0, "quotaBytes": 1073741824}
+    assert me.json() == {"uuid": data["uuid"], "name": "Alice", "usedBytes": 0, "quotaBytes": 1073741824,
+                         "whitelisted": True, "badges": []}  # 0.7.0 added the last two
 
 
 def test_verify_uses_mojang_canonical_name(client, mojang):

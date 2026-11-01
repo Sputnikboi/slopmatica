@@ -123,6 +123,25 @@ def state_name(state: Any) -> str:
     return ""
 
 
+def namespaces(s: Schematic) -> set[str]:
+    """The namespaces of every block, block entity and entity id in s: {"minecraft"} for a vanilla build.
+    An id without a namespace counts as minecraft, as it does in the game."""
+    found: set[str] = set()
+
+    def add(name: Any) -> None:
+        if isinstance(name, str) and name:
+            found.add(name.split(":", 1)[0].lower() if ":" in name else "minecraft")
+
+    for r in s.regions:
+        for state in r.palette:
+            add(state_name(state))
+        for be in r.block_entities.values():
+            add(be.get("id") if isinstance(be, Compound) else None)
+        for e in r.entities:
+            add(e.data.get("id") if isinstance(e.data, Compound) else None)
+    return found
+
+
 def block_kind(state: Any) -> int:
     name = state_name(state)
     return AIR if name in AIR_NAMES else VOID if name == VOID_NAME else SOLID

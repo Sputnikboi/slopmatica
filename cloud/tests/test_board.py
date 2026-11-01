@@ -96,7 +96,7 @@ def test_post_public(client, ppl, data_dir):
     assert re.fullmatch(r"[A-Za-z0-9_-]{10}", p["id"])
     assert p["title"] == "Castle" and p["description"] == "Line one\nLine two"
     assert p["visibility"] == "public"
-    assert p["author"] == {"uuid": ppl.alice.uuid, "name": "Alice"}
+    assert p["author"] == {"uuid": ppl.alice.uuid, "name": "Alice", "badges": []}
     # stored as .slopmatic, converted from the .litematic
     assert p["filename"] == "Castle.slopmatic" and p["format"] == "slopmatic"
     stored = (data_dir / "posts" / p["id"] / "Castle.slopmatic").read_bytes()
@@ -837,7 +837,8 @@ def test_migrates_a_0_3_0_database(make_client, mojang, data_dir):
     c = make_client()
     h = bearer(token)
     me = c.get("/api/me", headers=h).json()
-    assert me == {"uuid": uuid, "name": "Veteran", "usedBytes": len(body), "quotaBytes": 1073741824}
+    assert me == {"uuid": uuid, "name": "Veteran", "usedBytes": len(body), "quotaBytes": 1073741824,
+                  "whitelisted": True, "badges": []}
     listing = c.get("/api/files", headers=h).json()["files"]
     assert listing == [{"path": "builds/Old.litematic", "size": len(body), "sha256": hashlib.sha256(body).hexdigest(),
                         "modified": 1_700_000_000_000, "hasThumbnail": True, "source": None}]

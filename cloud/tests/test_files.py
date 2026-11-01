@@ -194,6 +194,7 @@ def tiny_quota_client(monkeypatch, data_dir, mojang):
     monkeypatch.setenv("SLOPMATICA_DATA", str(data_dir))
     monkeypatch.setenv("SLOPMATICA_QUOTA_BYTES", "100")
     monkeypatch.setenv("SLOPMATICA_MOJANG_HASJOINED", mojang.url)
+    monkeypatch.setenv("SLOPMATICA_WHITELIST_ENFORCED", "0")  # 0.7.0: the gate is covered in test_v070
     return TestClient(create_app(Settings.from_env()))
 
 

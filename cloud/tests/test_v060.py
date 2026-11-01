@@ -59,7 +59,7 @@ def alice(client, mojang):
 
 
 def test_version_bumped():
-    assert __version__ == "0.6.0" and SCHEMA_VERSION == 4
+    assert SCHEMA_VERSION >= 4  # 0.6.0; test_v070 checks the current version
 
 
 def test_semver_order():
@@ -663,7 +663,7 @@ def test_migrates_a_v3_database(make_client, mojang, data_dir):
     body = v3_data_dir(data_dir)
     c = make_client()
     db = c.app.state.store.db
-    assert db.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     assert columns(db, "releases") == ["id", "version", "mc_version", "loader", "filename", "sha256", "size",
                                        "uploaded", "changelog", "hidden", "downloads"]
     assert columns(db, "feedback") == ["id", "kind", "message", "mod_version", "mc_version", "contact", "uuid",
@@ -683,7 +683,7 @@ def test_migrates_a_v3_database(make_client, mojang, data_dir):
     send(TestClient(c.app))
     # a restart migrates nothing twice and keeps it all
     c2 = make_client()
-    assert c2.app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert c2.app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     assert c2.get("/api/releases/latest?mc=26.3").json()["version"] == "0.6.0"
     assert c2.get("/api/feedback", headers=h).json()["open"] == 1
 
@@ -699,4 +699,4 @@ def test_migration_4_is_one_transaction(make_client, mojang, data_dir, monkeypat
     assert db.execute("SELECT COUNT(*) FROM sqlite_master WHERE name IN ('releases', 'feedback')").fetchone()[0] == 0
     db.close()
     monkeypatch.undo()
-    assert make_client().app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert make_client().app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION

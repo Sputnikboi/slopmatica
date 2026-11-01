@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Access &middot; Slopmatica Cloud{% endblock %}
+{% block main %}
+<section class="hero apply-hero">
+  {% if user and member %}
+  <h1>You&rsquo;re in, {{ user.name }}.</h1>
+  <p class="lead">Your account can use Slopmatica Cloud: sync, uploads and the schematics board.</p>
+  <p><a class="btn" href="{{ base }}/">Go to my files</a></p>
+  {% else %}
+  <h1>Slopmatica Cloud is for {{ server_name }} members, for now.</h1>
+  <p class="lead">The cloud is small and run by hand, so syncing, uploading and posting to the board are open to players
+    on the {{ server_name }} server&rsquo;s whitelist. Everyone can still <a href="{{ base }}/board">browse the schematics board</a>
+    and use the mod itself without the cloud.</p>
+
+  {% if not user %}
+  <div class="panel">
+    <h2>Want to join?</h2>
+    <p>Log in from the game first, then come back here to apply: Slopmatica menu (<kbd>M</kbd>) &rarr; <strong>Cloud</strong> &rarr; <strong>Open website</strong>.</p>
+    <p class="muted small">If you are a {{ server_name }} member already, logging in is all it takes.</p>
+  </div>
+  {% else %}
+  {% if has_data %}
+  <p class="notice small">Your files and board posts are kept as they are. You&rsquo;ll get to them again as soon as your access is approved.</p>
+  {% endif %}
+
+  {% if application and application.status == "pending" %}
+  <div class="panel apply-status">
+    <h2>Your application is waiting for an admin</h2>
+    <p class="small">Sent <time datetime="{{ application.created|iso_utc }}">{{ application.created|pretty_utc }}</time> as <strong>{{ user.name }}</strong>. This page will show the answer.</p>
+    <details class="edit">
+      <summary>What you wrote</summary>
+      <p class="small"><span class="muted">Why:</span></p><p class="desc small">{{ application.reason }}</p>
+      <p class="small"><span class="muted">How you know the community:</span></p><p class="desc small">{{ application.community }}</p>
+      {% if application.contact %}<p class="small"><span class="muted">Contact:</span> {{ application.contact }}</p>{% endif %}
+    </details>
+  </div>
+  {% else %}
+  {% if application and application.status == "rejected" %}
+  <div class="panel apply-status rejected">
+    <h2>Your last application was not accepted</h2>
+    <p class="small">Answered <time datetime="{{ application.decided|iso_utc }}">{{ application.decided|pretty_utc }}</time>{% if application.note %}: <q>{{ application.note }}</q>{% else %}.{% endif %}</p>
+    <p class="muted small">You can apply again below.</p>
+  </div>
+  {% endif %}
+  <div class="panel">
+    <h2>Apply for access</h2>
+    <form id="apply-form" class="post-form apply-form" novalidate>
+      <label class="field"><span class="label">Why would you like to use Slopmatica Cloud?</span>
+        <textarea name="reason" rows="4" maxlength="{{ max_answer }}" required></textarea></label>
+      <label class="field"><span class="label">How do you know the {{ server_name }} community?</span>
+        <textarea name="community" rows="3" maxlength="{{ max_answer }}" required placeholder="Who you play with, how you found the server, your Discord name there&hellip;"></textarea></label>
+      <label class="field"><span class="label">Contact <span class="muted">(optional: Discord name, email&hellip; only admins see it)</span></span>
+        <input type="text" name="contact" maxlength="{{ max_contact }}" autocomplete="off"></label>
+      <p class="muted small">Sent as <strong>{{ user.name }}</strong> (<code>{{ user.uuid }}</code>).</p>
+      <p class="form-msg" role="status"></p>
+      <div class="form-actions start"><button type="submit" class="btn">Send application</button></div>
+    </form>
+  </div>
+  {% endif %}
+  {% endif %}
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ base }}/static/access.js?v={{ v }}"></script>
+{% endblock %}

@@ -38,7 +38,9 @@ It reads optional overrides from `~/.config/slopmatica-cloud/env`.
 | `SLOPMATICA_DATA` | `cloud/data` | Data directory: `cloud.db` plus `users/<uuid>/files/...`, `users/<uuid>/thumbs/<path>.png` and board snapshots in `posts/<id>/` (`<original stem>.slopmatic`, `thumb.png`, and the 3D view's cache `model-<sha256[:16]>.json.gz` or `.toobig`) |
 | `SLOPMATICA_ROOT_PATH` | *(empty)* | URL prefix when mounted under a path, e.g. `/slopmatica`. Works whether or not the proxy strips the prefix. |
 | `SLOPMATICA_ADMINS` | `sputnikboi` | Comma-separated Minecraft names with unlimited storage. Names are matched case-insensitively at login, and the account's uuid then stays an admin even after a rename. |
-| `SLOPMATICA_QUOTA_BYTES` | `1073741824` | Per-account quota (1 GiB) |
+| `SLOPMATICA_QUOTA_BYTES` | `1073741824` | Default per-account quota (1 GiB). An admin can set another one per account (storage requests, or the admin page's user list); admins are always unlimited. |
+| `SLOPMATICA_WHITELIST_ENFORCED` | `true` | Only players on the Fruitbowl whitelist (and admins) may use the cloud. `0`, `false`, `no` or `off` switch the gate off. |
+| `SLOPMATICA_WHITELIST_SEED` | *(unset)* | A Minecraft `whitelist.json` (`[{"uuid","name"}, ...]`) read **once**, when the database migrates to schema 5, to fill the whitelist (source `seed`). Unset: the whitelist starts empty. Set but missing or malformed: the server refuses to start and nothing is migrated. Later changes go through the admin page. |
 | `SLOPMATICA_PUBLIC_URL` | `http://127.0.0.1:8095` | External origin used to build web-login links (`<PUBLIC_URL><ROOT_PATH>/login/<token>`) and the absolute release URLs (`<PUBLIC_URL><ROOT_PATH>/...`, with ROOT_PATH left out if PUBLIC_URL already ends in it). If it is `https://`, session cookies are marked Secure. |
 | `SLOPMATICA_MOJANG_HASJOINED` | `https://sessionserver.mojang.com/session/minecraft/hasJoined` | Override for tests |
 | `SLOPMATICA_MOJANG_PROFILE` | `https://api.mojang.com/users/profiles/minecraft` | Name to uuid lookups (`<url>/<name>`) for private board posts. Override for tests |
@@ -52,7 +54,8 @@ All errors look like `{"error": "..."}`. All paths below are relative to `ROOT_P
 1. `POST /api/auth/challenge` returns `{"serverId": "<40 hex>"}`. It is valid for 2 minutes and can be used once.
 2. The mod calls Mojang's `join` with that serverId.
 3. `POST /api/auth/verify` with `{"username", "serverId"}` returns
-   `{"token", "uuid", "name", "usedBytes", "quotaBytes"}` (`quotaBytes: null` means unlimited).
+   `{"token", "uuid", "name", "usedBytes", "quotaBytes", "whitelisted", "badges", "apply"?}` (`quotaBytes: null` means
+   unlimited; `apply`, the absolute URL of the apply page, only when `whitelisted` is false).
    The token lasts 180 days. On failure you get 401. A malformed body or username gets 400.
 4. Every other API call sends `Authorization: Bearer <token>`. A missing, invalid or expired token gets 401.
 
@@ -93,9 +96,9 @@ control characters, `<>:"|?*`, segments with leading or trailing whitespace or a
 
 | Method & path | Result |
 |---|---|
-| `GET /api/me` | `{"uuid","name","usedBytes","quotaBytes"}` |
+| `GET /api/me` | `{"uuid","name","usedBytes","quotaBytes","whitelisted","badges","apply"?}` as for `/api/auth/verify`. Open to players without access, so the mod can tell them. |
 | `GET /api/files` | `{"files":[{"path","size","sha256","modified"(unix ms),"hasThumbnail","source"}],"usedBytes","quotaBytes"}`. `source` is `null`, or for a file saved with "Add to my cloud" `{"postId","title","author","authorUuid"}`: the post, its title when saved, and its author (`author` is the author's current name as last seen at a login, else the name when saved). |
-| `PUT /api/files/{path}` | Raw body. It must be gzip (`1f 8b`) and at most 256 MiB. Optional `X-Sha256` must match. Returns 201 (new) or 200 (replaced) with the file entry. Over quota gives 413 `{"error":"quota exceeded","usedBytes","quotaBytes"}`; the quota counts the new size minus the size of the file being replaced. Replacing a file with different bytes drops its (now stale) thumbnail and its `source` (it is the user's own file from then on); the same bytes keep both. |
+| `PUT /api/files/{path}` | Raw body. It must be gzip (`1f 8b`) and at most 256 MiB. Optional `X-Sha256` must match. A schematic whose blocks, block entities or entities use a namespace other than `minecraft` is refused with 400 `{"error","code":"modded","namespaces":[...]}` (a file the server can't parse is stored as before). Returns 201 (new) or 200 (replaced) with the file entry. Over quota gives 413 `{"error":"quota exceeded","usedBytes","quotaBytes"}`; the quota counts the new size minus the size of the file being replaced. Replacing a file with different bytes drops its (now stale) thumbnail and its `source` (it is the user's own file from then on); the same bytes keep both. |
 | `GET /api/files/{path}` | Bytes, `application/octet-stream`, `Content-Disposition: attachment`, `X-Sha256` |
 | `GET /api/export/{path}?format=slopmatic\|nbt\|litematic` | The file converted to another format: bytes, `application/octet-stream`, `Content-Disposition: attachment` named like the original with the new extension (no folder). 400 for a missing, unknown or same format, for a file that cannot be parsed, or for more than 64 million blocks of volume. 404 if the file is missing. A read, so cookie requests need no `X-Requested-With`. |
 | `DELETE /api/files/{path}` | 204. The thumbnail is deleted too. |
@@ -117,7 +120,7 @@ the cloud file don't affect it; the author can re-take the snapshot from the sam
 are stored as `.slopmatic`: a `.nbt` or `.litematic` is converted when it is posted or refreshed
 (block states and data version kept, as for exports) and named `<original stem>.slopmatic`; the
 user's own file is untouched. A file that can't be read or converted is refused with 400 (nothing is
-stored). Snapshot bytes (the converted size) count toward the author's quota (`usedBytes` includes
+stored), and so is a modded one (400 code `modded`, as for uploads). Snapshot bytes (the converted size) count toward the author's quota (`usedBytes` includes
 them); deleting a post frees them. At most 200 posts per account (409 past that). Enclosing size and
 block count (non-air, non-void blocks) are read from the snapshot when it is taken.
 
@@ -142,7 +145,7 @@ profile API (10 s timeout): an unknown name is 400 naming it, Mojang unreachable
 | `GET /api/board/{id}/file`, `/thumbnail`, `/export?format=` | Download, PNG thumbnail, conversion (same rules and limits as `/api/export`). |
 | `GET /api/board/{id}/model` | The 3D view's data (below), gzip-encoded JSON for clients that accept it. 413 `{"error","visibleBlocks","maxVisibleBlocks"}` above 300 000 visible blocks, 400 for an old post that can't be read. Cached in the post's folder per snapshot. |
 
-A post is `{"id","title","visibility","author":{"uuid","name"},"filename","format","size","sha256","dimensions":[x,y,z]|null,"blockCount"|null,"sizeClass"|null,"tags":[...],"hasThumbnail","created","updated","score","ups","downs"}` (times in unix ms).
+A post is `{"id","title","visibility","author":{"uuid","name","badges"},"filename","format","size","sha256","dimensions":[x,y,z]|null,"blockCount"|null,"sizeClass"|null,"tags":[...],"hasThumbnail","created","updated","score","ups","downs","hidden"}` (times in unix ms; `hidden`: an admin hid it, see Reports). With detail, the author and admins also get `hiddenReason`.
 
 The model is `{"v":1,"size":[sx,sy,sz],"count","palette":[{"id","shape"}],"groups":[{"p","n","d"}]}`. It lists
 only visible blocks: no air or structure voids, and no block whose six neighbours inside the schematic are all
@@ -153,6 +156,94 @@ little-endian uint32 values: the block indices `(y * sz + z) * sx + x` in ascend
 difference from the previous one (the first from 0). Several Litematica regions are merged over their
 enclosing box as for `.nbt` exports.
 Logged out is fine for public and unlisted posts, except voting and saving (401). Website pages: `/board`, `/board/<id>`.
+
+### Access: the Fruitbowl whitelist
+
+The cloud is for players on the Fruitbowl server's whitelist, plus admins. Anyone can log in (the game, login links,
+passwords, `/api/me`, `/api/application`), and anyone, logged in or not, can view the board: lists, posts, downloads,
+thumbnails, exports, the 3D view. Everything else that uses an account's cloud answers players without access with
+
+```json
+403 {"error": "Slopmatica Cloud is only open to Fruitbowl members for now. You can apply for access on the website.",
+     "code": "not_whitelisted", "apply": "<PUBLIC_URL><ROOT_PATH>/apply"}
+```
+
+after the usual 401 (no or bad token) and CSRF checks. That covers `/api/files*`, `/api/thumbnails*`, `/api/export*`,
+`POST /api/board`, `PATCH`/`DELETE /api/board/{id}`, `/refresh`, `/vote`, `/save`, `POST /api/reports` and
+`/api/account/storage-request`. Nothing is deleted when a player has no access: their files and posts stay, and come
+back the moment they are (re)added. Their public posts stay on the board; admins can hide them. On the website
+`/` sends them to `/apply`, which explains this and holds the application form (logged out, it says how to log in).
+
+The whitelist (table `whitelist`: `uuid`, `name`, `source` = `seed` | `upload` | `approved` | `manual`, `added`,
+`added_by`) is seeded once from `SLOPMATICA_WHITELIST_SEED`, then managed on the admin page.
+
+### Applications and storage requests
+
+| Method & path | Result |
+|---|---|
+| `GET /api/application` | `{"whitelisted","application": application\|null,"apply"}` (the latest one). |
+| `POST /api/application` | `{"reason","community","contact"?}` (1 to 2000 characters each, contact at most 200). 201 with the application. 409 if the player already has access or an application is pending; 429 after 3 within 7 days. |
+| `GET /api/account/storage-request` | Members only: `{"usedBytes","quotaBytes","choices":[bytes],"maxBytes","request": request\|null}`. |
+| `POST /api/account/storage-request` | Members only: `{"bytes","reason"}`: the total quota wanted (more than the current one, at most 1 TiB; the form offers 2, 5 and 10 GiB or a number of GiB) and why (at most 1000 characters). 409 if one is pending or the account is unlimited; 429 after 3 within 7 days. |
+
+An application is `{"id","user":{"uuid","name"},"reason","community","contact","status":"pending"|"approved"|"rejected","created","decided","note"}`;
+a storage request `{"id","user","requestedBytes","reason","usedBytes","quotaBytes"(both when asked),"status","created","decided","grantedBytes","note"}`.
+`note` is the admin's reason, shown to the player. The account page offers the storage form to members, open when usage is
+above 80 %, folded otherwise, and shows the last request's answer.
+
+### Reports
+
+`POST /api/reports` `{"kind":"post"|"user","target": post id | uuid or name,"reason","details"?}`, members only. Reasons:
+`spam`, `inappropriate`, `stolen` (not their build), `broken` (file), `other` (needs `details`; at most 2000 characters).
+404 for a post the reporter can't see or an unknown user, 400 for one's own post or oneself, 409 while the same reporter
+has an open report on the same target, 429 past 10 reports per 15 minutes (counted in `login_failures` under
+`report-user:`). A report is `{"id","kind","target":{"id","label","uuid"},"reason","details","status":"open"|"resolved"|"dismissed","created","decided","note"}`.
+
+Admins can hide a post (`posts.hidden`, with a reason): it then behaves as private to everyone but its author and admins,
+whatever visibility the author picks, and is left out of the public and shared lists. The author sees it in their own
+list and on its page, marked hidden with the reason.
+
+### Badges
+
+`verified`, `mod` and `dev`, given and taken by admins, shown after names on the board's cards, post pages and the
+account page, and in the API as `author.badges` (posts) and `badges` (`/api/me`), always in that order.
+
+### Word filter
+
+`slopmatica_cloud/textfilter.py` holds a short, deliberately incomplete list of blocked words (extend `BLOCKED`). Text
+is compared word by word after case folding, accent stripping, leetspeak (`sh1t`), stretched letters (`fuuuck`) and
+spaced-out letters (`f u c k`), so words that merely contain a blocked one ("Scunthorpe", "class") pass. It checks post
+titles and descriptions, applications, report details and storage request reasons, and answers 400
+`{"error","code":"filtered","field"}`. Minecraft names of accounts or whitelisted players inside the text are never held
+against it (the names themselves come from Mojang and are never filtered), and admins are not filtered.
+Feedback is not filtered (bug reports may quote anything). There are no display names.
+
+### Admin
+
+The page `/admin` (tabs: Applications, Storage, Reports, Feedback = `/admin/feedback`, Whitelist, Badges, Users) and
+`/admin/feedback` answer 404, the same page as any unknown address, to everyone but admins. Unknown non-API addresses
+now get that HTML page; the API keeps `{"error": "Not Found"}`. The admin API answers 401 logged out and 403
+`{"error": "only admins can do that"}` to everyone else; cookie requests need `X-Requested-With`.
+
+| Method & path | Result |
+|---|---|
+| `GET /api/admin/applications?status=pending\|approved\|rejected\|all` | `{"applications":[...],"counts"}`, pending first, newest first. |
+| `POST /api/admin/applications/{id}/approve` / `/reject` | `{"note"?}`. Approving adds the player to the whitelist (source `approved`). 409 if already decided. |
+| `GET /api/admin/storage-requests?status=` | `{"requests":[...],"counts"}`, each with `current` usage and quota. |
+| `POST /api/admin/storage-requests/{id}/approve` | `{"quotaBytes"?,"note"?}`: sets the account's quota (to what was asked unless given). `/reject` `{"note"?}`. |
+| `GET /api/admin/reports?status=open\|resolved\|dismissed\|all` | `{"reports":[...],"counts"}`, with `reporter`, `target.name` and, for posts, `post: {"visibility","hidden"}\|null`. |
+| `POST /api/admin/reports/{id}/resolve` / `/dismiss` | `{"note"?}`. |
+| `POST /api/admin/posts/{id}/hide` | `{"hidden": bool, "reason"?}`; returns the post. |
+| `GET /api/admin/whitelist` | `{"entries":[{"uuid","name","source","added","accountName"}],"count"}`. |
+| `POST /api/admin/whitelist` | `{"player": name or uuid, "name"?}`: a name is looked up among accounts, then at Mojang; a uuid nobody here has used needs `name`. 201 (`"added": true`) or 200 if already on it. Approves the player's pending application. |
+| `DELETE /api/admin/whitelist/{uuid}` | 204, or 404 if not on it. |
+| `POST /api/admin/whitelist/import` | Body: a `whitelist.json` (at most 4 MiB). Adds new players (source `upload`), takes over changed names, removes nobody: `{"added":[{uuid,name}],"renamed":[{uuid,from,to}],"unchanged","missing":[entries not in the file],"count"}`. |
+| `POST /api/admin/whitelist/remove` | `{"uuids":[...]}`: `{"removed","count"}` (the page's "remove all missing"). |
+| `GET /api/admin/users?q=&page=` | Accounts matching part of the name or uuid, most recently seen first, 50 a page: `{"users":[{"uuid","name","admin","usedBytes","quotaBytes","quotaOverride","badges","whitelisted","whitelistSource","posts","created","lastSeen"}],"total","page","pages"}`. |
+| `PATCH /api/admin/users/{name or uuid}` | `{"quotaBytes": n \| null}` (null: back to the default). |
+| `PUT` / `DELETE /api/admin/users/{name or uuid}/badges/{badge}` | Give or take a badge; returns the user. |
+
+`users.last_seen` is written on authenticated requests at most every 5 minutes.
 
 ### Releases
 
@@ -198,7 +289,10 @@ A feedback item is `{"id","type","message","modVersion","mcVersion","contact","u
 one transaction per step: 0 is the 0.3.0 schema; 1 adds `posts`, `post_access` and `votes`;
 2 adds `users.password_hash`, `users.password_set`, `tokens.next` and `login_failures`;
 3 (0.5.0) adds `posts.size_class` (filled from the stored block counts), `post_tags`, and `files.source_post`,
-`source_title`, `source_author_uuid`, `source_author_name`. 4 (0.6.0) adds `releases` and `feedback`. Before step 3, board snapshots that aren't
+`source_title`, `source_author_uuid`, `source_author_name`. 4 (0.6.0) adds `releases` and `feedback`. 5 (0.7.0) adds `users.quota_bytes`, `users.last_seen`
+(filled from `last_login`), `posts.hidden` and `posts.hidden_reason`, and the tables `whitelist`, `applications`,
+`storage_requests`, `badges` and `reports` (one open application, storage request, or report per reporter and target, by
+partial unique indexes); the whitelist seed is inserted in the same transaction. Before step 3, board snapshots that aren't
 `.slopmatic` are converted in place, each committed on its own (size, hash, format, file name, so quota
 usage follows); one that fails to convert is left as it is and logged. An interrupted run converts the
 rest at the next start.

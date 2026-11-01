@@ -40,7 +40,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import convert, model3d, nbt
+from . import convert, model3d, nbt, textfilter
 
 log = logging.getLogger("slopmatica_cloud")
 
@@ -74,6 +74,7 @@ MAX_SEGMENT_LEN = 100
 MAX_DEPTH = 8  # segments, including the file name
 
 EXPORT_WAIT = 30  # seconds a request waits for a free conversion slot
+SMALL_PARSE_BYTES = 1024 * 1024  # uploads up to this (gzipped) size are checked for mod blocks without a conversion slot
 
 # ---- website passwords
 MIN_PASSWORD_LEN = 8
@@ -147,6 +148,38 @@ MAX_CONTACT_LEN = 200
 FEEDBACK_IP_LIMIT = 5  # logged out, per address
 FEEDBACK_USER_LIMIT = 20  # logged in, per account
 
+# ---- access (the Fruitbowl whitelist), applications and storage requests
+SERVER_NAME = "Fruitbowl"  # the Minecraft server whose whitelist decides who may use the cloud
+WHITELIST_SOURCES = ("seed", "upload", "approved", "manual")
+MAX_WHITELIST_BYTES = 4 * 1024 * 1024  # an uploaded whitelist.json
+MAX_WHITELIST_NAME_LEN = 64  # loose: Bedrock (Floodgate) names may be longer and carry a prefix
+MAX_APPLICATION_LEN = 2000  # each of the two questions
+DECISIONS = ("pending", "approved", "rejected")
+MAX_NOTE_LEN = 1000  # an admin's reason for a rejection or a report's outcome
+# New applications or storage requests per account within REQUEST_WINDOW (one may be open at a time).
+REQUEST_LIMIT = 3
+REQUEST_WINDOW = 7 * DAY
+GIB = 1024 ** 3
+STORAGE_CHOICES = (2 * GIB, 5 * GIB, 10 * GIB)  # the request form's presets; any whole GB up to the cap works
+MAX_STORAGE_REQUEST = 1024 * GIB
+MAX_REQUEST_REASON_LEN = 1000
+STORAGE_WARN_PCT = 80  # the account page offers more storage above this
+
+# ---- badges and reports
+BADGES: dict[str, str] = {"verified": "Verified", "mod": "Mod", "dev": "Dev"}  # in display order
+REPORT_REASONS: dict[str, str] = {
+    "spam": "Spam",
+    "inappropriate": "Inappropriate",
+    "stolen": "Stolen / not their build",
+    "broken": "Broken file",
+    "other": "Other",
+}
+REPORT_STATUSES = ("open", "resolved", "dismissed")
+MAX_REPORT_LEN = 2000
+REPORT_USER_LIMIT = 10  # reports per account per LOGIN_WINDOW, counted in login_failures
+ADMIN_PAGE_SIZE = 50
+LAST_SEEN_EVERY = 300  # seconds: users.last_seen is written at most this often per account
+
 
 # --------------------------------------------------------------------------- settings
 
@@ -173,6 +206,10 @@ class Settings:
     max_posts_per_user: int = 200
     board_page_size: int = 24
     max_release_bytes: int = 64 * 1024 * 1024
+    # Only players on the whitelist (and admins) may sync, upload, post, vote and report.
+    whitelist_enforced: bool = True
+    # A whitelist.json read once, when the database migrates to schema 5. None: start empty.
+    whitelist_seed: Path | None = None
 
     def __post_init__(self) -> None:
         self.data_dir = Path(self.data_dir).resolve()
@@ -206,6 +243,10 @@ class Settings:
             kw["mojang_has_joined_url"] = env["SLOPMATICA_MOJANG_HASJOINED"]
         if env.get("SLOPMATICA_MOJANG_PROFILE"):
             kw["mojang_profile_url"] = env["SLOPMATICA_MOJANG_PROFILE"]
+        if env.get("SLOPMATICA_WHITELIST_ENFORCED"):
+            kw["whitelist_enforced"] = env["SLOPMATICA_WHITELIST_ENFORCED"].strip().lower() not in ("0", "false", "no", "off")
+        if env.get("SLOPMATICA_WHITELIST_SEED"):
+            kw["whitelist_seed"] = Path(env["SLOPMATICA_WHITELIST_SEED"]).expanduser()
         return cls(**kw)
 
 
@@ -263,6 +304,33 @@ def dash_uuid(hex32: str) -> str:
     return f"{h[0:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
 
 
+def parse_uuid(value: Any) -> str | None:
+    """A Minecraft uuid, dashed or not, as the dashed lowercase form; None if it isn't one."""
+    if not isinstance(value, str):
+        return None
+    v = value.strip().lower()
+    if UUID_HEX_RE.match(v):
+        return dash_uuid(v)
+    return v if DASHED_UUID_RE.match(v) else None
+
+
+def parse_whitelist(data: Any) -> list[tuple[str, str]]:
+    """Minecraft's whitelist.json ([{"uuid", "name"}, ...]) as [(dashed uuid, name)], in file order and
+    without repeated uuids. Other keys are ignored. ApiError(400) naming the first bad entry."""
+    if not isinstance(data, list):
+        raise ApiError(400, 'a whitelist must be a JSON list of {"uuid", "name"} entries')
+    out: dict[str, str] = {}
+    for i, entry in enumerate(data):
+        uuid = parse_uuid(entry.get("uuid")) if isinstance(entry, dict) else None
+        name = entry.get("name") if isinstance(entry, dict) else None
+        if uuid is None:
+            raise ApiError(400, f"whitelist entry {i + 1} has no valid uuid")
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= MAX_WHITELIST_NAME_LEN or TITLE_BAD_CHARS.search(name):
+            raise ApiError(400, f"whitelist entry {i + 1} has no valid name")
+        out.setdefault(uuid, name.strip())
+    return list(out.items())
+
+
 def sha256_hex(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
@@ -295,6 +363,7 @@ class User:
     uuid: str
     name: str
     is_admin: bool
+    quota_bytes: int | None = None  # a per-account quota set by an admin; None: the default (admins: unlimited)
 
 
 @dataclass
@@ -360,6 +429,9 @@ class PostRow:
     downs: int
     tags: list[str] = field(default_factory=list)  # in TAGS order
     size_class: str | None = None  # a SIZE_CLASSES key, None if the block count is unknown
+    author_badges: list[str] = field(default_factory=list)  # in BADGES order
+    hidden: int | None = None  # unix ms when an admin hid it (only the author and admins see it then)
+    hidden_reason: str = ""
 
     @property
     def score(self) -> int:
@@ -374,7 +446,14 @@ class PostRow:
             r["source_path"], r["filename"], r["format"], r["size"], r["sha256"], bool(r["has_thumb"]),
             dims if None not in dims else None, r["block_count"], r["created"], r["updated"],
             r["ups"], r["downs"], [t for t in TAGS if t in tags], r["size_class"],
+            badge_list(r["author_badges"]), r["hidden"], r["hidden_reason"] or "",
         )
+
+
+def badge_list(joined: str | None) -> list[str]:
+    """group_concat(badge) as a list in BADGES order."""
+    have = set((joined or "").split(","))
+    return [b for b in BADGES if b in have]
 
 
 # The schema as of 0.3.0 (user_version 0). Later changes are MIGRATIONS, applied in place at startup.
@@ -507,6 +586,77 @@ CREATE TABLE IF NOT EXISTS feedback (
 );
 CREATE INDEX IF NOT EXISTS feedback_open ON feedback(resolved, created);
 """,
+    # 0.7.0: the Fruitbowl whitelist and applications for it, per-account quotas and storage requests,
+    # badges, reports, and posts hidden by an admin. Store.seed_whitelist runs right after, in the same transaction.
+    5: """
+ALTER TABLE users ADD COLUMN quota_bytes INTEGER;  -- set by an admin, NULL: the default quota
+ALTER TABLE users ADD COLUMN last_seen INTEGER;    -- unix s, last authenticated request (written every few minutes)
+UPDATE users SET last_seen = last_login;
+ALTER TABLE posts ADD COLUMN hidden INTEGER;       -- unix ms when an admin hid it, NULL if not hidden
+ALTER TABLE posts ADD COLUMN hidden_reason TEXT;
+CREATE TABLE IF NOT EXISTS whitelist (
+    uuid TEXT PRIMARY KEY,
+    name TEXT NOT NULL,            -- as in the whitelist file, or the account's name when added
+    source TEXT NOT NULL CHECK (source IN ('seed', 'upload', 'approved', 'manual')),
+    added INTEGER NOT NULL,        -- unix ms
+    added_by TEXT                  -- the admin's uuid, NULL for the seed
+);
+CREATE TABLE IF NOT EXISTS applications (
+    id INTEGER PRIMARY KEY,
+    uuid TEXT NOT NULL REFERENCES users(uuid),
+    name TEXT NOT NULL,            -- the applicant's name then
+    reason TEXT NOT NULL,          -- why they want access
+    community TEXT NOT NULL,       -- how they know the community
+    contact TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    created INTEGER NOT NULL,      -- unix ms
+    decided INTEGER,               -- unix ms
+    decided_by TEXT,               -- admin uuid
+    note TEXT                      -- the admin's reason, shown to the applicant
+);
+CREATE UNIQUE INDEX IF NOT EXISTS applications_one_open ON applications(uuid) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS applications_status ON applications(status, created);
+CREATE TABLE IF NOT EXISTS storage_requests (
+    id INTEGER PRIMARY KEY,
+    uuid TEXT NOT NULL REFERENCES users(uuid),
+    requested_bytes INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    used_bytes INTEGER NOT NULL,   -- usage and quota when asked
+    quota_bytes INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    created INTEGER NOT NULL,      -- unix ms
+    decided INTEGER,
+    decided_by TEXT,
+    granted_bytes INTEGER,         -- the quota set on approval
+    note TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS storage_requests_one_open ON storage_requests(uuid) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS storage_requests_status ON storage_requests(status, created);
+CREATE TABLE IF NOT EXISTS badges (
+    uuid TEXT NOT NULL REFERENCES users(uuid),
+    badge TEXT NOT NULL CHECK (badge IN ('verified', 'mod', 'dev')),
+    granted INTEGER NOT NULL,      -- unix ms
+    granted_by TEXT,
+    PRIMARY KEY (uuid, badge)
+);
+CREATE TABLE IF NOT EXISTS reports (
+    id INTEGER PRIMARY KEY,
+    reporter TEXT NOT NULL REFERENCES users(uuid),
+    kind TEXT NOT NULL CHECK (kind IN ('post', 'user')),
+    target TEXT NOT NULL,          -- the post id or the user's uuid
+    target_uuid TEXT NOT NULL,     -- the reported user, or the post's author
+    target_label TEXT NOT NULL,    -- the post's title or the user's name then (a post may be deleted since)
+    reason TEXT NOT NULL CHECK (reason IN ('spam', 'inappropriate', 'stolen', 'broken', 'other')),
+    details TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'dismissed')),
+    created INTEGER NOT NULL,      -- unix ms
+    decided INTEGER,
+    decided_by TEXT,
+    note TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS reports_one_open ON reports(reporter, kind, target) WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS reports_status ON reports(status, created);
+""",
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -514,7 +664,8 @@ POST_SELECT = """
 SELECT p.*, u.name AS author_name,
     (SELECT COUNT(*) FROM votes v WHERE v.post_id = p.id AND v.value = 1) AS ups,
     (SELECT COUNT(*) FROM votes v WHERE v.post_id = p.id AND v.value = -1) AS downs,
-    (SELECT group_concat(t.tag, ',') FROM post_tags t WHERE t.post_id = p.id) AS tags
+    (SELECT group_concat(t.tag, ',') FROM post_tags t WHERE t.post_id = p.id) AS tags,
+    (SELECT group_concat(b.badge, ',') FROM badges b WHERE b.uuid = p.uuid) AS author_badges
 FROM posts p JOIN users u ON u.uuid = p.uuid
 """
 FILE_SELECT = """
@@ -551,6 +702,17 @@ def read_schematic(disk: Path, filename: str, max_volume: int) -> convert.Schema
     return convert.read(root, fmt, filename[: -len(fmt) - 1], max_volume)
 
 
+def modded_error(schem: convert.Schematic) -> ApiError | None:
+    """400 code "modded" if schem uses ids outside the minecraft namespace (the cloud is for vanilla builds;
+    the mod keeps modded files local), else None."""
+    mods = sorted(convert.namespaces(schem) - {"minecraft"})
+    if not mods:
+        return None
+    shown = ", ".join(mods[:5]) + (f" and {len(mods) - 5} more" if len(mods) > 5 else "")
+    return ApiError(400, f"this schematic uses blocks or entities from mods ({shown}); only vanilla Minecraft "
+                         "schematics can be uploaded", code="modded", namespaces=mods)
+
+
 def slopmatic_name(filename: str) -> str:
     """<stem>.slopmatic for a schematic file name."""
     fmt = convert.format_of(filename)
@@ -578,6 +740,7 @@ class Store:
         shutil.rmtree(self.tmp, ignore_errors=True)
         self.tmp.mkdir()
         self.lock = threading.RLock()
+        self._seen: dict[str, int] = {}  # uuid -> unix s last written to users.last_seen
         self.db = sqlite3.connect(self.root / "cloud.db", check_same_thread=False, isolation_level=None)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -604,12 +767,37 @@ class Store:
                 # Data before schema: each converted post is committed on its own, so an interrupted
                 # run simply converts the rest next time (version 3 is only recorded after this).
                 self.convert_post_snapshots()
+            # read before the transaction: a seed file that is set but unreadable stops the start (nothing changes)
+            seed = self.read_whitelist_seed() if target == 5 else []
             try:
-                self.db.executescript(f"BEGIN IMMEDIATE;\n{MIGRATIONS[target]}\nPRAGMA user_version = {target};\nCOMMIT;")
+                self.db.executescript(f"BEGIN IMMEDIATE;\n{MIGRATIONS[target]}")
+                if seed:
+                    t = int(time.time() * 1000)
+                    self.db.executemany(
+                        "INSERT OR IGNORE INTO whitelist(uuid, name, source, added) VALUES(?,?,'seed',?)",
+                        [(uuid, name, t) for uuid, name in seed],
+                    )
+                    log.info("seeded the whitelist with %d players from %s", len(seed), self.settings.whitelist_seed)
+                # single statements: executescript would commit the open transaction first
+                self.db.execute(f"PRAGMA user_version = {target}")
+                self.db.execute("COMMIT")
             except BaseException:
                 if self.db.in_transaction:
                     self.db.execute("ROLLBACK")
                 raise
+
+    def read_whitelist_seed(self) -> list[tuple[str, str]]:
+        """SLOPMATICA_WHITELIST_SEED's players for migration 5, or [] if it isn't set.
+        Set but missing or malformed is an error, so a typo doesn't silently leave the whitelist empty."""
+        path = self.settings.whitelist_seed
+        if path is None:
+            return []
+        try:
+            return parse_whitelist(json.loads(Path(path).read_text(encoding="utf-8")))
+        except (OSError, ValueError) as e:
+            raise RuntimeError(f"cannot read the whitelist seed {path}: {e}") from e
+        except ApiError as e:
+            raise RuntimeError(f"cannot read the whitelist seed {path}: {e.payload['error']}") from e
 
     def convert_post_snapshots(self) -> None:
         """0.5.0: board posts are stored as .slopmatic. Convert older snapshots in place; one that
@@ -785,17 +973,18 @@ class Store:
         with self.lock:
             t = now_s()
             self.db.execute(
-                """INSERT INTO users(uuid,name,is_admin,created,last_login) VALUES(?,?,?,?,?)
+                """INSERT INTO users(uuid,name,is_admin,created,last_login,last_seen) VALUES(?,?,?,?,?,?)
                    ON CONFLICT(uuid) DO UPDATE SET name=excluded.name, last_login=excluded.last_login,
-                   is_admin=MAX(users.is_admin, excluded.is_admin)""",
-                (uuid, name, int(admin_by_name), t, t),
+                   last_seen=excluded.last_seen, is_admin=MAX(users.is_admin, excluded.is_admin)""",
+                (uuid, name, int(admin_by_name), t, t, t),
             )
+            self._seen[uuid] = t
             return self.get_user(uuid)  # type: ignore[return-value]
 
     def get_user(self, uuid: str) -> User | None:
         with self.lock:
             r = self.db.execute("SELECT * FROM users WHERE uuid=?", (uuid,)).fetchone()
-        return User(r["uuid"], r["name"], bool(r["is_admin"])) if r else None
+        return User(r["uuid"], r["name"], bool(r["is_admin"]), r["quota_bytes"]) if r else None
 
     def issue_token(self, uuid: str, kind: str, ttl: int, next_path: str | None = None) -> str:
         token = secrets.token_urlsafe(32)
@@ -813,7 +1002,18 @@ class Store:
                 "SELECT uuid FROM tokens WHERE hash=? AND kind=? AND expires>=?",
                 (sha256_hex(token), kind, now_s()),
             ).fetchone()
-        return self.get_user(r["uuid"]) if r else None
+            if r is None:
+                return None
+            self.touch_seen(r["uuid"])
+        return self.get_user(r["uuid"])
+
+    def touch_seen(self, uuid: str) -> None:
+        """Record that the account is active (users.last_seen), at most every LAST_SEEN_EVERY seconds."""
+        t = now_s()
+        with self.lock:
+            if t - self._seen.get(uuid, 0) >= LAST_SEEN_EVERY:
+                self._seen[uuid] = t
+                self.db.execute("UPDATE users SET last_seen=? WHERE uuid=?", (t, uuid))
 
     def consume_token(self, token: str, kind: str) -> tuple[User, str | None] | None:
         """Use up a single-use token: (its user, its next path), or None if unknown or expired."""
@@ -872,7 +1072,9 @@ class Store:
 
     def touch_login(self, uuid: str) -> None:
         with self.lock:
-            self.db.execute("UPDATE users SET last_login=? WHERE uuid=?", (now_s(), uuid))
+            t = now_s()
+            self.db.execute("UPDATE users SET last_login=?, last_seen=? WHERE uuid=?", (t, t, uuid))
+            self._seen[uuid] = t
 
     # ---- login throttling
 
@@ -1052,13 +1254,14 @@ class Store:
     ) -> tuple[list[PostRow], int]:
         """One page of a board tab and the total number of matching posts.
         'public' lists public posts only; 'shared' private posts whose access list has viewer;
-        'mine' every post by viewer. Every tag in tags must be on the post; size is a size class."""
+        'mine' every post by viewer. Posts an admin hid are only listed in 'mine'. Every tag in tags must be on the post; size is a size class."""
         params: dict[str, Any] = {"viewer": viewer, "now": int(time.time() * 1000)}
         if tab == "public":
-            where = ["p.visibility = 'public'"]
+            where = ["p.visibility = 'public'", "p.hidden IS NULL"]
         elif tab == "shared":
             where = [
                 "p.visibility = 'private'",
+                "p.hidden IS NULL",
                 "p.uuid != :viewer",
                 "EXISTS (SELECT 1 FROM post_access a WHERE a.post_id = p.id AND a.uuid = :viewer)",
             ]
@@ -1153,6 +1356,196 @@ class Store:
             else:
                 self.db.execute("UPDATE feedback SET resolved=NULL WHERE id=?", (feedback_id,))
             return self.db.execute("SELECT * FROM feedback WHERE id=?", (feedback_id,)).fetchone()
+
+    # ---- whitelist
+
+    def on_whitelist(self, uuid: str) -> bool:
+        with self.lock:
+            return self.db.execute("SELECT 1 FROM whitelist WHERE uuid=?", (uuid,)).fetchone() is not None
+
+    def whitelist_entries(self) -> list[sqlite3.Row]:
+        """Every entry with the account's current name (if it has logged in), by name."""
+        with self.lock:
+            return self.db.execute(
+                """SELECT w.*, u.name AS account_name FROM whitelist w LEFT JOIN users u ON u.uuid = w.uuid
+                   ORDER BY w.name COLLATE NOCASE, w.uuid"""
+            ).fetchall()
+
+    def whitelist_entry(self, uuid: str) -> sqlite3.Row | None:
+        with self.lock:
+            return self.db.execute("SELECT * FROM whitelist WHERE uuid=?", (uuid,)).fetchone()
+
+    def whitelist_add(self, uuid: str, name: str, source: str, by: str | None) -> bool:
+        """Add a player (an existing entry keeps its source and name). True if they were not on it."""
+        with self.lock:
+            cur = self.db.execute(
+                "INSERT OR IGNORE INTO whitelist(uuid, name, source, added, added_by) VALUES(?,?,?,?,?)",
+                (uuid, name, source, int(time.time() * 1000), by),
+            )
+            return cur.rowcount == 1
+
+    def whitelist_import(self, entries: list[tuple[str, str]], by: str) -> dict[str, Any]:
+        """Merge an uploaded whitelist.json: add new players (source 'upload'), take over changed names,
+        remove nobody. Returns what was added and renamed, and the entries the file doesn't have."""
+        added: list[tuple[str, str]] = []
+        renamed: list[tuple[str, str, str]] = []
+        t = int(time.time() * 1000)
+        with self.transaction():
+            have = {r["uuid"]: r for r in self.db.execute("SELECT * FROM whitelist")}
+            for uuid, name in entries:
+                row = have.get(uuid)
+                if row is None:
+                    self.db.execute(
+                        "INSERT INTO whitelist(uuid, name, source, added, added_by) VALUES(?,?,'upload',?,?)",
+                        (uuid, name, t, by),
+                    )
+                    added.append((uuid, name))
+                elif row["name"] != name:
+                    self.db.execute("UPDATE whitelist SET name=? WHERE uuid=?", (name, uuid))
+                    renamed.append((uuid, row["name"], name))
+        in_file = {uuid for uuid, _ in entries}
+        missing = sorted((r for u, r in have.items() if u not in in_file), key=lambda r: (r["name"].lower(), r["uuid"]))
+        return {"added": added, "renamed": renamed, "unchanged": len(entries) - len(added) - len(renamed), "missing": missing}
+
+    def whitelist_remove(self, uuids: list[str]) -> int:
+        with self.lock:
+            return self.db.executemany("DELETE FROM whitelist WHERE uuid=?", [(u,) for u in uuids]).rowcount
+
+    def whitelist_count(self) -> int:
+        with self.lock:
+            return int(self.db.execute("SELECT COUNT(*) FROM whitelist").fetchone()[0])
+
+    # ---- applications, storage requests, reports: rows with a status and a decision
+
+    def insert_row(self, table: str, values: dict[str, Any]) -> int:
+        """Insert into a table of ours (never user input). sqlite3.IntegrityError if a one-open index refuses it."""
+        cols = ", ".join(values)
+        marks = ", ".join(":" + k for k in values)
+        with self.lock:
+            return int(self.db.execute(f"INSERT INTO {table}({cols}) VALUES({marks})", values).lastrowid)
+
+    def get_row(self, table: str, row_id: int) -> sqlite3.Row | None:
+        with self.lock:
+            return self.db.execute(
+                f"SELECT t.*, u.name AS user_name FROM {table} t LEFT JOIN users u ON u.uuid = t.{_OWNER[table]}"
+                " WHERE t.id=?", (row_id,)
+            ).fetchone()
+
+    def list_rows(self, table: str, status: str, where: str = "", params: tuple = ()) -> list[sqlite3.Row]:
+        """Rows with status ('all' for every one), open ones first, newest first, with the owner's current name."""
+        clauses = [c for c in (where, "" if status == "all" else "t.status = ?") if c]
+        args = params + (() if status == "all" else (status,))
+        sql = (f"SELECT t.*, u.name AS user_name FROM {table} t LEFT JOIN users u ON u.uuid = t.{_OWNER[table]}"
+               + (" WHERE " + " AND ".join(clauses) if clauses else "")
+               + f" ORDER BY t.status != '{_OPEN[table]}', t.created DESC, t.id DESC")
+        with self.lock:
+            return self.db.execute(sql, args).fetchall()
+
+    def status_counts(self, table: str) -> dict[str, int]:
+        with self.lock:
+            rows = self.db.execute(f"SELECT status, COUNT(*) AS n FROM {table} GROUP BY status").fetchall()
+        return {r["status"]: int(r["n"]) for r in rows}
+
+    def decide(self, table: str, row_id: int, status: str, by: str, note: str | None, **extra: Any) -> bool:
+        """Close an open row. False if it is not open (any more)."""
+        sets = "".join(f", {k}=:{k}" for k in extra)
+        with self.lock:
+            cur = self.db.execute(
+                f"UPDATE {table} SET status=:status, decided=:t, decided_by=:by, note=:note{sets}"
+                f" WHERE id=:id AND status='{_OPEN[table]}'",
+                {"status": status, "t": int(time.time() * 1000), "by": by, "note": note, "id": row_id, **extra},
+            )
+            return cur.rowcount == 1
+
+    def recent_rows(self, table: str, uuid: str, window: int) -> int:
+        """Rows the account created in the last window seconds."""
+        with self.lock:
+            (n,) = self.db.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {_OWNER[table]}=? AND created >= ?",
+                (uuid, (now_s() - window) * 1000),
+            ).fetchone()
+        return int(n)
+
+    def latest_row(self, table: str, uuid: str) -> sqlite3.Row | None:
+        with self.lock:
+            return self.db.execute(
+                f"SELECT t.*, u.name AS user_name FROM {table} t LEFT JOIN users u ON u.uuid = t.{_OWNER[table]}"
+                f" WHERE t.{_OWNER[table]}=? ORDER BY t.created DESC, t.id DESC LIMIT 1", (uuid,)
+            ).fetchone()
+
+    # ---- users, quotas and badges
+
+    def set_quota(self, uuid: str, quota: int | None) -> None:
+        with self.lock:
+            self.db.execute("UPDATE users SET quota_bytes=? WHERE uuid=?", (quota, uuid))
+
+    def badges_of(self, uuid: str) -> list[str]:
+        with self.lock:
+            rows = self.db.execute("SELECT badge FROM badges WHERE uuid=?", (uuid,)).fetchall()
+        return badge_list(",".join(r["badge"] for r in rows))
+
+    def set_badge(self, uuid: str, badge: str, on: bool, by: str) -> None:
+        with self.lock:
+            if on:
+                self.db.execute("INSERT OR IGNORE INTO badges(uuid, badge, granted, granted_by) VALUES(?,?,?,?)",
+                                (uuid, badge, int(time.time() * 1000), by))
+            else:
+                self.db.execute("DELETE FROM badges WHERE uuid=? AND badge=?", (uuid, badge))
+
+    def badge_holders(self) -> list[sqlite3.Row]:
+        with self.lock:
+            return self.db.execute(
+                """SELECT u.uuid, u.name, group_concat(b.badge, ',') AS badges FROM badges b JOIN users u ON u.uuid = b.uuid
+                   GROUP BY u.uuid ORDER BY u.name COLLATE NOCASE"""
+            ).fetchall()
+
+    def find_user(self, text: str) -> User | None:
+        """An account by uuid (dashed or not) or by current name (any case; the most recently active one)."""
+        uuid = parse_uuid(text)
+        if uuid:
+            return self.get_user(uuid)
+        with self.lock:
+            r = self.db.execute(
+                "SELECT uuid FROM users WHERE name = ? COLLATE NOCASE ORDER BY last_login DESC LIMIT 1", (text.strip(),)
+            ).fetchone()
+        return self.get_user(r["uuid"]) if r else None
+
+    def known_names(self, candidates: set[str]) -> set[str]:
+        """Which of candidates (lowercase) are the Minecraft names of accounts or whitelisted players."""
+        names = list(candidates)[:200]
+        marks = ",".join("?" * len(names))
+        with self.lock:
+            rows = self.db.execute(
+                f"SELECT lower(name) AS n FROM users WHERE lower(name) IN ({marks})"
+                f" UNION SELECT lower(name) FROM whitelist WHERE lower(name) IN ({marks})", names + names,
+            ).fetchall()
+        return {r["n"] for r in rows}
+
+    def list_users(self, query: str, page: int, page_size: int) -> tuple[list[sqlite3.Row], int]:
+        """Accounts matching query (part of the name or uuid), most recently seen first, with usage,
+        badges and whitelist entry."""
+        where, params = "", {}
+        if query:
+            where = " WHERE instr(lower(u.name), :q) > 0 OR instr(u.uuid, :q) > 0 OR instr(replace(u.uuid, '-', ''), :q) > 0"
+            params["q"] = query.lower()
+        with self.lock:
+            (total,) = self.db.execute("SELECT COUNT(*) FROM users u" + where, params).fetchone()
+            rows = self.db.execute(
+                """SELECT u.*, w.source AS wl_source,
+                       (SELECT COALESCE(SUM(size),0) FROM files f WHERE f.uuid = u.uuid)
+                       + (SELECT COALESCE(SUM(size),0) FROM posts p WHERE p.uuid = u.uuid) AS used,
+                       (SELECT COUNT(*) FROM posts p WHERE p.uuid = u.uuid) AS posts,
+                       (SELECT group_concat(b.badge, ',') FROM badges b WHERE b.uuid = u.uuid) AS badges
+                   FROM users u LEFT JOIN whitelist w ON w.uuid = u.uuid""" + where
+                + " ORDER BY COALESCE(u.last_seen, u.last_login) DESC, u.name COLLATE NOCASE LIMIT :limit OFFSET :offset",
+                {**params, "limit": page_size, "offset": (page - 1) * page_size},
+            ).fetchall()
+        return rows, int(total)
+
+
+# The tables with a status: who owns a row, and the status of an open one.
+_OWNER = {"applications": "uuid", "storage_requests": "uuid", "reports": "reporter"}
+_OPEN = {"applications": "pending", "storage_requests": "pending", "reports": "open"}
 
 
 def _hash_file(p: Path) -> str:
@@ -1578,6 +1971,47 @@ class ReleasePatchIn(BaseModel):
     changelog: Any = None
 
 
+class ApplicationIn(BaseModel):
+    reason: Any = None
+    community: Any = None
+    contact: Any = None
+
+
+class StorageRequestIn(BaseModel):
+    bytes: Any = None
+    reason: Any = None
+
+
+class ReportIn(BaseModel):
+    kind: Any = None  # post | user
+    target: Any = None  # the post id, or the user's uuid or name
+    reason: Any = None
+    details: Any = None
+
+
+class DecisionIn(BaseModel):
+    note: Any = None
+    quotaBytes: Any = None  # storage requests: the quota to grant instead of the one asked for
+
+
+class PlayerIn(BaseModel):
+    player: Any = None  # a Minecraft name or uuid
+    name: Any = None  # the name, when player is a uuid the server doesn't know
+
+
+class UuidsIn(BaseModel):
+    uuids: Any = None
+
+
+class UserPatchIn(BaseModel):
+    quotaBytes: Any = None
+
+
+class HideIn(BaseModel):
+    hidden: Any = None
+    reason: Any = None
+
+
 def parse_multipart(body: bytes, content_type: str) -> tuple[dict[str, str], dict[str, tuple[str, bytes]]]:
     """multipart/form-data -> ({field: text}, {field: (file name, bytes)}). Small and in memory: it is only
     used for release uploads by admins, and avoids the python-multipart dependency. ApiError(400) if malformed."""
@@ -1698,6 +2132,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     templates.filters["pretty_utc"] = pretty_utc
     templates.filters["num"] = lambda n: f"{n:,}"
     templates.filters["changelog"] = render_changelog
+    templates.globals["badge_labels"] = BADGES  # for the badge macro, which imported macros call without context
     static_dir = PKG_DIR / "static"
     static_version = str(max(int(p.stat().st_mtime) for p in static_dir.iterdir()))
     try:  # block id -> map colour; null for blocks that are clear on maps (glass, panes, ...)
@@ -1720,7 +2155,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(exc.payload, status_code=exc.status)
 
     @app.exception_handler(StarletteHTTPException)
-    async def _http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    async def _http_error(request: Request, exc: StarletteHTTPException) -> Response:
+        route = request.scope["path"].removeprefix(base) if base else request.scope["path"]
+        if exc.status_code == 404 and request.method in ("GET", "HEAD") and not route.startswith(("/api/", "/static/")):
+            # an unknown page (the admin pages answer the same to anyone but admins)
+            return await run_in_threadpool(not_found_page, request)
         return JSONResponse({"error": str(exc.detail)}, status_code=exc.status_code, headers=exc.headers)
 
     @app.exception_handler(RequestValidationError)
@@ -1740,10 +2179,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ---- helpers
 
     def quota_for(user: User) -> int | None:
-        return None if user.is_admin else settings.quota_bytes
+        """None (unlimited) for admins, else the quota an admin set for the account, else the default."""
+        if user.is_admin:
+            return None
+        return user.quota_bytes if user.quota_bytes is not None else settings.quota_bytes
 
     def usage(user: User) -> dict[str, Any]:
         return {"usedBytes": store.used_bytes(user.uuid), "quotaBytes": quota_for(user)}
+
+    # ---- access: the Fruitbowl whitelist
+
+    def is_member(user: User) -> bool:
+        """May use the cloud: on the whitelist, an admin, or the gate is off."""
+        return not settings.whitelist_enforced or user.is_admin or store.on_whitelist(user.uuid)
+
+    def apply_url() -> str:
+        return f"{settings.site_url}/apply"
+
+    def require_member(user: User) -> User:
+        if not is_member(user):
+            # the mod shows error and offers the apply link
+            raise ApiError(
+                403, f"Slopmatica Cloud is only open to {SERVER_NAME} members for now. You can apply for access on the website.",
+                code="not_whitelisted", apply=apply_url(),
+            )
+        return user
+
+    def member_auth(request: Request, *, mutating: bool) -> User:
+        """authenticate(), then 403 not_whitelisted for players without access."""
+        return require_member(authenticate(request, mutating=mutating))
+
+    def account_api(user: User) -> dict[str, Any]:
+        """The caller's account, for the mod (/api/auth/verify and /api/me)."""
+        out = {"uuid": user.uuid, "name": user.name, **usage(user), "whitelisted": is_member(user),
+               "badges": store.badges_of(user.uuid)}
+        if not out["whitelisted"]:
+            out["apply"] = apply_url()
+        return out
+
+    def filtered(user: User, text: str | None, what: str) -> str | None:
+        """400 if text (a field the user wrote) has a blocked word. Minecraft names of real accounts in the
+        text never count, and admins aren't filtered."""
+        if text and not user.is_admin and textfilter.check(text, store.known_names) is not None:
+            raise ApiError(400, f"the {what} contains language that isn't allowed here; please rephrase it",
+                           code="filtered", field=what)
+        return text
 
     def check_quota(user: User, delta: int) -> None:
         """Raise 413 unless the account has room for delta more bytes. Call with store.lock held."""
@@ -1833,7 +2313,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         user = store.upsert_user(uuid, name, name.lower() in settings.admins)
         store.prune()
         token = store.issue_token(user.uuid, "api", API_TOKEN_TTL)
-        return {"token": token, "uuid": user.uuid, "name": user.name, **usage(user)}
+        return {"token": token, **account_api(user)}
 
     @app.post("/api/weblogin")
     async def weblogin(request: Request) -> dict[str, str]:
@@ -1965,18 +2445,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/me")
     def me(request: Request) -> dict[str, Any]:
         user = authenticate(request, mutating=False)
-        return {"uuid": user.uuid, "name": user.name, **usage(user)}
+        return account_api(user)
 
     # ---- files API
 
     @app.get("/api/files")
     def list_files(request: Request) -> dict[str, Any]:
-        user = authenticate(request, mutating=False)
+        user = member_auth(request, mutating=False)
         return {"files": [f.api() for f in store.list_files(user.uuid)], **usage(user)}
 
     @app.post("/api/files/move")
     def move_file(request: Request, body: MoveIn) -> dict[str, Any]:
-        user = authenticate(request, mutating=True)
+        user = member_auth(request, mutating=True)
         src, dst = validate_path(body.src), validate_path(body.dst)
         with store.lock:
             row, src_disk = require_file(user, src)
@@ -1997,7 +2477,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.put("/api/files/{path:path}")
     async def put_file(path: str, request: Request) -> JSONResponse:
-        user = authenticate(request, mutating=True)
+        user = member_auth(request, mutating=True)
         path = validate_path(path)
         expected = request.headers.get("x-sha256")
         if expected is not None:
@@ -2016,6 +2496,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise ApiError(400, "not a gzip file (every schematic format is gzipped NBT)")
             if expected is not None and expected != digest:
                 raise ApiError(400, "sha256 mismatch", expected=expected, actual=digest)
+            await run_in_threadpool(check_vanilla, tmp, path.rsplit("/", 1)[-1], size)
             with store.lock:
                 old = store.get_file(user.uuid, path)
                 quota = quota_for(user)
@@ -2041,9 +2522,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             tmp.unlink(missing_ok=True)
         return JSONResponse(row.api(), status_code=200 if old else 201)  # type: ignore[union-attr]
 
+    def check_vanilla(disk: Path, name: str, size: int) -> None:
+        """400 code "modded" for an upload that uses mod namespaces. A file the server can't read is stored as
+        before (the game is the judge of its own files); big files wait for a conversion slot to be parsed."""
+        def read() -> convert.Schematic | None:
+            try:
+                return read_schematic(disk, name, settings.max_export_volume)
+            except ValueError:  # ConversionError, NBTError, TooLarge
+                return None
+
+        if size <= SMALL_PARSE_BYTES:
+            schem = read()
+        else:
+            with conversion_slot():
+                schem = read()
+        modded = modded_error(schem) if schem is not None else None
+        if modded is not None:
+            raise modded
+
     @app.get("/api/files/{path:path}")
     def get_file(path: str, request: Request) -> FileResponse:
-        user = authenticate(request, mutating=False)
+        user = member_auth(request, mutating=False)
         path = validate_path(path)
         row, disk = require_file(user, path)
         return FileResponse(
@@ -2064,7 +2563,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/export/{path:path}")
     def export_file(path: str, request: Request) -> FileResponse:
         # A sync endpoint, so FastAPI runs the (CPU-bound) conversion in its threadpool.
-        user = authenticate(request, mutating=False)
+        user = member_auth(request, mutating=False)
         path = validate_path(path)
         fmt = export_format(request)
         _, disk = require_file(user, path)
@@ -2103,7 +2602,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.delete("/api/files/{path:path}")
     def delete_file(path: str, request: Request) -> Response:
-        user = authenticate(request, mutating=True)
+        user = member_auth(request, mutating=True)
         path = validate_path(path)
         with store.lock:
             _, disk = require_file(user, path)
@@ -2117,7 +2616,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.put("/api/thumbnails/{path:path}")
     async def put_thumbnail(path: str, request: Request) -> JSONResponse:
-        user = authenticate(request, mutating=True)
+        user = member_auth(request, mutating=True)
         path = validate_path(path)
         require_file(user, path)
         data, _, _ = await read_capped(request, settings.max_thumbnail_bytes)
@@ -2136,7 +2635,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/thumbnails/{path:path}")
     def get_thumbnail(path: str, request: Request) -> FileResponse:
-        user = authenticate(request, mutating=False)
+        user = member_auth(request, mutating=False)
         path = validate_path(path)
         require_file(user, path)
         thumb = store.thumb_path(user.uuid, path)
@@ -2154,6 +2653,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return session_user(request)
 
     def can_view(post: PostRow, user: User | None) -> bool:
+        if post.hidden is not None and not (user and (user.uuid == post.uuid or user.is_admin)):
+            return False  # hidden by an admin: the author and admins only, whatever the visibility
         if post.visibility != "private":
             return True
         if user is None:
@@ -2172,9 +2673,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return find_post(post_id, user), user
 
     def acting_on_post(request: Request, post_id: str, *, owner_only: bool, admin_ok: bool = False) -> tuple[PostRow, User]:
-        """For changes: 404 if invisible to the caller, then 401/403 for auth, CSRF and ownership."""
+        """For changes: 404 if invisible to the caller, then 401/403 for auth, CSRF, access and ownership."""
         post, _ = visible_post(request, post_id)
-        user = authenticate(request, mutating=True)
+        user = member_auth(request, mutating=True)
         if owner_only and post.uuid != user.uuid and not (admin_ok and user.is_admin):
             raise ApiError(403, "only the author can do that")
         return post, user
@@ -2294,6 +2795,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             with conversion_slot():
                 try:
                     schem = read_schematic(tmp, name, settings.max_export_volume)
+                    modded = modded_error(schem)
+                    if modded is not None:
+                        raise modded
                     if src_fmt != "slopmatic":
                         snap.extra.append(tmp)
                         snap.file = tmp.with_suffix(".slopmatic")
@@ -2334,7 +2838,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "id": post.id,
             "title": post.title,
             "visibility": post.visibility,
-            "author": {"uuid": post.uuid, "name": post.author_name},
+            "author": {"uuid": post.uuid, "name": post.author_name, "badges": post.author_badges},
             "filename": post.filename,
             "format": post.format,
             "size": post.size,
@@ -2349,12 +2853,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "score": post.score,
             "ups": post.ups,
             "downs": post.downs,
+            "hidden": post.hidden is not None,  # by an admin; only the author and admins see such a post
         }
         if detail:
             out["description"] = post.description
             out["myVote"] = store.get_vote(post.id, viewer.uuid) if viewer else None
             if viewer and (viewer.uuid == post.uuid or viewer.is_admin):
                 out["sourcePath"] = post.source_path
+                out["hiddenReason"] = post.hidden_reason if post.hidden is not None else None
                 out["allowed"] = [{"uuid": u, "name": n} for u, n in store.get_allowed(post.id)]
         return out
 
@@ -2419,10 +2925,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/board")
     def board_create(request: Request, body: PostIn) -> JSONResponse:
-        user = authenticate(request, mutating=True)
+        user = member_auth(request, mutating=True)
         path = validate_path(body.path)
-        title = clean_title(body.title)
-        description = clean_description(body.description)
+        title = filtered(user, clean_title(body.title), "title")
+        description = filtered(user, clean_description(body.description), "description")
         visibility = clean_visibility(body.visibility)
         tags = clean_tags(body.tags)
         limit = settings.max_posts_per_user
@@ -2468,9 +2974,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         given = body.model_fields_set
         values: dict[str, Any] = {}
         if "title" in given:
-            values["title"] = clean_title(body.title)
+            values["title"] = filtered(user, clean_title(body.title), "title")
         if "description" in given:
-            values["description"] = clean_description(body.description)
+            values["description"] = filtered(user, clean_description(body.description), "description")
         if "visibility" in given:
             values["visibility"] = clean_visibility(body.visibility)
         allowed = None
@@ -2850,17 +3356,478 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ApiError(404, "no such feedback")
         return feedback_api(row)
 
+    # ---- applications for access, storage requests, reports
+
+    def clean_long(value: Any, what: str, limit: int, required: bool = True) -> str:
+        """A multi-line text field: newlines normalised, trimmed, at most limit characters."""
+        if value is None and not required:
+            return ""
+        if not isinstance(value, str) or (required and not value.strip()):
+            raise ApiError(400, f"{what} is required")
+        text = value.replace("\r\n", "\n").replace("\r", "\n").strip()
+        if len(text) > limit:
+            raise ApiError(400, f"{what} must be at most {limit} characters")
+        if DESCRIPTION_BAD_CHARS.search(text):
+            raise ApiError(400, f"{what} may not contain control characters")
+        return text
+
+    def ms_or_none(seconds: int | None) -> int | None:
+        return seconds * 1000 if seconds is not None else None
+
+    def who(uuid: str | None, name: str | None) -> dict[str, Any] | None:
+        return {"uuid": uuid, "name": name or ""} if uuid else None
+
+    def application_api(r: sqlite3.Row, admin: bool = False) -> dict[str, Any]:
+        out = {
+            "id": r["id"], "user": who(r["uuid"], r["user_name"] or r["name"]), "reason": r["reason"],
+            "community": r["community"], "contact": r["contact"], "status": r["status"], "created": r["created"],
+            "decided": r["decided"], "note": r["note"],
+        }
+        if admin:
+            out["decidedBy"] = r["decided_by"]
+            out["whitelisted"] = store.on_whitelist(r["uuid"])
+        return out
+
+    def storage_api(r: sqlite3.Row, admin: bool = False) -> dict[str, Any]:
+        out = {
+            "id": r["id"], "user": who(r["uuid"], r["user_name"]), "requestedBytes": r["requested_bytes"],
+            "reason": r["reason"], "usedBytes": r["used_bytes"], "quotaBytes": r["quota_bytes"], "status": r["status"],
+            "created": r["created"], "decided": r["decided"], "grantedBytes": r["granted_bytes"], "note": r["note"],
+        }
+        if admin:
+            out["decidedBy"] = r["decided_by"]
+            u = store.get_user(r["uuid"])
+            if u is not None:  # usage and quota now, next to those when asked
+                out["current"] = usage(u)
+        return out
+
+    def report_api(r: sqlite3.Row, admin: bool = False) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "id": r["id"], "kind": r["kind"],
+            "target": {"id": r["target"], "label": r["target_label"], "uuid": r["target_uuid"]},
+            "reason": r["reason"], "details": r["details"], "status": r["status"], "created": r["created"],
+            "decided": r["decided"], "note": r["note"],
+        }
+        if admin:
+            out["reporter"] = who(r["reporter"], r["user_name"])
+            out["decidedBy"] = r["decided_by"]
+            target_user = store.get_user(r["target_uuid"])
+            out["target"]["name"] = target_user.name if target_user else None  # the reported user / the author now
+            if r["kind"] == "post":
+                post = store.get_post(r["target"]) if POST_ID_RE.match(r["target"]) else None
+                out["post"] = {"visibility": post.visibility, "hidden": post.hidden is not None} if post else None
+        return out
+
+    def rate_limited(key: str, limit: int, what: str) -> None:
+        """429 once key has limit entries in login_failures' window. Call with store.lock held, then add_failure."""
+        n, oldest = store.recent_failures(key)
+        if n >= limit:
+            wait = max(1, -(-((oldest or now_s()) + LOGIN_WINDOW - now_s()) // 60))
+            raise ApiError(429, f"too many {what} for now, try again in {wait} minute{'s' if wait != 1 else ''}")
+
+    def request_window_check(table: str, user: User, what: str) -> None:
+        """One open row per account, and at most REQUEST_LIMIT new ones per REQUEST_WINDOW. Call with store.lock held."""
+        latest = store.latest_row(table, user.uuid)
+        if latest is not None and latest["status"] == "pending":
+            raise ApiError(409, f"you already have an open {what}; wait for an admin to look at it")
+        if store.recent_rows(table, user.uuid, REQUEST_WINDOW) >= REQUEST_LIMIT:
+            raise ApiError(429, f"too many {what}s for now, try again in a few days")
+
+    def grant_access(uuid: str, name: str, source: str, admin: User) -> bool:
+        """Put a player on the whitelist and approve their open application. True if they were not on it."""
+        added = store.whitelist_add(uuid, name, source, admin.uuid)
+        latest = store.latest_row("applications", uuid)
+        if latest is not None and latest["status"] == "pending":
+            store.decide("applications", latest["id"], "approved", admin.uuid, None)
+        return added
+
+    @app.get("/api/application")
+    def application_status(request: Request) -> dict[str, Any]:
+        user = authenticate(request, mutating=False)
+        row = store.latest_row("applications", user.uuid)
+        return {"whitelisted": is_member(user), "application": application_api(row) if row else None, "apply": apply_url()}
+
+    @app.post("/api/application")
+    def application_submit(request: Request, body: ApplicationIn) -> JSONResponse:
+        user = authenticate(request, mutating=True)
+        if is_member(user):
+            raise ApiError(409, "you already have access")
+        reason = filtered(user, clean_long(body.reason, "reason", MAX_APPLICATION_LEN), "reason")
+        community = filtered(user, clean_long(body.community, "community", MAX_APPLICATION_LEN), "community")
+        contact = filtered(user, clean_short(body.contact, "contact", MAX_CONTACT_LEN), "contact")
+        with store.lock:
+            request_window_check("applications", user, "application")
+            row_id = store.insert_row("applications", {
+                "uuid": user.uuid, "name": user.name, "reason": reason, "community": community, "contact": contact,
+                "created": int(time.time() * 1000),
+            })
+            row = store.get_row("applications", row_id)
+        log.info("%s applied for access (application %d)", user.name, row_id)
+        return JSONResponse(application_api(row), status_code=201)  # type: ignore[arg-type]
+
+    @app.get("/api/account/storage-request")
+    def storage_status(request: Request) -> dict[str, Any]:
+        user = member_auth(request, mutating=False)
+        row = store.latest_row("storage_requests", user.uuid)
+        return {**usage(user), "choices": [c for c in STORAGE_CHOICES if quota_for(user) is not None and c > quota_for(user)],
+                "maxBytes": MAX_STORAGE_REQUEST, "request": storage_api(row) if row else None}
+
+    @app.post("/api/account/storage-request")
+    def storage_submit(request: Request, body: StorageRequestIn) -> JSONResponse:
+        user = member_auth(request, mutating=True)
+        quota = quota_for(user)
+        if quota is None:
+            raise ApiError(409, "your storage is already unlimited")
+        if type(body.bytes) is not int or not quota < body.bytes <= MAX_STORAGE_REQUEST:
+            raise ApiError(400, f"bytes must be more than your current quota ({human_size(quota)}) and at most "
+                                f"{human_size(MAX_STORAGE_REQUEST)}")
+        reason = filtered(user, clean_long(body.reason, "reason", MAX_REQUEST_REASON_LEN), "reason")
+        with store.lock:
+            request_window_check("storage_requests", user, "storage request")
+            row_id = store.insert_row("storage_requests", {
+                "uuid": user.uuid, "requested_bytes": body.bytes, "reason": reason,
+                "used_bytes": store.used_bytes(user.uuid), "quota_bytes": quota, "created": int(time.time() * 1000),
+            })
+            row = store.get_row("storage_requests", row_id)
+        log.info("%s asked for %s of storage (request %d)", user.name, human_size(body.bytes), row_id)
+        return JSONResponse(storage_api(row), status_code=201)  # type: ignore[arg-type]
+
+    @app.post("/api/reports")
+    def report_submit(request: Request, body: ReportIn) -> JSONResponse:
+        user = member_auth(request, mutating=True)
+        if body.reason not in REPORT_REASONS:
+            raise ApiError(400, "reason must be one of " + ", ".join(REPORT_REASONS))
+        details = filtered(user, clean_long(body.details, "details", MAX_REPORT_LEN, required=body.reason == "other"), "details")
+        if not isinstance(body.target, str) or not body.target.strip():
+            raise ApiError(400, "target is required")
+        if body.kind == "post":
+            post = find_post(body.target.strip(), user)  # 404 unless the reporter can see it
+            if post.uuid == user.uuid:
+                raise ApiError(400, "you can't report your own post")
+            target, target_uuid, label = post.id, post.uuid, post.title
+        elif body.kind == "user":
+            reported = store.find_user(body.target)
+            if reported is None:
+                raise ApiError(404, "no such user")
+            if reported.uuid == user.uuid:
+                raise ApiError(400, "you can't report yourself")
+            target, target_uuid, label = reported.uuid, reported.uuid, reported.name
+        else:
+            raise ApiError(400, "kind must be post or user")
+        key = f"report-user:{user.uuid}"
+        with store.lock:
+            if store.list_rows("reports", "open", "t.reporter = ? AND t.kind = ? AND t.target = ?", (user.uuid, body.kind, target)):
+                raise ApiError(409, "you already reported this; an admin will look at it")
+            rate_limited(key, REPORT_USER_LIMIT, "reports")
+            store.add_failure(key)
+            row_id = store.insert_row("reports", {
+                "reporter": user.uuid, "kind": body.kind, "target": target, "target_uuid": target_uuid,
+                "target_label": label, "reason": body.reason, "details": details, "created": int(time.time() * 1000),
+            })
+            row = store.get_row("reports", row_id)
+        log.info("%s reported %s %s (%s)", user.name, body.kind, target, body.reason)
+        return JSONResponse(report_api(row), status_code=201)  # type: ignore[arg-type]
+
+    # ---- admin
+
+    def admin_only(request: Request, *, mutating: bool) -> User:
+        user = authenticate(request, mutating=mutating)
+        if not user.is_admin:
+            raise ApiError(403, "only admins can do that")
+        return user
+
+    def status_param(request: Request, statuses: tuple[str, ...]) -> str:
+        status = request.query_params.get("status") or statuses[0]
+        if status not in (*statuses, "all"):
+            raise ApiError(400, "status must be one of " + ", ".join((*statuses, "all")))
+        return status
+
+    def note_of(body: DecisionIn | HideIn, field_name: str = "note") -> str | None:
+        return clean_short(getattr(body, field_name), field_name, MAX_NOTE_LEN)
+
+    def find_player(text: Any) -> User:
+        if not isinstance(text, str) or not text.strip():
+            raise ApiError(400, "give a Minecraft name or uuid")
+        user = store.find_user(text)
+        if user is None:
+            raise ApiError(404, "no account with that name or uuid has logged in here")
+        return user
+
+    def user_admin_api(r: sqlite3.Row) -> dict[str, Any]:
+        u = User(r["uuid"], r["name"], bool(r["is_admin"]), r["quota_bytes"])
+        return {
+            "uuid": u.uuid, "name": u.name, "admin": u.is_admin, "usedBytes": int(r["used"]), "quotaBytes": quota_for(u),
+            "quotaOverride": u.quota_bytes, "badges": badge_list(r["badges"]), "whitelisted": r["wl_source"] is not None,
+            "whitelistSource": r["wl_source"], "posts": r["posts"], "created": ms_or_none(r["created"]),
+            "lastSeen": ms_or_none(r["last_seen"] if r["last_seen"] is not None else r["last_login"]),
+        }
+
+    def user_admin_one(uuid: str) -> dict[str, Any]:
+        rows, _ = store.list_users(uuid, 1, 1)
+        return user_admin_api(rows[0])
+
+    @app.get("/api/admin/applications")
+    def admin_applications(request: Request) -> dict[str, Any]:
+        admin_only(request, mutating=False)
+        status = status_param(request, DECISIONS)
+        return {"applications": [application_api(r, True) for r in store.list_rows("applications", status)],
+                "counts": store.status_counts("applications")}
+
+    def decide_application(app_id: int, body: DecisionIn, request: Request, approve: bool) -> dict[str, Any]:
+        admin = admin_only(request, mutating=True)
+        note = note_of(body)
+        with store.lock:
+            row = store.get_row("applications", app_id)
+            if row is None:
+                raise ApiError(404, "no such application")
+            if not store.decide("applications", app_id, "approved" if approve else "rejected", admin.uuid, note):
+                raise ApiError(409, f"this application was already {row['status']}")
+            if approve:
+                store.whitelist_add(row["uuid"], row["user_name"] or row["name"], "approved", admin.uuid)
+            row = store.get_row("applications", app_id)
+        log.info("%s %s the application of %s", admin.name, "approved" if approve else "rejected", row["user_name"])  # type: ignore[index]
+        return application_api(row, True)  # type: ignore[arg-type]
+
+    @app.post("/api/admin/applications/{app_id}/approve")
+    def admin_application_approve(app_id: int, request: Request, body: DecisionIn) -> dict[str, Any]:
+        return decide_application(app_id, body, request, approve=True)
+
+    @app.post("/api/admin/applications/{app_id}/reject")
+    def admin_application_reject(app_id: int, request: Request, body: DecisionIn) -> dict[str, Any]:
+        return decide_application(app_id, body, request, approve=False)
+
+    @app.get("/api/admin/storage-requests")
+    def admin_storage_requests(request: Request) -> dict[str, Any]:
+        admin_only(request, mutating=False)
+        status = status_param(request, DECISIONS)
+        return {"requests": [storage_api(r, True) for r in store.list_rows("storage_requests", status)],
+                "counts": store.status_counts("storage_requests")}
+
+    @app.post("/api/admin/storage-requests/{req_id}/approve")
+    def admin_storage_approve(req_id: int, request: Request, body: DecisionIn) -> dict[str, Any]:
+        admin = admin_only(request, mutating=True)
+        note = note_of(body)
+        with store.lock:
+            row = store.get_row("storage_requests", req_id)
+            if row is None:
+                raise ApiError(404, "no such storage request")
+            granted = row["requested_bytes"] if body.quotaBytes is None else body.quotaBytes
+            if type(granted) is not int or granted <= 0:
+                raise ApiError(400, "quotaBytes must be a positive number of bytes")
+            if not store.decide("storage_requests", req_id, "approved", admin.uuid, note, granted_bytes=granted):
+                raise ApiError(409, f"this request was already {row['status']}")
+            store.set_quota(row["uuid"], granted)
+            row = store.get_row("storage_requests", req_id)
+        log.info("%s set the quota of %s to %s", admin.name, row["user_name"], human_size(granted))  # type: ignore[index]
+        return storage_api(row, True)  # type: ignore[arg-type]
+
+    @app.post("/api/admin/storage-requests/{req_id}/reject")
+    def admin_storage_reject(req_id: int, request: Request, body: DecisionIn) -> dict[str, Any]:
+        admin = admin_only(request, mutating=True)
+        note = note_of(body)
+        with store.lock:
+            row = store.get_row("storage_requests", req_id)
+            if row is None:
+                raise ApiError(404, "no such storage request")
+            if not store.decide("storage_requests", req_id, "rejected", admin.uuid, note):
+                raise ApiError(409, f"this request was already {row['status']}")
+            return storage_api(store.get_row("storage_requests", req_id), True)  # type: ignore[arg-type]
+
+    @app.get("/api/admin/reports")
+    def admin_reports(request: Request) -> dict[str, Any]:
+        admin_only(request, mutating=False)
+        status = status_param(request, REPORT_STATUSES)
+        return {"reports": [report_api(r, True) for r in store.list_rows("reports", status)],
+                "counts": store.status_counts("reports")}
+
+    def close_report(report_id: int, body: DecisionIn, request: Request, status: str) -> dict[str, Any]:
+        admin = admin_only(request, mutating=True)
+        note = note_of(body)
+        with store.lock:
+            row = store.get_row("reports", report_id)
+            if row is None:
+                raise ApiError(404, "no such report")
+            if not store.decide("reports", report_id, status, admin.uuid, note):
+                raise ApiError(409, f"this report was already {row['status']}")
+            return report_api(store.get_row("reports", report_id), True)  # type: ignore[arg-type]
+
+    @app.post("/api/admin/reports/{report_id}/resolve")
+    def admin_report_resolve(report_id: int, request: Request, body: DecisionIn) -> dict[str, Any]:
+        return close_report(report_id, body, request, "resolved")
+
+    @app.post("/api/admin/reports/{report_id}/dismiss")
+    def admin_report_dismiss(report_id: int, request: Request, body: DecisionIn) -> dict[str, Any]:
+        return close_report(report_id, body, request, "dismissed")
+
+    @app.post("/api/admin/posts/{post_id}/hide")
+    def admin_post_hide(post_id: str, request: Request, body: HideIn) -> dict[str, Any]:
+        admin = admin_only(request, mutating=True)
+        post = find_post(post_id, admin)
+        if not isinstance(body.hidden, bool):
+            raise ApiError(400, "hidden must be true or false")
+        reason = note_of(body, "reason") or ""
+        store.update_post(post.id, {"hidden": int(time.time() * 1000) if body.hidden else None,
+                                    "hidden_reason": reason if body.hidden else None})
+        log.info("%s %s board post %s (%r by %s)", admin.name, "hid" if body.hidden else "unhid", post.id, post.title, post.author_name)
+        return post_api(store.get_post(post.id), admin, detail=True)  # type: ignore[arg-type]
+
+    @app.get("/api/admin/whitelist")
+    def admin_whitelist(request: Request) -> dict[str, Any]:
+        admin_only(request, mutating=False)
+        entries = [whitelist_api(r) for r in store.whitelist_entries()]
+        return {"entries": entries, "count": len(entries)}
+
+    def whitelist_api(r: sqlite3.Row) -> dict[str, Any]:
+        out = {"uuid": r["uuid"], "name": r["name"], "source": r["source"], "added": r["added"]}
+        if "account_name" in r.keys():
+            out["accountName"] = r["account_name"]  # the name at the account's last login, if it has one here
+        return out
+
+    @app.post("/api/admin/whitelist")
+    def admin_whitelist_add(request: Request, body: PlayerIn) -> JSONResponse:
+        """Add one player by name (looked up here, then at Mojang) or uuid (known here, or with a name)."""
+        admin = admin_only(request, mutating=True)
+        if not isinstance(body.player, str) or not body.player.strip():
+            raise ApiError(400, "give a Minecraft name or uuid")
+        text = body.player.strip()
+        uuid = parse_uuid(text)
+        if uuid is not None:
+            known = store.get_user(uuid)
+            entry = store.whitelist_entry(uuid)
+            if known or entry:  # an entry's name may be a Bedrock one from a whitelist file: keep it as it is
+                name = known.name if known else entry["name"]  # type: ignore[index]
+            elif isinstance(body.name, str) and USERNAME_RE.match(body.name.strip()):
+                name = body.name.strip()
+            else:
+                raise ApiError(400, "nobody with that uuid has logged in here; add them by name instead")
+        elif USERNAME_RE.match(text):
+            known = store.find_user(text)
+            if known is not None:
+                uuid, name = known.uuid, known.name
+            else:
+                uuid, name = resolve_names([text])[0]
+        else:
+            raise ApiError(400, f"not a Minecraft name or uuid: {text}")
+        with store.lock:
+            added = grant_access(uuid, name, "manual", admin)
+            entry = store.whitelist_entry(uuid)
+        if added:
+            log.info("%s added %s (%s) to the whitelist", admin.name, name, uuid)
+        return JSONResponse({**whitelist_api(entry), "added": added}, status_code=201 if added else 200)  # type: ignore[arg-type]
+
+    @app.delete("/api/admin/whitelist/{uuid}")
+    def admin_whitelist_delete(uuid: str, request: Request) -> Response:
+        admin = admin_only(request, mutating=True)
+        dashed = parse_uuid(uuid)
+        if dashed is None or store.whitelist_remove([dashed]) == 0:
+            raise ApiError(404, "not on the whitelist")
+        log.info("%s removed %s from the whitelist", admin.name, dashed)
+        return Response(status_code=204)
+
+    @app.post("/api/admin/whitelist/remove")
+    def admin_whitelist_remove(request: Request, body: UuidsIn) -> dict[str, Any]:
+        admin = admin_only(request, mutating=True)
+        if not isinstance(body.uuids, list) or not body.uuids:
+            raise ApiError(400, "uuids must be a list of uuids")
+        uuids = [parse_uuid(u) for u in body.uuids]
+        if None in uuids:
+            raise ApiError(400, "uuids must be a list of uuids")
+        removed = store.whitelist_remove(uuids)  # type: ignore[arg-type]
+        log.info("%s removed %d players from the whitelist", admin.name, removed)
+        return {"removed": removed, "count": store.whitelist_count()}
+
+    @app.post("/api/admin/whitelist/import")
+    async def admin_whitelist_import(request: Request) -> dict[str, Any]:
+        """The body is a whitelist.json. Adds new players, updates names, removes nobody: the entries the file
+        doesn't have come back as missing, for the admin to remove (or keep) one by one."""
+        admin = admin_only(request, mutating=True)
+        raw, _, _ = await read_capped(request, MAX_WHITELIST_BYTES)
+        try:
+            data = json.loads(raw.decode("utf-8-sig"))
+        except (UnicodeDecodeError, ValueError):
+            raise ApiError(400, "not a JSON file")
+        entries = parse_whitelist(data)
+
+        def merge() -> dict[str, Any]:
+            with store.lock:
+                result = store.whitelist_import(entries, admin.uuid)
+                for uuid, name in result["added"]:
+                    grant_access(uuid, name, "upload", admin)  # already added: this approves open applications
+                return result
+
+        result = await run_in_threadpool(merge)
+        log.info("%s uploaded a whitelist: %d added, %d renamed, %d not in the file",
+                 admin.name, len(result["added"]), len(result["renamed"]), len(result["missing"]))
+        return {
+            "added": [{"uuid": u, "name": n} for u, n in result["added"]],
+            "renamed": [{"uuid": u, "from": a, "to": b} for u, a, b in result["renamed"]],
+            "unchanged": result["unchanged"],
+            "missing": [whitelist_api(r) for r in result["missing"]],
+            "count": store.whitelist_count(),
+        }
+
+    @app.get("/api/admin/users")
+    def admin_users(request: Request) -> dict[str, Any]:
+        admin_only(request, mutating=False)
+        q = (request.query_params.get("q") or "").strip()[:MAX_QUERY_LEN]
+        raw_page = request.query_params.get("page") or "1"
+        page = int(raw_page) if raw_page.isdigit() and 0 < int(raw_page) <= 100000 else 1
+        rows, total = store.list_users(q, page, ADMIN_PAGE_SIZE)
+        return {"users": [user_admin_api(r) for r in rows], "q": q, "page": page, "pageSize": ADMIN_PAGE_SIZE,
+                "total": total, "pages": max(1, -(-total // ADMIN_PAGE_SIZE))}
+
+    @app.patch("/api/admin/users/{player}")
+    def admin_user_patch(player: str, request: Request, body: UserPatchIn) -> dict[str, Any]:
+        """{"quotaBytes": n} sets the account's quota, null goes back to the default."""
+        admin = admin_only(request, mutating=True)
+        user = find_player(player)
+        if "quotaBytes" in body.model_fields_set:
+            quota = body.quotaBytes
+            if quota is not None and (type(quota) is not int or quota <= 0):
+                raise ApiError(400, "quotaBytes must be a positive number of bytes, or null for the default")
+            store.set_quota(user.uuid, quota)
+            log.info("%s set the quota of %s to %s", admin.name, user.name, human_size(quota) if quota else "the default")
+        return user_admin_one(user.uuid)
+
+    @app.put("/api/admin/users/{player}/badges/{badge}")
+    def admin_badge_grant(player: str, badge: str, request: Request) -> dict[str, Any]:
+        return set_badge(player, badge, request, True)
+
+    @app.delete("/api/admin/users/{player}/badges/{badge}")
+    def admin_badge_revoke(player: str, badge: str, request: Request) -> dict[str, Any]:
+        return set_badge(player, badge, request, False)
+
+    def set_badge(player: str, badge: str, request: Request, on: bool) -> dict[str, Any]:
+        admin = admin_only(request, mutating=True)
+        if badge not in BADGES:
+            raise ApiError(400, "badge must be one of " + ", ".join(BADGES))
+        user = find_player(player)
+        store.set_badge(user.uuid, badge, on, admin.uuid)
+        log.info("%s %s the %s badge %s %s", admin.name, "gave" if on else "took", badge, "to" if on else "from", user.name)
+        return user_admin_one(user.uuid)
+
     # ---- website
 
     def render(name: str, status: int = 200, **ctx: Any) -> HTMLResponse:
-        html = templates.get_template(name).render(base=base, v=static_version, **ctx)
+        user = ctx.get("user")
+        ctx.setdefault("member", user is not None and is_member(user))
+        html = templates.get_template(name).render(
+            base=base, v=static_version, server_name=SERVER_NAME, **ctx
+        )
         return HTMLResponse(html, status_code=status, headers={"Cache-Control": "no-store"})
 
+    def not_found_page(request: Request) -> HTMLResponse:
+        """The 404 page for an unknown address. Admin pages answer it to everyone else too."""
+        return render("not_found.html", status=404, user=session_user(request), heading="This page isn’t here.",
+                      lead="There is nothing at this address.")
+
     @app.get("/", response_class=HTMLResponse)
-    def home(request: Request) -> HTMLResponse:
+    def home(request: Request) -> Response:
         user = session_user(request)
         if user is None:
             return render("landing.html", max_password=MAX_PASSWORD_LEN)
+        if not is_member(user):
+            return RedirectResponse(f"{base}/apply", status_code=303)  # their files stay, out of reach until approved
         files = store.list_files(user.uuid)
         used = store.used_bytes(user.uuid)  # files plus board snapshots
         post_count, post_bytes = store.post_usage(user.uuid)
@@ -2997,6 +3964,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             board_url=board_url,
             has_model=post.block_count is not None,
             max_visible=model3d.MAX_VISIBLE,
+            report_reasons=REPORT_REASONS,
+            max_report=MAX_REPORT_LEN,
         )
 
     @app.get("/account", response_class=HTMLResponse)
@@ -3009,13 +3978,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         quota = quota_for(user)
         stored, password_set = store.password_info(user.uuid)
         pct = 0.0 if not quota else min(100.0, used * 100.0 / quota)
+        member = is_member(user)
+        storage_row = store.latest_row("storage_requests", user.uuid) if member else None
         return render(
             "account.html",
             user=user,
             nav="account",
+            member=member,
+            badges=store.badges_of(user.uuid),
             used=used,
             quota=quota,
             pct=f"{pct:.2f}",
+            near_full=quota is not None and pct >= STORAGE_WARN_PCT,
+            storage_choices=[c for c in STORAGE_CHOICES if quota is not None and c > quota],
+            min_custom_gb=(quota // GIB + 1) if quota is not None else 1,
+            max_custom_gb=MAX_STORAGE_REQUEST // GIB,
+            max_request_reason=MAX_REQUEST_REASON_LEN,
+            storage_request=storage_api(storage_row) if storage_row else None,
             over=quota is not None and used >= quota,
             file_count=len(store.list_files(user.uuid)),
             file_bytes=used - post_bytes,
@@ -3091,8 +4070,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def admin_feedback_page(request: Request) -> HTMLResponse:
         user = session_user(request)
         if user is None or not user.is_admin:
-            return render("not_found.html", status=404, user=user, heading="This page isn’t here.",
-                          lead="There is nothing at this address.")
+            return not_found_page(request)
         status = request.query_params.get("status") or "open"
         if status not in FEEDBACK_STATUSES:
             status = "open"
@@ -3105,6 +4083,77 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             show=status,
             counts={"open": n_open, "resolved": n_resolved, "all": n_open + n_resolved},
             kinds=FEEDBACK_KINDS,
+            admin_tab="feedback",
+            tab_counts=admin_counts(),
+        )
+
+    def admin_counts() -> dict[str, int]:
+        """What waits in each tab of the admin pages."""
+        return {
+            "applications": store.status_counts("applications").get("pending", 0),
+            "storage": store.status_counts("storage_requests").get("pending", 0),
+            "reports": store.status_counts("reports").get("open", 0),
+            "feedback": store.feedback_counts()[0],
+            "whitelist": store.whitelist_count(),
+        }
+
+    ADMIN_TABS = ("applications", "storage", "reports", "whitelist", "badges", "users")
+
+    @app.get("/admin", response_class=HTMLResponse)
+    def admin_page(request: Request) -> HTMLResponse:
+        user = session_user(request)
+        if user is None or not user.is_admin:
+            return not_found_page(request)
+        q = request.query_params
+        tab = q.get("tab") if q.get("tab") in ADMIN_TABS else "applications"
+        ctx: dict[str, Any] = {}
+        if tab in ("applications", "storage", "reports"):
+            statuses = REPORT_STATUSES if tab == "reports" else DECISIONS
+            status = q.get("status") if q.get("status") in (*statuses, "all") else statuses[0]
+            table = {"applications": "applications", "storage": "storage_requests", "reports": "reports"}[tab]
+            to_api = {"applications": application_api, "storage": storage_api, "reports": report_api}[tab]
+            counts = store.status_counts(table)
+            ctx.update(show=status, statuses=statuses, counts={**counts, "all": sum(counts.values())},
+                       items=[to_api(r, True) for r in store.list_rows(table, status)])
+        elif tab == "whitelist":
+            ctx.update(entries=[whitelist_api(r) for r in store.whitelist_entries()])
+        elif tab == "badges":
+            ctx.update(holders=[{"uuid": r["uuid"], "name": r["name"], "badges": badge_list(r["badges"])}
+                                for r in store.badge_holders()])
+        else:
+            query = (q.get("q") or "").strip()[:MAX_QUERY_LEN]
+            raw_page = q.get("page") or "1"
+            page = int(raw_page) if raw_page.isdigit() and 0 < int(raw_page) <= 100000 else 1
+            rows, total = store.list_users(query, page, ADMIN_PAGE_SIZE)
+            ctx.update(users=[user_admin_api(r) for r in rows], q=query, page=page, total=total,
+                       pages=max(1, -(-total // ADMIN_PAGE_SIZE)), default_quota=settings.quota_bytes)
+        return render(
+            "admin.html",
+            user=user,
+            nav="admin",
+            admin_tab=tab,
+            tab_counts=admin_counts(),
+            report_reasons=REPORT_REASONS,
+            enforced=settings.whitelist_enforced,
+            **ctx,
+        )
+
+    @app.get("/apply", response_class=HTMLResponse)
+    def apply_page(request: Request) -> HTMLResponse:
+        # Where the mod's not_whitelisted answer points. Logged out, it explains and says how to log in.
+        user = session_user(request)
+        application = None
+        if user is not None:
+            row = store.latest_row("applications", user.uuid)
+            application = application_api(row) if row else None
+        return render(
+            "apply.html",
+            user=user,
+            nav="apply",
+            application=application,
+            has_data=user is not None and (store.used_bytes(user.uuid) > 0),
+            max_answer=MAX_APPLICATION_LEN,
+            max_contact=MAX_CONTACT_LEN,
         )
 
     @app.get("/login/{token}")

@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% from "_badges.html" import user_badges %}
+{% block title %}Admin &middot; Slopmatica Cloud{% endblock %}
+{% macro person(u, size=24) %}{% if u %}<span class="person"><img class="head" src="https://mc-heads.net/avatar/{{ u.uuid }}/{{ size }}" alt="" width="{{ size }}" height="{{ size }}"> <a href="{{ base }}/admin?tab=users&amp;q={{ u.uuid }}">{{ u.name or u.uuid }}</a></span>{% else %}<span class="muted">nobody</span>{% endif %}{% endmacro %}
+{% macro status_tabs(tab) %}
+<nav class="tabs fb-tabs" aria-label="Status">
+  {% for key in statuses + ("all",) %}
+  <a class="tab{{ ' on' if show == key else '' }}" href="{{ base }}/admin?tab={{ tab }}{{ '' if loop.first else '&status=' ~ key }}"{% if show == key %} aria-current="page"{% endif %}>{{ key|capitalize }} ({{ counts.get(key, 0) }})</a>
+  {% endfor %}
+</nav>
+{% endmacro %}
+{% macro decided(item) %}
+{% if item.decided %}<p class="muted small">{{ item.status|capitalize }} <time datetime="{{ item.decided|iso_utc }}">{{ item.decided|pretty_utc }}</time>{% if item.note %}: <q>{{ item.note }}</q>{% endif %}</p>{% endif %}
+{% endmacro %}
+{% block main %}
+{% include "_admin_tabs.html" %}
+
+{% if admin_tab == "applications" %}
+{{ status_tabs("applications") }}
+{% for a in items %}
+<article class="panel adm-item" data-adm-item>
+  <div class="fb-head">
+    {{ person(a.user) }}
+    <span class="muted small grow"><code>{{ a.user.uuid }}</code> &middot; <time datetime="{{ a.created|iso_utc }}">{{ a.created|pretty_utc }}</time>{% if a.whitelisted %} &middot; on the whitelist{% endif %}</span>
+    <span class="badge st-{{ a.status }}">{{ a.status|capitalize }}</span>
+  </div>
+  <p class="adm-q small muted">Why they want access</p>
+  <p class="desc">{{ a.reason }}</p>
+  <p class="adm-q small muted">How they know the community</p>
+  <p class="desc">{{ a.community }}</p>
+  {% if a.contact %}<p class="small"><span class="muted">Contact:</span> {{ a.contact }}</p>{% endif %}
+  {% if a.status == "pending" %}
+  <div class="adm-actions">
+    <input type="text" data-note maxlength="1000" placeholder="Reason, shown to them (optional)" aria-label="Reason">
+    <button type="button" class="btn small" data-adm-url="{{ base }}/api/admin/applications/{{ a.id }}/approve">Approve</button>
+    <button type="button" class="btn small ghost danger" data-adm-url="{{ base }}/api/admin/applications/{{ a.id }}/reject" data-confirm="Reject the application of {{ a.user.name }}?">Reject</button>
+  </div>
+  {% else %}{{ decided(a) }}{% endif %}
+</article>
+{% else %}
+<p class="muted empty">{{ "No applications waiting." if show == "pending" else "Nothing here." }}</p>
+{% endfor %}
+
+{% elif admin_tab == "storage" %}
+{{ status_tabs("storage") }}
+{% for r in items %}
+<article class="panel adm-item" data-adm-item>
+  <div class="fb-head">
+    {{ person(r.user) }}
+    <span class="muted small grow"><time datetime="{{ r.created|iso_utc }}">{{ r.created|pretty_utc }}</time></span>
+    <span class="badge st-{{ r.status }}">{{ r.status|capitalize }}</span>
+  </div>
+  <p class="small">Asks for <strong>{{ r.requestedBytes|human_size }}</strong> in total.
+    {% if r.current %}Now uses {{ r.current.usedBytes|human_size }} of {{ r.current.quotaBytes|human_size }}.{% endif %}
+    <span class="muted">(When asked: {{ r.usedBytes|human_size }} of {{ r.quotaBytes|human_size }}.)</span></p>
+  <p class="desc">{{ r.reason }}</p>
+  {% if r.status == "pending" %}
+  <div class="adm-actions">
+    <label class="small adm-gb">Grant <input type="number" data-gb min="1" step="1" value="{{ (r.requestedBytes / 1073741824)|round(0, 'ceil')|int }}" aria-label="GB to grant"> GB</label>
+    <input type="text" data-note maxlength="1000" placeholder="Note, shown to them (optional)" aria-label="Note">
+    <button type="button" class="btn small" data-adm-url="{{ base }}/api/admin/storage-requests/{{ r.id }}/approve">Approve</button>
+    <button type="button" class="btn small ghost danger" data-adm-url="{{ base }}/api/admin/storage-requests/{{ r.id }}/reject" data-no-gb>Reject</button>
+  </div>
+  {% else %}
+  {% if r.grantedBytes %}<p class="small">Granted {{ r.grantedBytes|human_size }}.</p>{% endif %}
+  {{ decided(r) }}
+  {% endif %}
+</article>
+{% else %}
+<p class="muted empty">{{ "No storage requests waiting." if show == "pending" else "Nothing here." }}</p>
+{% endfor %}
+
+{% elif admin_tab == "reports" %}
+{{ status_tabs("reports") }}
+{% for r in items %}
+<article class="panel adm-item" data-adm-item>
+  <div class="fb-head">
+    <span class="badge">{{ report_reasons[r.reason] }}</span>
+    <span class="small grow">
+      {% if r.kind == "post" %}Post
+        {% if r.post %}<a href="{{ base }}/board/{{ r.target.id }}">{{ r.target.label }}</a>{% else %}<strong>{{ r.target.label }}</strong> <span class="muted">(deleted)</span>{% endif %}
+        by {{ person({"uuid": r.target.uuid, "name": r.target.name or "?"}, 16) }}
+      {% else %}User {{ person({"uuid": r.target.uuid, "name": r.target.name or r.target.label}, 16) }}{% endif %}
+    </span>
+    <span class="badge st-{{ r.status }}">{{ r.status|capitalize }}</span>
+  </div>
+  <p class="muted small">Reported by {{ person(r.reporter, 16) }} &middot; <time datetime="{{ r.created|iso_utc }}">{{ r.created|pretty_utc }}</time>
+    {% if r.post and r.post.hidden %} &middot; <span class="badge mod-hidden">Hidden</span>{% endif %}</p>
+  {% if r.details %}<p class="desc">{{ r.details }}</p>{% endif %}
+  <div class="adm-actions">
+    {% if r.kind == "post" and r.post %}
+    <a class="btn small ghost" href="{{ base }}/board/{{ r.target.id }}">Open post</a>
+    <button type="button" class="btn small ghost" data-adm-url="{{ base }}/api/admin/posts/{{ r.target.id }}/hide" data-body='{"hidden": {{ "false" if r.post.hidden else "true" }}}' data-note-as="reason">{{ "Unhide post" if r.post.hidden else "Hide post" }}</button>
+    {% endif %}
+    <a class="btn small ghost" href="{{ base }}/admin?tab=users&amp;q={{ r.target.uuid }}">Open user</a>
+  </div>
+  {% if r.status == "open" %}
+  <div class="adm-actions">
+    <input type="text" data-note maxlength="1000" placeholder="Note (optional; with Hide post, the reason the author sees)" aria-label="Note">
+    <button type="button" class="btn small" data-adm-url="{{ base }}/api/admin/reports/{{ r.id }}/resolve">Resolve</button>
+    <button type="button" class="btn small ghost" data-adm-url="{{ base }}/api/admin/reports/{{ r.id }}/dismiss">Dismiss</button>
+  </div>
+  {% else %}{{ decided(r) }}{% endif %}
+</article>
+{% else %}
+<p class="muted empty">{{ "No open reports." if show == "open" else "Nothing here." }}</p>
+{% endfor %}
+
+{% elif admin_tab == "whitelist" %}
+{% if not enforced %}<p class="notice warn small">The whitelist is not enforced (<code>SLOPMATICA_WHITELIST_ENFORCED</code> is off): everyone can use the cloud.</p>{% endif %}
+<section class="panel">
+  <h2>Add a player</h2>
+  <form class="adm-inline" data-wl-add novalidate>
+    <input type="text" name="player" maxlength="40" placeholder="Minecraft name or uuid" aria-label="Minecraft name or uuid" autocomplete="off" spellcheck="false" required>
+    <button type="submit" class="btn">Add</button>
+  </form>
+  <p class="form-msg small" role="status"></p>
+</section>
+<section class="panel">
+  <h2>Upload a newer <code>whitelist.json</code></h2>
+  <p class="small muted">New players are added and changed names are updated. Nobody is removed: players missing from the file are listed below so you can decide.</p>
+  <form class="adm-inline" data-wl-import novalidate>
+    <input type="file" name="file" accept=".json,application/json" aria-label="whitelist.json" required>
+    <button type="submit" class="btn">Upload</button>
+  </form>
+  <p class="form-msg small" role="status"></p>
+  <div class="wl-result" data-wl-result hidden></div>
+</section>
+<section class="panel">
+  <div class="fb-head">
+    <h2 class="grow">{{ entries|length }} player{{ "" if entries|length == 1 else "s" }} on the whitelist</h2>
+    <input type="search" data-wl-filter placeholder="Filter" aria-label="Filter the whitelist">
+  </div>
+  <ul class="wl-list" data-wl-list>
+    {% for e in entries %}
+    <li data-wl-row data-search="{{ e.name|lower }} {{ e.uuid }} {{ (e.accountName or '')|lower }}">
+      <img class="head" src="https://mc-heads.net/avatar/{{ e.uuid }}/16" alt="" width="16" height="16" loading="lazy">
+      <span class="wl-name">{{ e.name }}{% if e.accountName and e.accountName != e.name %} <span class="muted">(now {{ e.accountName }})</span>{% endif %}</span>
+      <code class="wl-uuid muted">{{ e.uuid }}</code>
+      <span class="badge src-{{ e.source }}" title="Source: {{ e.source }}">{{ e.source }}</span>
+      <button type="button" class="btn small ghost danger" data-adm-url="{{ base }}/api/admin/whitelist/{{ e.uuid }}" data-method="DELETE" data-confirm="Remove {{ e.name }} from the whitelist? Their files stay, but they can't use the cloud until added again.">Remove</button>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+{% elif admin_tab == "badges" %}
+<section class="panel">
+  <h2>Give a badge</h2>
+  <form class="adm-inline" data-badge-grant novalidate>
+    <input type="text" name="player" maxlength="40" placeholder="Minecraft name or uuid (logged in here)" aria-label="Minecraft name or uuid" autocomplete="off" spellcheck="false" required>
+    <select name="badge" aria-label="Badge">
+      {% for key, label in badge_labels.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+    </select>
+    <button type="submit" class="btn">Give</button>
+  </form>
+  <p class="form-msg small" role="status"></p>
+  <p class="muted small">Badges show next to the player&rsquo;s name on the board and in the API. <strong>Verified</strong>: a known builder; <strong>Mod</strong>: helps moderate; <strong>Dev</strong>: works on Slopmatica.</p>
+</section>
+{% for h in holders %}
+<article class="panel adm-item" data-adm-item>
+  <div class="fb-head">
+    {{ person(h) }}
+    <span class="grow">{{ user_badges(h.badges) }}</span>
+    {% for b in h.badges %}
+    <button type="button" class="btn small ghost danger" data-adm-url="{{ base }}/api/admin/users/{{ h.uuid }}/badges/{{ b }}" data-method="DELETE">Take {{ badge_labels[b] }}</button>
+    {% endfor %}
+  </div>
+</article>
+{% else %}
+<p class="muted empty">Nobody has a badge yet.</p>
+{% endfor %}
+
+{% else %}
+<form class="toolbar" method="get" action="{{ base }}/admin" role="search">
+  <input type="hidden" name="tab" value="users">
+  <input type="search" name="q" value="{{ q }}" placeholder="Name or uuid" aria-label="Search users" maxlength="100">
+  <button class="btn ghost" type="submit">Search</button>
+</form>
+<p class="muted result-note">{{ total }} account{{ "" if total == 1 else "s" }}{% if q %} matching &ldquo;{{ q }}&rdquo; &middot; <a href="{{ base }}/admin?tab=users">all</a>{% endif %} &middot; most recently seen first</p>
+{% for u in users %}
+<article class="panel adm-item user-row" data-adm-item>
+  <div class="fb-head">
+    {{ person(u, 32) }}{{ user_badges(u.badges) }}{% if u.admin %} <span class="badge">admin</span>{% endif %}
+    <span class="muted small grow"><code>{{ u.uuid }}</code></span>
+  </div>
+  <dl class="facts user-facts">
+    <div><dt>Storage</dt><dd>{{ u.usedBytes|human_size }} of {{ u.quotaBytes|human_size }}{% if u.quotaOverride %} <span class="muted small">(set)</span>{% endif %}</dd></div>
+    <div><dt>Whitelisted</dt><dd>{% if u.whitelisted %}Yes <span class="muted small">({{ u.whitelistSource }})</span>{% elif u.admin %}Admin{% else %}<span class="neg">No</span>{% endif %}</dd></div>
+    <div><dt>Board posts</dt><dd>{% if u.posts %}<a href="{{ base }}/board?q={{ u.name|urlencode }}">{{ u.posts }}</a>{% else %}0{% endif %}</dd></div>
+    <div><dt>Last seen</dt><dd>{% if u.lastSeen %}<time datetime="{{ u.lastSeen|iso_utc }}">{{ u.lastSeen|pretty_utc }}</time>{% else %}<span class="muted">never</span>{% endif %}</dd></div>
+  </dl>
+  <details class="edit">
+    <summary>Manage</summary>
+    <div class="adm-actions">
+      {% if not u.admin %}
+      <label class="small adm-gb">Quota <input type="number" data-gb min="1" step="1" value="{{ ((u.quotaBytes or default_quota) / 1073741824)|round(0, 'ceil')|int }}" aria-label="Quota in GB"> GB</label>
+      <button type="button" class="btn small" data-adm-url="{{ base }}/api/admin/users/{{ u.uuid }}" data-method="PATCH" data-gb-as="quotaBytes">Set quota</button>
+      {% if u.quotaOverride %}<button type="button" class="btn small ghost" data-adm-url="{{ base }}/api/admin/users/{{ u.uuid }}" data-method="PATCH" data-body='{"quotaBytes": null}' data-no-gb>Default quota</button>{% endif %}
+      {% endif %}
+    </div>
+    <div class="adm-actions">
+      {% for key, label in badge_labels.items() %}
+      {% if key in u.badges %}
+      <button type="button" class="btn small ghost danger" data-adm-url="{{ base }}/api/admin/users/{{ u.uuid }}/badges/{{ key }}" data-method="DELETE" data-no-gb>Take {{ label }}</button>
+      {% else %}
+      <button type="button" class="btn small ghost" data-adm-url="{{ base }}/api/admin/users/{{ u.uuid }}/badges/{{ key }}" data-method="PUT" data-no-gb>Give {{ label }}</button>
+      {% endif %}
+      {% endfor %}
+    </div>
+    <div class="adm-actions">
+      {% if u.whitelisted %}
+      <button type="button" class="btn small ghost danger" data-adm-url="{{ base }}/api/admin/whitelist/{{ u.uuid }}" data-method="DELETE" data-no-gb data-confirm="Remove {{ u.name }} from the whitelist? Their files stay.">Remove from whitelist</button>
+      {% else %}
+      <button type="button" class="btn small ghost" data-adm-url="{{ base }}/api/admin/whitelist" data-body='{"player": "{{ u.uuid }}"}' data-no-gb>Add to whitelist</button>
+      {% endif %}
+    </div>
+  </details>
+</article>
+{% else %}
+<p class="muted empty">No accounts{% if q %} match{% endif %}.</p>
+{% endfor %}
+{% if pages > 1 %}
+<nav class="pager" aria-label="Pages">
+  {% if page > 1 %}<a class="btn ghost small" href="{{ base }}/admin?tab=users&amp;q={{ q|urlencode }}&amp;page={{ page - 1 }}" rel="prev">&larr; Previous</a>{% else %}<span></span>{% endif %}
+  <span class="muted">Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a class="btn ghost small" href="{{ base }}/admin?tab=users&amp;q={{ q|urlencode }}&amp;page={{ page + 1 }}" rel="next">Next &rarr;</a>{% else %}<span></span>{% endif %}
+</nav>
+{% endif %}
+{% endif %}
+<p class="form-msg small" data-adm-msg role="status"></p>
+{% endblock %}
+{% block scripts %}
+<script src="{{ base }}/static/admin.js?v={{ v }}"></script>
+{% endblock %}

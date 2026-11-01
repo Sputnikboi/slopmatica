@@ -1,13 +1,22 @@
 {% extends "base.html" %}
+{% from "_badges.html" import user_badges %}
 {% block title %}Account &middot; Slopmatica Cloud{% endblock %}
 {% block main %}
 <section class="panel account-id">
   <img class="head" src="https://mc-heads.net/avatar/{{ user.uuid }}/64" alt="" width="64" height="64">
   <div>
-    <h1 class="page-title">{{ user.name }}</h1>
+    <h1 class="page-title">{{ user.name }}{{ user_badges(badges) }}</h1>
     <p class="muted small"><code>{{ user.uuid }}</code>{% if user.is_admin %} &middot; admin{% endif %}</p>
   </div>
 </section>
+
+{% if not member %}
+<section class="panel notice-panel">
+  <h2>Cloud access</h2>
+  <p class="small">Syncing, uploads and posting are for {{ server_name }} members. Your files and posts are kept until your access is approved.</p>
+  <div class="form-actions start"><a class="btn" href="{{ base }}/apply">Apply for access</a></div>
+</section>
+{% endif %}
 
 <section class="panel usage">
   <h2>Storage</h2>
@@ -22,6 +31,38 @@
   <div class="bar{{ ' over' if over else '' }}"><div class="bar-fill" data-pct="{{ pct }}"></div></div>
   {% endif %}
   <p class="muted small note"><a href="{{ base }}/">{{ file_count }} file{{ "" if file_count == 1 else "s" }}</a>: {{ file_bytes|human_size }} &middot; <a href="{{ base }}/board?tab=mine">{{ post_count }} board post{{ "" if post_count == 1 else "s" }}</a>: {{ post_bytes|human_size }}</p>
+  {% if member and quota is not none %}
+  {% set req = storage_request %}
+  {% if req and req.status == "pending" %}
+  <p class="notice small">You asked for <strong>{{ req.requestedBytes|human_size }}</strong> on <time datetime="{{ req.created|iso_utc }}">{{ req.created|pretty_utc }}</time>. An admin will look at it.</p>
+  {% else %}
+  {% if req and req.status == "approved" %}
+  <p class="muted small note">Your request was approved <time datetime="{{ req.decided|iso_utc }}">{{ req.decided|pretty_utc }}</time>: your quota is now {{ req.grantedBytes|human_size }}.</p>
+  {% elif req and req.status == "rejected" %}
+  <p class="muted small note">Your request for {{ req.requestedBytes|human_size }} was not approved{% if req.note %}: <q>{{ req.note }}</q>{% else %}.{% endif %}</p>
+  {% endif %}
+  <details class="edit storage-more"{% if near_full %} open{% endif %}>
+    <summary>{% if near_full %}Running out of space? Ask for more{% else %}Need more space?{% endif %}</summary>
+    <form class="post-form storage-form" data-storage-form novalidate>
+      <fieldset class="field">
+        <legend class="label">How much in total?</legend>
+        <div class="tag-picks">
+          {% for c in storage_choices %}
+          <label class="tag-pick"><input type="radio" name="amount" value="{{ c }}"{% if loop.first %} checked{% endif %}><span>{{ c|human_size }}</span></label>
+          {% endfor %}
+          <label class="tag-pick"><input type="radio" name="amount" value="custom"{% if not storage_choices %} checked{% endif %}><span>Other</span></label>
+        </div>
+      </fieldset>
+      <label class="field custom-gb" data-custom-gb{% if storage_choices %} hidden{% endif %}><span class="label">GB in total</span>
+        <input type="number" name="gb" min="{{ min_custom_gb }}" max="{{ max_custom_gb }}" step="1" value="{{ min_custom_gb }}" inputmode="numeric"></label>
+      <label class="field"><span class="label">What do you need it for?</span>
+        <textarea name="reason" rows="3" maxlength="{{ max_request_reason }}" required placeholder="e.g. a big map-art collection, a server's worth of builds&hellip;"></textarea></label>
+      <p class="form-msg" role="status"></p>
+      <div class="form-actions start"><button type="submit" class="btn">Send request</button></div>
+    </form>
+  </details>
+  {% endif %}
+  {% endif %}
 </section>
 
 <section class="panel">
@@ -62,7 +103,7 @@
 {% if user.is_admin %}
 <section class="panel">
   <h2>Admin</h2>
-  <p class="small"><a href="{{ base }}/admin/feedback">Feedback</a> &middot; <a href="{{ base }}/releases">Releases</a></p>
+  <p class="small"><a href="{{ base }}/admin">Admin dashboard</a> &middot; <a href="{{ base }}/admin/feedback">Feedback</a> &middot; <a href="{{ base }}/releases">Releases</a></p>
 </section>
 
 {% endif %}
@@ -75,4 +116,5 @@
 {% endblock %}
 {% block scripts %}
 <script src="{{ base }}/static/account.js?v={{ v }}"></script>
+<script src="{{ base }}/static/access.js?v={{ v }}"></script>
 {% endblock %}

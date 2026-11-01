@@ -1,3 +1,4 @@
+{% from "_badges.html" import user_badges %}
 {% macro post_card(p, base, show_visibility=False, chip_url=None, all_tags={}, size_classes={}) %}
 {# The whole card is clickable through the title link's ::after; the chips sit above it as their own links. #}
 <article class="card post-card">
@@ -12,7 +13,7 @@
     <h3 class="name" title="{{ p.title }}"><a class="card-link" href="{{ base }}/board/{{ p.id }}">{{ p.title }}</a></h3>
     <div class="sub author">
       <img class="head" src="https://mc-heads.net/avatar/{{ p.uuid }}/16" alt="" width="16" height="16">
-      <span>{{ p.author_name }}</span>
+      <span>{{ p.author_name }}</span>{{ user_badges(p.author_badges) }}
     </div>
     <div class="sub muted stats">
       <span class="score{{ ' neg' if p.score < 0 else '' }}" title="{{ p.ups }} up, {{ p.downs }} down">&#9650; {{ p.score }}</span>
@@ -26,7 +27,7 @@
       {% if p.size_class %}<a class="chip size-chip" href="{{ chip_url(size=p.size_class) if chip_url else base ~ '/board?size=' ~ p.size_class }}" title="Size by block count">{{ size_classes.get(p.size_class, p.size_class) }}</a>{% endif %}
     </div>
     {% endif %}
-    {% if show_visibility %}<div class="sub"><span class="badge vis-{{ p.visibility }}">{{ p.visibility|capitalize }}</span></div>{% endif %}
+    {% if show_visibility %}<div class="sub"><span class="badge vis-{{ p.visibility }}">{{ p.visibility|capitalize }}</span>{% if p.hidden %} <span class="badge mod-hidden" title="Hidden by an admin">Hidden</span>{% endif %}</div>{% endif %}
   </div>
 </article>
 {% endmacro %}

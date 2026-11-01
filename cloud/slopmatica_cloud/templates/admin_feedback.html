@@ -1,9 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Feedback &middot; Admin &middot; Slopmatica Cloud{% endblock %}
 {% block main %}
-<div class="board-head">
-  <h1 class="page-title">Feedback</h1>
-</div>
+{% include "_admin_tabs.html" %}
 <nav class="tabs fb-tabs" aria-label="Status">
   {% for key, label in (("open", "Open"), ("resolved", "Resolved"), ("all", "All")) %}
   <a class="tab{{ ' on' if show == key else '' }}" href="{{ base }}/admin/feedback{{ '' if key == 'open' else '?status=' ~ key }}"{% if show == key %} aria-current="page"{% endif %}>{{ label }} ({{ counts[key] }})</a>

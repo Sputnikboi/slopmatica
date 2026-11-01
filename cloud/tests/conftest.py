@@ -121,6 +121,8 @@ def make_client(data_dir, mojang):
             kw.setdefault("data_dir", data_dir)
             kw.setdefault("mojang_has_joined_url", mojang.url)
             kw.setdefault("mojang_profile_url", mojang.profile_url)
+            # The tests from before 0.7.0 cover what members can do; test_v070 turns the whitelist gate on.
+            kw.setdefault("whitelist_enforced", False)
             settings = Settings(**kw)
         return TestClient(create_app(settings))
 

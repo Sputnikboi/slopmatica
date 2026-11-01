@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_post_form.html" import post_fields %}
+{% from "_badges.html" import user_badges %}
 {% block title %}{{ post.title }} &middot; Slopmatica Cloud{% endblock %}
 {% block main %}
 <article class="post" data-post-id="{{ post.id }}" data-post-filename="{{ post.filename }}"{% if own %} data-own{% endif %}>
@@ -28,6 +29,7 @@
   </div>
   <div class="post-info">
     <h1 class="post-title">{{ post.title }}</h1>
+    {% if post.hidden %}<p class="notice warn small"><strong>Hidden by an admin.</strong> Only {{ "you" if own else "the author" }} and admins can see this post{% if post.hidden_reason %}: {{ post.hidden_reason }}{% else %}.{% endif %}</p>{% endif %}
     {% if post.visibility != "public" %}<span class="badge vis-{{ post.visibility }}">{{ post.visibility|capitalize }}</span>{% endif %}
     {% if post.tags or post.size_class %}
     <div class="chips">
@@ -37,18 +39,18 @@
     {% endif %}
     <div class="author">
       <img class="head" src="https://mc-heads.net/avatar/{{ post.uuid }}/24" alt="" width="24" height="24">
-      <strong>{{ post.author_name }}</strong>
+      <strong>{{ post.author_name }}</strong>{{ user_badges(post.author_badges) }}
       <span class="muted">&middot; <time datetime="{{ post.created|iso_utc }}">{{ post.created|pretty_utc }}</time></span>
     </div>
 
     <div class="vote" data-my-vote="{{ my_vote }}">
-      {% set can_vote = user and not own %}
+      {% set can_vote = user and member and not own %}
       <button type="button" class="vote-btn up{{ ' on' if my_vote == 1 else '' }}" data-post-act="vote" data-value="1" aria-label="Upvote" aria-pressed="{{ 'true' if my_vote == 1 else 'false' }}"{% if not can_vote %} disabled{% endif %}>&#9650;</button>
       <span class="vote-score" data-score>{{ post.score }}</span>
       <button type="button" class="vote-btn down{{ ' on' if my_vote == -1 else '' }}" data-post-act="vote" data-value="-1" aria-label="Downvote" aria-pressed="{{ 'true' if my_vote == -1 else 'false' }}"{% if not can_vote %} disabled{% endif %}>&#9660;</button>
       <span class="muted vote-counts"><span data-ups>{{ post.ups }}</span> up &middot; <span data-downs>{{ post.downs }}</span> down</span>
     </div>
-    {% if not user %}<p class="muted small">Log in from the game to vote.</p>{% elif own %}<p class="muted small">This is your post, so you can&rsquo;t vote on it.</p>{% endif %}
+    {% if not user %}<p class="muted small">Log in from the game to vote.</p>{% elif not member %}<p class="muted small">Voting and saving are for {{ server_name }} members. <a href="{{ base }}/apply">Apply for access</a></p>{% elif own %}<p class="muted small">This is your post, so you can&rsquo;t vote on it.</p>{% endif %}
 
     <dl class="facts">
       <div><dt>Format</dt><dd>.{{ post.format }}</dd></div>
@@ -65,7 +67,7 @@
         {% for x in exports %}<option value="{{ x[1:] }}">{{ x }}</option>{% endfor %}
       </select>
       {% endif %}
-      {% if user %}<button type="button" class="btn ghost" data-post-act="save">Add to my cloud</button>{% endif %}
+      {% if user and member %}<button type="button" class="btn ghost" data-post-act="save">Add to my cloud</button>{% endif %}
     </div>
     <p class="form-msg small" data-save-msg role="status"></p>
     {% if not user %}<p class="muted small">Log in from the game to add this to your cloud files.</p>{% endif %}
@@ -76,7 +78,12 @@
 <section class="panel desc">{{ post.description }}</section>
 {% endif %}
 
-{% if own %}
+{% if own and not member %}
+<section class="panel owner">
+  <h2>Manage your post</h2>
+  <p class="small">Editing, updating and deleting posts is for {{ server_name }} members. Your post stays as it is. <a href="{{ base }}/apply">Apply for access</a></p>
+</section>
+{% elif own %}
 <section class="panel owner">
   <h2>Manage your post</h2>
   {% if post.visibility == "private" %}
@@ -103,11 +110,48 @@
 <section class="panel owner">
   <h2>Moderation</h2>
   {% if post.visibility == "private" %}<p class="small">Private, shared with {% for _, name in allowed %}<strong>{{ name }}</strong>{{ ", " if not loop.last else "" }}{% else %}nobody{% endfor %}.</p>{% endif %}
-  <div class="owner-actions"><button type="button" class="btn ghost danger" data-post-act="delete">Delete post</button></div>
+  <div class="owner-actions">
+    {% if post.hidden %}
+    <button type="button" class="btn ghost" data-hide-post="{{ post.id }}" data-hidden="false">Unhide post</button>
+    {% else %}
+    <button type="button" class="btn ghost" data-hide-post="{{ post.id }}" data-hidden="true">Hide post</button>
+    {% endif %}
+    <button type="button" class="btn ghost danger" data-post-act="delete">Delete post</button>
+    <a class="btn ghost" href="{{ base }}/admin?tab=users&amp;q={{ post.uuid }}">Open the author</a>
+  </div>
+  <p class="muted small">Hiding keeps the post for the author but takes it off the board and its link for everyone else.</p>
   <p class="form-msg small" data-owner-msg role="status"></p>
+</section>
+{% endif %}
+{% if user and member and not own %}
+<section class="panel report-panel">
+  <details class="edit">
+    <summary>Report this post or its author</summary>
+    <form class="post-form report-form" data-report-form data-post-id="{{ post.id }}" data-author="{{ post.uuid }}" novalidate>
+      <fieldset class="field">
+        <legend class="label">What are you reporting?</legend>
+        <label class="radio"><input type="radio" name="kind" value="post" checked> <span>This post</span></label>
+        <label class="radio"><input type="radio" name="kind" value="user"> <span>The author, {{ post.author_name }}</span></label>
+      </fieldset>
+      <fieldset class="field">
+        <legend class="label">Why?</legend>
+        <div class="tag-picks">
+          {% for key, label in report_reasons.items() %}
+          <label class="tag-pick"><input type="radio" name="reason" value="{{ key }}"{% if loop.first %} checked{% endif %}><span>{{ label }}</span></label>
+          {% endfor %}
+        </div>
+      </fieldset>
+      <label class="field"><span class="label">Details <span class="muted">(needed for &ldquo;Other&rdquo;)</span></span>
+        <textarea name="details" rows="3" maxlength="{{ max_report }}" placeholder="Anything that helps an admin, e.g. where the original build is."></textarea></label>
+      <p class="muted small">Only admins see reports.</p>
+      <p class="form-msg" role="status"></p>
+      <div class="form-actions start"><button type="submit" class="btn">Send report</button></div>
+    </form>
+  </details>
 </section>
 {% endif %}
 {% endblock %}
 {% block scripts %}
 <script src="{{ base }}/static/board.js?v={{ v }}"></script>
+<script src="{{ base }}/static/moderation.js?v={{ v }}"></script>
 {% endblock %}
