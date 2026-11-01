@@ -227,6 +227,60 @@
   {{ table(t.memory, (("name", "Max heap"), ("count", "Installs"))) }}
 </section>
 
+{% elif admin_tab == "disk" %}
+<p class="muted small">Everything the site keeps under its data directory, against the cap (<code>SLOPMATICA_SITE_QUOTA_BYTES</code>). Past it, every upload gets <code>507 site_full</code>, admins&rsquo; too. A board build added to someone&rsquo;s cloud is a hard link to the post&rsquo;s snapshot, so it takes no room twice and counts toward its author&rsquo;s quota, not the saver&rsquo;s.</p>
+<section class="panel usage site-usage">
+  <div class="usage-text"><strong>{{ st.usedBytes|human_size }}</strong> of {{ st.capBytes|human_size }} <span class="muted">&middot; {{ st.freeBytes|human_size }} left{% if st.diskFreeBytes is not none %} &middot; {{ st.diskFreeBytes|human_size }} free on the disk{% endif %}</span></div>
+  <div class="bar{{ ' over' if site_over else '' }}"><div class="bar-fill" data-pct="{{ site_pct }}"></div></div>
+</section>
+<section class="panel">
+  <h2>By kind</h2>
+  <div class="table-wrap"><table class="stat-table">
+    <thead><tr><th scope="col">What</th><th scope="col" class="num">Size</th><th scope="col" class="num">Files</th></tr></thead>
+    <tbody>
+    {% for c in st.categories if c.files %}<tr><td>{{ c.label }}</td><td class="num">{{ c.bytes|human_size }}</td><td class="num">{{ c.files|num }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+<section class="panel">
+  <h2>Accounts using the most</h2>
+  {% if st.topUsers %}
+  <div class="table-wrap"><table class="stat-table">
+    <thead><tr><th scope="col">Account</th><th scope="col" class="num">Counted</th><th scope="col" class="num">Quota</th><th scope="col" class="num">Files</th><th scope="col" class="num">Board</th><th scope="col" class="num">From the board (free)</th></tr></thead>
+    <tbody>
+    {% for u in st.topUsers %}<tr><td><a href="{{ base }}/admin?tab=users&amp;q={{ u.uuid }}" data-user="{{ u.uuid }}">{{ u.displayName }}{% if u.tag %}<span class="tag">#{{ u.tag }}</span>{% endif %}</a></td><td class="num">{{ u.usedBytes|human_size }}</td><td class="num">{{ u.quotaBytes|human_size }}</td><td class="num">{{ u.fileBytes|human_size }}</td><td class="num">{{ u.postBytes|human_size }}</td><td class="num">{{ u.referenceBytes|human_size }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted small">Nobody stores anything yet.</p>{% endif %}
+</section>
+<section class="panel">
+  <h2>Largest board posts</h2>
+  <p class="muted small">Every version together.</p>
+  {% if st.largestPosts %}
+  <div class="table-wrap"><table class="stat-table">
+    <thead><tr><th scope="col">Post</th><th scope="col">Author</th><th scope="col" class="num">Size</th><th scope="col" class="num">Versions</th><th scope="col" class="num">Saves</th></tr></thead>
+    <tbody>
+    {% for p in st.largestPosts %}<tr><td><a href="{{ base }}/board/{{ p.id }}">{{ p.title }}</a>{% if p.visibility != "public" %} <span class="badge vis-{{ p.visibility }}">{{ p.visibility|capitalize }}</span>{% endif %}{% if p.hidden %} <span class="badge mod-hidden">Hidden</span>{% endif %}</td><td><a href="{{ base }}/admin?tab=users&amp;q={{ p.author.uuid }}" data-user="{{ p.author.uuid }}">{{ p.author.displayName }}</a></td><td class="num">{{ p.bytes|human_size }}</td><td class="num">{{ p.versionCount }}</td><td class="num">{{ p.saves|num }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted small">No posts yet.</p>{% endif %}
+</section>
+<section class="panel">
+  <h2>Largest cloud files</h2>
+  {% if st.largestFiles %}
+  <div class="table-wrap"><table class="stat-table">
+    <thead><tr><th scope="col">File</th><th scope="col">Owner</th><th scope="col" class="num">Size</th></tr></thead>
+    <tbody>
+    {% for f in st.largestFiles %}<tr><td><code>{{ f.path }}</code>{% if f.reference %} <a class="badge" href="{{ base }}/board/{{ f.sourcePost }}" title="Added from the board: counted for the post's author">from the board</a>{% endif %}</td><td><a href="{{ base }}/admin?tab=users&amp;q={{ f.owner.uuid }}" data-user="{{ f.owner.uuid }}">{{ f.owner.displayName }}{% if f.owner.tag %}<span class="tag">#{{ f.owner.tag }}</span>{% endif %}</a></td><td class="num">{{ f.size|human_size }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted small">No files yet.</p>{% endif %}
+</section>
+
 {% else %}
 <form class="toolbar" method="get" action="{{ base }}/admin" role="search">
   <input type="hidden" name="tab" value="users">

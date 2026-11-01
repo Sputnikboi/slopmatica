@@ -83,7 +83,7 @@
 
 {% if posts %}
 <section class="grid">
-  {% for p in posts %}{{ post_card(p, base, show_visibility=(tab == "mine"), chip_url=chip_url, all_tags=all_tags, size_classes=size_classes) }}{% endfor %}
+  {% for p in posts %}{{ post_card(p, base, show_visibility=(tab == "mine"), chip_url=chip_url, all_tags=all_tags, size_classes=size_classes, favs=favs, me=me) }}{% endfor %}
 </section>
 {% if pages > 1 %}
 <nav class="pager" aria-label="Pages">
@@ -104,4 +104,7 @@
 <p class="empty muted">You haven&rsquo;t posted anything yet. Use <strong>Post to board&hellip;</strong> on one of <a href="{{ base }}/">your files</a>.</p>
 {% endif %}
 {% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="{{ base }}/static/board.js?v={{ v }}"></script>
 {% endblock %}

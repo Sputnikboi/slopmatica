@@ -519,3 +519,65 @@ input[type=number]:focus { outline: 2px solid var(--accent); outline-offset: 1px
   .crop-stage { flex-basis: 100%; }
   .crop-stage canvas { max-width: none; }
 }
+
+/* ---- 0.10.0: favourites, My listings, the files page's board badges, Site storage, feedback attachments */
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.files-tabs { margin-bottom: 16px; }
+.files-tabs .tab .count, .files-tabs .count { display: inline-block; min-width: 1.6em; text-align: center; font-size: 12px; border-radius: 99px;
+  padding: 0 6px; background: var(--bar); color: var(--muted); }
+.fav-btn { font: inherit; font-size: 13px; line-height: 1.2; border: 1px solid var(--border); background: var(--panel); color: var(--muted);
+  border-radius: 99px; padding: 1px 8px; cursor: pointer; position: relative; z-index: 1; white-space: nowrap; }
+.fav-btn:hover:not(:disabled) { border-color: var(--muted); color: var(--text); }
+.fav-btn.on { color: #e0245e; border-color: currentColor; }
+.fav-btn:disabled { cursor: progress; opacity: .7; }
+.fav-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.fav-count { white-space: nowrap; }
+.vote .fav-slot { margin-left: auto; }
+.vote .fav-btn { font-size: 14px; padding: 4px 12px; }
+.listing-line { margin-top: 2px; }
+.badge.on-board { text-decoration: none; color: #0f8a4b; border-color: currentColor; }
+.badge.on-board.vis-unlisted { color: #b26b00; }
+.badge.on-board.vis-private { color: #8a3ffc; }
+.not-counted { font-size: 12px; }
+.favs { margin-top: 16px; }
+.favs h2 { margin: 0 0 6px; font-size: 17px; }
+.fav-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 10px; }
+.fav-item { display: grid; grid-template-columns: 96px 1fr auto; gap: 12px; align-items: center; }
+.fav-item.unfav { opacity: .55; }
+.fav-thumb { border-radius: 6px; width: 96px; }
+.fav-meta { min-width: 0; }
+.fav-meta .form-msg { margin: 2px 0 0; }
+.fav-title { font-weight: 600; color: var(--text); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.fav-title:hover { color: var(--accent); }
+.fav-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.listing-sort { align-items: center; gap: 8px; flex-wrap: wrap; }
+.listing-sort select { flex: 0 1 auto; }
+.listings .sort-link { color: inherit; text-decoration: none; }
+.listings .sort-link.on { color: var(--text); }
+.listings .lt-title { white-space: normal; min-width: 12em; font-weight: 600; }
+.listings .lt-title a { color: var(--text); }
+.listings .lt-actions { text-align: right; }
+.listings td .badge { white-space: nowrap; }
+.listings td:has(time) { white-space: normal; min-width: 7.5em; }
+.fb-files { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.badge.fb-file { text-decoration: none; color: var(--accent); border-color: currentColor; font-weight: 500; }
+@media (prefers-color-scheme: dark) {
+  .fav-btn.on { color: #ff5c8a; }
+  .badge.on-board { color: #3ccf7f; }
+}
+@media (max-width: 720px) {
+  /* My listings: each post becomes a card of label / value lines */
+  .listings thead { display: none; }
+  .listings, .listings tbody, .listings tr, .listings td { display: block; width: 100%; }
+  .listings tr { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); padding: 8px 12px; margin-bottom: 10px; }
+  .listings td { display: flex; justify-content: space-between; gap: 12px; border: 0; padding: 2px 0; white-space: normal; text-align: right; }
+  .listings td::before { content: attr(data-label); color: var(--muted); font-size: 12px; text-align: left; }
+  .listings td.lt-title, .listings td.lt-actions { display: block; text-align: left; }
+  .listings td.lt-title::before, .listings td.lt-actions::before { content: none; }
+  .listings td.lt-actions { padding-top: 6px; }
+}
+@media (max-width: 520px) {
+  .fav-item { grid-template-columns: 64px 1fr; }
+  .fav-thumb { width: 64px; }
+  .fav-actions { grid-column: 1 / -1; justify-content: flex-start; }
+}

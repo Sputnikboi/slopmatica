@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_post_form.html" import post_fields %}
 {% from "_badges.html" import user_badges %}
+{% from "_post_card.html" import fav_button %}
 {% block title %}{{ post.title }} &middot; Slopmatica Cloud{% endblock %}
 {% block head %}
 <meta name="description" content="{{ og.description }}">
@@ -71,6 +72,7 @@
       <span class="vote-score" data-score>{{ post.score }}</span>
       <button type="button" class="vote-btn down{{ ' on' if my_vote == -1 else '' }}" data-post-act="vote" data-value="-1" aria-label="Downvote" aria-pressed="{{ 'true' if my_vote == -1 else 'false' }}"{% if not can_vote %} disabled{% endif %}>&#9660;</button>
       <span class="muted vote-counts"><span data-ups>{{ post.ups }}</span> up &middot; <span data-downs>{{ post.downs }}</span> down</span>
+      <span class="fav-slot">{{ fav_button(post, favs, me) }}</span>
     </div>
     {% if not user %}<p class="muted small">Log in from the game to vote.</p>{% elif not member %}<p class="muted small">Voting and saving are for {{ server_name }} members. <a href="{{ base }}/apply">Apply for access</a></p>{% elif own %}<p class="muted small">This is your post, so you can&rsquo;t vote on it.</p>{% endif %}
 
@@ -129,12 +131,12 @@
 {% endif %}
 
 {% if own and not member %}
-<section class="panel owner">
+<section class="panel owner" id="manage">
   <h2>Manage your post</h2>
   <p class="small">Editing, updating and deleting posts is for {{ server_name }} members. Your post stays as it is. <a href="{{ base }}/apply">Apply for access</a></p>
 </section>
 {% elif own %}
-<section class="panel owner">
+<section class="panel owner" id="manage">
   <h2>Manage your post</h2>
   {% if post.visibility == "private" %}
   <p class="small">Visible to you{% if allowed %} and {% for _, name in allowed %}<strong>{{ name }}</strong>{{ ", " if not loop.last else "" }}{% endfor %}{% else %} only{% endif %}.</p>

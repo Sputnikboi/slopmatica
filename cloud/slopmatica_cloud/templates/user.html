@@ -21,7 +21,7 @@
 
 {% if posts %}
 <section class="grid">
-  {% for p in posts %}{{ post_card(p, base, all_tags=all_tags, size_classes=size_classes) }}{% endfor %}
+  {% for p in posts %}{{ post_card(p, base, all_tags=all_tags, size_classes=size_classes, favs=favs, me=me) }}{% endfor %}
 </section>
 {% if pages > 1 %}
 <nav class="pager" aria-label="Pages">
@@ -33,4 +33,7 @@
 {% else %}
 <p class="empty muted">No public posts yet.</p>
 {% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="{{ base }}/static/board.js?v={{ v }}"></script>
 {% endblock %}

@@ -428,14 +428,15 @@ def test_quota(make_client, mojang):
     # file uploads see the snapshot too
     assert c.put("/api/files/b.litematic", content=blob(21), headers=h).status_code == 413
     assert c.put("/api/files/b.litematic", content=blob(20), headers=h).status_code == 201  # exactly full
-    # saving a post into your files counts as a file
+    # saving a post into your files costs nothing while it is the post's snapshot (0.10.0: a reference; test_v100)
     carol = Who(c, mojang, "Carol")
     upload(c, carol.h, "pad.litematic", blob(2 * a))
-    assert c.post(f"/api/board/{p['id']}/save", headers=carol.h).status_code == 413
+    assert c.post(f"/api/board/{p['id']}/save", headers=carol.h).status_code == 201
     assert c.get("/api/files", headers=carol.h).json()["usedBytes"] == 2 * a
-    # deleting the post frees its snapshot
+    # deleting the post frees its snapshot; the saved copy now counts for its owner
     assert c.delete(f"/api/board/{p['id']}", headers=h).status_code == 204
     assert c.get("/api/me", headers=h).json()["usedBytes"] == a + 20
+    assert c.get("/api/files", headers=carol.h).json()["usedBytes"] == 3 * a
     # the files page says how much is board posts
     c.delete("/api/files/b.litematic", headers=h)
     make_post(c, h, "a.slopmatic")
@@ -842,7 +843,8 @@ def test_migrates_a_0_3_0_database(make_client, mojang, data_dir):
                   "avatar": f"http://127.0.0.1:8095/avatar/{uuid}"}
     listing = c.get("/api/files", headers=h).json()["files"]
     assert listing == [{"path": "builds/Old.litematic", "size": len(body), "sha256": hashlib.sha256(body).hexdigest(),
-                        "modified": 1_700_000_000_000, "hasThumbnail": True, "source": None}]
+                        "modified": 1_700_000_000_000, "hasThumbnail": True, "source": None,
+                        "listing": None, "reference": False}]
     store = c.app.state.store
     assert store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     tables = {r[0] for r in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}

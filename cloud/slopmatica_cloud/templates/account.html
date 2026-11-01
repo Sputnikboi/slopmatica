@@ -103,7 +103,7 @@
   {% if quota is not none %}
   <div class="bar{{ ' over' if over else '' }}"><div class="bar-fill" data-pct="{{ pct }}"></div></div>
   {% endif %}
-  <p class="muted small note"><a href="{{ base }}/">{{ file_count }} file{{ "" if file_count == 1 else "s" }}</a>: {{ file_bytes|human_size }} &middot; <a href="{{ base }}/board?tab=mine">{{ post_count }} board post{{ "" if post_count == 1 else "s" }}</a>: {{ post_bytes|human_size }}</p>
+  <p class="muted small note"><a href="{{ base }}/">{{ file_count }} file{{ "" if file_count == 1 else "s" }}</a>: {{ file_bytes|human_size }} &middot; <a href="{{ base }}/board?tab=mine">{{ post_count }} board post{{ "" if post_count == 1 else "s" }}</a>: {{ post_bytes|human_size }}{% if ref_count %} &middot; {{ ref_count }} build{{ "" if ref_count == 1 else "s" }} added from the board don&rsquo;t count (their authors&rsquo; posts do){% endif %}</p>
   {% if member and quota is not none %}
   {% set req = storage_request %}
   {% if req and req.status == "pending" %}

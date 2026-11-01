@@ -104,6 +104,63 @@
     dialog.querySelector("[data-close]").addEventListener("click", () => dialog.close());
   }
 
+  // ---- favourites: the heart on cards, post pages and the files page's Favourites (one post may show several)
+  function showFav(postId, state) {
+    document.querySelectorAll("[data-fav]").forEach((b) => {
+      if (b.dataset.fav !== postId) return;
+      b.classList.toggle("on", state.favorited);
+      b.setAttribute("aria-pressed", state.favorited ? "true" : "false");
+      b.title = state.favorited ? "Remove from favourites" : "Add to favourites";
+      const count = b.querySelector("[data-fav-count]");
+      if (count) count.textContent = Number(state.favorites).toLocaleString();
+    });
+    const item = document.querySelector('[data-fav-item="' + CSS.escape(postId) + '"]');
+    if (item) item.classList.toggle("unfav", !state.favorited);
+  }
+
+  document.addEventListener("click", async (ev) => {
+    const fav = ev.target.closest("[data-fav]");
+    if (fav) {
+      ev.preventDefault();  // a card's heart sits over the card's link
+      if (fav.disabled) return;
+      const on = fav.getAttribute("aria-pressed") !== "true";
+      fav.disabled = true;
+      try {
+        const r = await send(on ? "POST" : "DELETE", apiPost(fav.dataset.fav) + "/favorite");
+        if (r.ok) showFav(fav.dataset.fav, await r.json());
+        else alert((on ? "Could not favourite it: " : "Could not remove it: ") + (await errorText(r)));
+      } catch (_) {
+        alert("Network error, try again.");
+      } finally {
+        fav.disabled = false;
+      }
+      return;
+    }
+    const save = ev.target.closest("[data-fav-save]");
+    if (save && !save.disabled) {
+      const msg = save.closest("[data-fav-item]").querySelector("[data-fav-msg]");
+      save.disabled = true;
+      say(msg, "Adding…");
+      try {
+        const r = await send("POST", apiPost(save.dataset.favSave) + "/save");
+        if (r.ok) {
+          const f = await r.json();
+          msg.textContent = "Added as ";
+          const code = document.createElement("code");
+          code.textContent = f.path;
+          msg.append(code, ". Reload to see it in your files.");
+          msg.classList.remove("err");
+        } else {
+          say(msg, "Could not add it: " + (await errorText(r)), true);
+        }
+      } catch (_) {
+        say(msg, "Could not add it: network error", true);
+      } finally {
+        save.disabled = false;
+      }
+    }
+  });
+
   // ---- post page
   const post = document.querySelector(".post[data-post-id]");
   if (!post) return;

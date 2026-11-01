@@ -1,0 +1,6 @@
+{# Tabs over My files and My listings; Favourites is a section of My files. #}
+<nav class="tabs files-tabs" aria-label="My cloud">
+  <a class="tab{{ ' on' if files_tab == 'files' else '' }}" href="{{ base }}/"{% if files_tab == "files" %} aria-current="page"{% endif %}>My files</a>
+  <a class="tab{{ ' on' if files_tab == 'listings' else '' }}" href="{{ base }}/listings"{% if files_tab == "listings" %} aria-current="page"{% endif %}>My listings{% if post_count %} <span class="count">{{ post_count }}</span>{% endif %}</a>
+  <a class="tab" href="{{ base }}/#favourites">Favourites{% if fav_count %} <span class="count">{{ fav_count }}</span>{% endif %}</a>
+</nav>

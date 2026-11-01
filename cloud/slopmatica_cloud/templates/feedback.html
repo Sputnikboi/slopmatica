@@ -34,6 +34,13 @@
     </div>
     <label class="field"><span class="label">Contact <span class="muted">(optional: Discord name, email&hellip; only admins see it)</span></span>
       <input type="text" name="contact" maxlength="{{ max_contact }}" autocomplete="off"></label>
+    <div class="fb-row">
+      <label class="field"><span class="label">Game log <span class="muted">(optional, <code>logs/latest.log</code>, at most {{ max_log_mb }} MB)</span></span>
+        <input type="file" name="log" accept=".log,.txt,.gz,text/plain"></label>
+      <label class="field"><span class="label">Schematic <span class="muted">(optional, at most {{ max_schematic_mb }} MB)</span></span>
+        <input type="file" name="schematic" accept=".slopmatic,.nbt,.litematic,.schem"></label>
+    </div>
+    <p class="muted small">Attachments are only seen by admins and deleted {{ attachment_days }} days after the report is dealt with.</p>
     <p class="muted small">{% if user %}Sent as <strong>{{ user.name }}</strong>.{% else %}You are not logged in, so this is sent anonymously. Leave a contact if you would like an answer.{% endif %}</p>
     <p class="form-msg" role="status"></p>
     <div class="form-actions start"><button type="submit" class="btn">Send</button></div>

@@ -64,7 +64,7 @@ def post_json(c, h, path="a.litematic", status=201, **extra):
 
 
 def test_schema_version():
-    assert SCHEMA_VERSION == 6  # 0.9.0 added no migration
+    assert SCHEMA_VERSION >= 6  # 0.9.0 added no migration; test_v100 checks the current version
 
 
 def test_settings_from_env():
@@ -107,7 +107,7 @@ def test_migrates_a_v5_database(make_client, data_dir):
     body = v5_data_dir(data_dir)
     c = make_client(whitelist_enforced=True)
     db = c.app.state.store.db
-    assert db.execute("PRAGMA user_version").fetchone()[0] == 6
+    assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     users, posts = columns(db, "users"), columns(db, "posts")
     assert users[-8:] == ["display_name", "display_key", "display_tag", "display_custom", "avatar", "avatar_version",
                           "discord_id", "discord_name"]
@@ -137,7 +137,7 @@ def test_migrates_a_v5_database(make_client, data_dir):
     salt = db.execute("SELECT value FROM meta WHERE key='ip_salt'").fetchone()[0]
     c2 = make_client(whitelist_enforced=True)
     db2 = c2.app.state.store.db
-    assert db2.execute("PRAGMA user_version").fetchone()[0] == 6
+    assert db2.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     assert db2.execute("SELECT value FROM meta WHERE key='ip_salt'").fetchone()[0] == salt
     assert db2.execute("SELECT display_tag FROM users WHERE uuid=?", (PLAYER,)).fetchone()[0] == rows[PLAYER]["display_tag"]
     assert len(c2.get("/api/profiles", headers=bearer("playertok")).json()["profiles"]) == 1
@@ -154,7 +154,7 @@ def test_migration_6_is_one_transaction(make_client, data_dir, monkeypatch):
     assert db.execute("SELECT COUNT(*) FROM sqlite_master WHERE name IN ('profiles', 'telemetry')").fetchone()[0] == 0
     db.close()
     monkeypatch.undo()
-    assert make_client().app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == 6
+    assert make_client().app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
 
 # ------------------------------------------------------------------ settings profiles

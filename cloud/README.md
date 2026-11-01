@@ -35,10 +35,11 @@ It reads optional overrides from `~/.config/slopmatica-cloud/env`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SLOPMATICA_DATA` | `cloud/data` | Data directory: `cloud.db` plus `users/<uuid>/files/...`, `users/<uuid>/thumbs/<path>.png`, a custom picture `users/<uuid>/avatar.png`, `.jpeg` or `.webp`, cached skins `skins/<uuid>.png` and faces `skins/<uuid>.face.png`, and board snapshots in `posts/<id>/` (`<original stem>.slopmatic`, `thumb.png`, and the 3D view's cache `model-<sha256[:16]>.json.gz` or `.toobig`; earlier versions the same way in `posts/<id>/v<n>/`) |
+| `SLOPMATICA_DATA` | `cloud/data` | Data directory: `cloud.db` plus `users/<uuid>/files/...`, `users/<uuid>/thumbs/<path>.png`, a custom picture `users/<uuid>/avatar.png`, `.jpeg` or `.webp`, cached skins `skins/<uuid>.png` and faces `skins/<uuid>.face.png`, board snapshots in `posts/<id>/` (`<original stem>.slopmatic`, `thumb.png`, and the 3D view's cache `model-<sha256[:16]>.json.gz` or `.toobig`; earlier versions the same way in `posts/<id>/v<n>/`), and bug report attachments in `feedback/<id>/log` and `feedback/<id>/schematic` |
 | `SLOPMATICA_ROOT_PATH` | *(empty)* | URL prefix when mounted under a path, e.g. `/slopmatica`. Works whether or not the proxy strips the prefix. |
 | `SLOPMATICA_ADMINS` | `sputnikboi` | Comma-separated Minecraft names with unlimited storage. Names are matched case-insensitively at login, and the account's uuid then stays an admin even after a rename. |
 | `SLOPMATICA_QUOTA_BYTES` | `1073741824` | Default per-account quota (1 GiB). An admin can set another one per account (storage requests, or the admin page's user list); admins are always unlimited. |
+| `SLOPMATICA_SITE_QUOTA_BYTES` | `107374182400` | Cap on everything the site stores together (100 GiB): see [Site storage](#site-storage). Admins are held to it too. |
 | `SLOPMATICA_WHITELIST_ENFORCED` | `true` | Only players on the Fruitbowl whitelist (and admins) may use the cloud. `0`, `false`, `no` or `off` switch the gate off. |
 | `SLOPMATICA_WHITELIST_SEED` | *(unset)* | A Minecraft `whitelist.json` (`[{"uuid","name"}, ...]`) read **once**, when the database migrates to schema 5, to fill the whitelist (source `seed`). Unset: the whitelist starts empty. Set but missing or malformed: the server refuses to start and nothing is migrated. Later changes go through the admin page. |
 | `SLOPMATICA_PUBLIC_URL` | `http://127.0.0.1:8095` | External origin used to build web-login links (`<PUBLIC_URL><ROOT_PATH>/login/<token>`) and the absolute release URLs (`<PUBLIC_URL><ROOT_PATH>/...`, with ROOT_PATH left out if PUBLIC_URL already ends in it). If it is `https://`, session cookies are marked Secure. |
@@ -102,15 +103,36 @@ control characters, `<>:"|?*`, segments with leading or trailing whitespace or a
 | Method & path | Result |
 |---|---|
 | `GET /api/me` | `{"uuid","name","usedBytes","quotaBytes","whitelisted","badges","displayName","tag","avatar","apply"?}` as for `/api/auth/verify`. Open to players without access, so the mod can tell them. |
-| `GET /api/files` | `{"files":[{"path","size","sha256","modified"(unix ms),"hasThumbnail","source"}],"usedBytes","quotaBytes"}`. `source` is `null`, or for a file saved with "Add to my cloud" `{"postId","title","author","authorUuid"}`: the post, its title when saved, and its author (`author` is the author's current name as last seen at a login, else the name when saved). |
-| `PUT /api/files/{path}` | Raw body. It must be gzip (`1f 8b`) and at most 256 MiB. Optional `X-Sha256` must match. A schematic whose blocks, block entities or entities use a namespace other than `minecraft` is refused with 400 `{"error","code":"modded","namespaces":[...]}` (a file the server can't parse is stored as before). Returns 201 (new) or 200 (replaced) with the file entry. Over quota gives 413 `{"error":"quota exceeded","usedBytes","quotaBytes"}`; the quota counts the new size minus the size of the file being replaced. Replacing a file with different bytes drops its (now stale) thumbnail and its `source` (it is the user's own file from then on); the same bytes keep both. |
+| `GET /api/files` | `{"files":[{"path","size","sha256","modified"(unix ms),"hasThumbnail","source","listing","reference"}],"usedBytes","quotaBytes"}`. `source` is `null`, or for a file saved with "Add to my cloud" `{"postId","title","author","authorUuid"}`: the post, its title when saved, and its author (`author` is the author's current name as last seen at a login, else the name when saved). `listing` is `null`, or `{"postId","title","visibility":"public"\|"unlisted"\|"private","hidden"}` for the caller's own board post this file is the source of (see below). `reference` is true for a file saved from the board that still costs the caller nothing (see [References](#saved-board-builds-are-references)). |
+| `PUT /api/files/{path}` | Raw body. It must be gzip (`1f 8b`) and at most 256 MiB. Optional `X-Sha256` must match. A schematic whose blocks, block entities or entities use a namespace other than `minecraft` is refused with 400 `{"error","code":"modded","namespaces":[...]}` (a file the server can't parse is stored as before). Returns 201 (new) or 200 (replaced) with the file entry. Over quota gives 413 `{"error":"quota exceeded","usedBytes","quotaBytes"}`; the quota counts the new size minus what the file being replaced counted (0 for a reference). The site cap gives 507 `{"error","code":"site_full"}`. Replacing a file with different bytes drops its (now stale) thumbnail and its `source` (it is the user's own file from then on, and counts); the same bytes keep both (and a reference stays one, the file on disk untouched). The `listing` link stays either way. |
 | `GET /api/files/{path}` | Bytes, `application/octet-stream`, `Content-Disposition: attachment`, `X-Sha256` |
 | `GET /api/export/{path}?format=slopmatic\|nbt\|litematic\|schem` | The file converted to another format: bytes, `application/octet-stream`, `Content-Disposition: attachment` named like the original with the new extension (no folder). 400 for a missing, unknown or same format, for a file that cannot be parsed, or for more than 64 million blocks of volume. 404 if the file is missing. A read, so cookie requests need no `X-Requested-With`. |
 | `DELETE /api/files/{path}` | 204. The thumbnail is deleted too. |
-| `POST /api/files/move` | `{"from","to"}` returns 200 with the new entry. The thumbnail and `source` move along. 404 if the source is missing, 409 if the target exists. |
-| `PUT /api/thumbnails/{path}` | Raw PNG, at most 2 MiB, for an existing file (404 otherwise). Returns 200 with the file entry. Thumbnails don't count toward the quota. |
+| `POST /api/files/move` | `{"from","to"}` returns 200 with the new entry. The thumbnail, `source` and `listing` move along. 404 if the source is missing, 409 if the target exists. |
+| `PUT /api/thumbnails/{path}` | Raw PNG, at most 2 MiB, for an existing file (404 otherwise). Returns 200 with the file entry. Thumbnails don't count toward the quota (they do toward the site cap: 507). |
 | `GET /api/thumbnails/{path}` | `image/png` or 404 |
 
+**What is on the board.** A file's `listing` says it is on the board: the server records the link when the owner posts
+the file (`POST /api/board` with its `path`) or adds a version from it (`POST /api/board/{id}/versions` with `path`);
+the link follows renames and changes of the file. A file without a recorded link whose bytes are exactly one of the
+owner's posts' snapshots (any version; only `.slopmatic` files are posted byte for byte) is matched by its sha256
+instead, the newest post first. Posts that are gone don't count. The files page marks such files with a badge linking
+to the post ("On the board · Public").
+
+#### Saved board builds are references
+
+"Add to my cloud" (`POST /api/board/{id}/save`, the website's button and the mod's in-game browser alike) does not
+cost the saver any storage: the build counts toward its uploader's quota as part of the post. The saved file is a
+hard link to the post's snapshot (a plain copy where the file system has no hard links), recorded with its `source`.
+While its bytes are still one of that post's snapshots (any version), it is a **reference**: `reference: true`, and
+`usedBytes` (in `/api/me`, `/api/files`, the quota checks and the admin's user list) leaves it out. It counts for the
+saver from the moment it stops matching:
+
+- the saver changes it (a `PUT` with other bytes; the same bytes again keep it a reference),
+- the author deletes the post, deletes the version it was saved from, or re-takes the snapshot in place (`/refresh`).
+
+Nothing is deleted from the saver's files then: the file stays, now theirs (it can take them over their quota, which
+then only stops new uploads). Saves made before 0.10.0 (real copies) are references the same way.
 ### Schematics board
 
 Players post one of their cloud files to the board with a title (1 to 100 characters), an optional
@@ -144,8 +166,8 @@ profile API (10 s timeout): an unknown name is 400 naming it, Mojang unreachable
 
 | Method & path | Result |
 |---|---|
-| `GET /api/board?tab=public\|shared\|mine&sort=top\|hot\|new&q=&tag=&size=&complexity=&mc=&author=&page=` | `{"posts":[post],"tab","sort","q","tags","size","complexity","mc","author","page","pageSize"(24),"total","pages"}`. `public` works logged out; `shared` (private posts listing the caller) and `mine` need a login (`mine` adds `postCount`, `postBytes`, every version counted). `q` matches every word against title, description, the author's Minecraft and display names and the co-authors' names, case-insensitively. `tag` may repeat: the post must have every one (unknown tag: 400). `size` is one size category, `complexity` one complexity category (else 400). `mc` (a Minecraft version) matches posts with any version for it; `author` (a uuid) posts that account owns or co-authored. Top: score, then newest. Hot: score / (hours + 2)^1.5. Default sort: `top` for public, `new` otherwise. |
-| `POST /api/board` | `{"path","title","description"?,"visibility","allowed"?:[names],"tags"?:[tags],"coauthors"?:[{"player": name} \| {"name": text}],"links"?:[urls],"versionLabel"?,"mc"?}` returns 201 with the post. `versionLabel` (at most 60 characters) and `mc` (e.g. `26.3`) describe version 1. A co-author `player` must have an account here (400 `code: "unknown_player"`, naming it); the owner and repeats are dropped. 404 if the file is missing, 400 if it can't be converted, 413 over quota. |
+| `GET /api/board?tab=public\|shared\|mine&sort=top\|hot\|new\|downloads&q=&tag=&size=&complexity=&mc=&author=&page=&limit=` | `{"posts":[post],"tab","sort","q","tags","size","complexity","mc","author","page","pageSize"(24, or `limit`),"total","pages"}`. `limit` is 1 to 100 (else 400). `public` works logged out; `shared` (private posts listing the caller) and `mine` need a login (`mine` adds `postCount`, `postBytes`, every version counted). `q` matches every word against title, description, the author's Minecraft and display names and the co-authors' names, case-insensitively. `tag` may repeat: the post must have every one (unknown tag: 400). `size` is one size category, `complexity` one complexity category (else 400). `mc` (a Minecraft version) matches posts with any version for it; `author` (a uuid) posts that account owns or co-authored. Top: score, then newest. Hot: score / (hours + 2)^1.5. Downloads: most downloaded, then score, then newest. Default sort: `top` for public, `new` otherwise. |
+| `POST /api/board` | `{"path","title","description"?,"visibility","allowed"?:[names],"tags"?:[tags],"coauthors"?:[{"player": name} \| {"name": text}],"links"?:[urls],"versionLabel"?,"mc"?}` returns 201 with the post, and links the file to it (its `listing`). `versionLabel` (at most 60 characters) and `mc` (e.g. `26.3`) describe version 1. A co-author `player` must have an account here (400 `code: "unknown_player"`, naming it); the owner and repeats are dropped. 404 if the file is missing, 400 if it can't be converted, 413 over quota. |
 | `GET /api/board/{id}` | The post, plus `description`, `myVote` (null logged out), and for the author and admins `sourcePath` and `allowed: [{uuid,name}]`. |
 | `PATCH /api/board/{id}` | Author only: any of `title`, `description`, `visibility`, `allowed`, `tags`, `coauthors`, `links` (each list replaces the old one), `versionLabel`, `mc` (of the current version). |
 | `POST /api/board/{id}/refresh` | Author only: snapshot the current version's cloud file again, in place (409 if it is gone or the version was uploaded directly, 400 if it can't be converted). Drops the 3D view's cache. |
@@ -154,11 +176,14 @@ profile API (10 s timeout): an unknown name is 400 naming it, Mojang unreachable
 | `DELETE /api/board/{id}/versions/{n}` | Author only: delete an earlier version (204), freeing its bytes. The current one: 409 (it goes with the post). |
 | `DELETE /api/board/{id}` | Author or admin: 204. |
 | `POST /api/board/{id}/vote` | `{"value": 1\|-1\|0}` (0 clears). Not on your own post (403). Returns `{"score","ups","downs","myVote"}`. |
-| `POST /api/board/{id}/save` | Copies the snapshot (and thumbnail) into the caller's files as `board/<title>.<ext>`, adding ` (2)` etc. if taken, and records the post as the file's `source`. 201 with the file entry, 413 over quota. |
+| `POST /api/board/{id}/save` | Adds the snapshot (and its thumbnail) to the caller's files as `board/<title>.<ext>`, adding ` (2)` etc. if taken, and records the post as the file's `source`. 201 with the file entry (`reference: true`). No quota check: it is a reference (above). Counts once per account (never the author) in the post's `saves` (My listings). |
+| `POST /api/board/{id}/favorite` | Favourite the post (members; idempotent). 200 `{"favorites": count, "favorited": true}`. A private or hidden post can only be favourited by its author: anyone else gets 403 `{"error","code":"private"}` (or 404 if they can't see it). |
+| `DELETE /api/board/{id}/favorite` | 200 `{"favorites","favorited": false}`. Works on a favourite whose post the caller can no longer see (it became private or hidden); 404 for a post that doesn't exist. |
 | `GET /api/board/{id}/file`, `/thumbnail`, `/export?format=` | Download, PNG thumbnail, conversion (same rules and limits as `/api/export`). `?version=<n>` picks an earlier version (404 if there is none), here and for `/model` and `/save`. |
 | `GET /api/board/{id}/model` | The 3D view's data (below), gzip-encoded JSON for clients that accept it. 413 `{"error","visibleBlocks","maxVisibleBlocks"}` above 300 000 visible blocks, 400 for an old post that can't be read. Cached in the post's folder per snapshot. |
 
-A post is `{"id","title","visibility","author":{"uuid","name","badges","displayName"},"filename","format","size","sha256","dimensions":[x,y,z]|null,"blockCount"|null,"sizeClass"|null,"tags":[...],"hasThumbnail","created","updated","score","ups","downs","hidden","coauthors":[{"uuid"|null,"name","displayName"}],"links":[...],"version","versionLabel","mc"|null,"versionCount","distinctTypes"|null,"complexity"|null,"downloads","shareUrl"}` (times in unix ms; `hidden`: an admin hid it, see Reports; `author.name` and a co-author's `name` are Minecraft names, `displayName` the name shown; the snapshot fields are the current version's). With detail, the author and admins also get `hiddenReason`.
+A post is `{"id","title","visibility","author":{"uuid","name","badges","displayName"},"filename","format","size","sha256","dimensions":[x,y,z]|null,"blockCount"|null,"sizeClass"|null,"tags":[...],"hasThumbnail","created","updated","score","ups","downs","hidden","coauthors":[{"uuid"|null,"name","displayName"}],"links":[...],"version","versionLabel","mc"|null,"versionCount","distinctTypes"|null,"complexity"|null,"downloads","shareUrl","favorites","favorited"}`
+(`favorites`: how many accounts favourited it; `favorited`: whether the caller did, `null` logged out) (times in unix ms; `hidden`: an admin hid it, see Reports; `author.name` and a co-author's `name` are Minecraft names, `displayName` the name shown; the snapshot fields are the current version's). With detail, the author and admins also get `hiddenReason`.
 
 **Versions.** Each version records a label (optional, at most 60 characters) and the Minecraft version it is for. The post's
 page has a version list (the newest is shown by default, `?version=<n>` an older one). Every version counts toward the
@@ -185,8 +210,46 @@ carpet, doesn't hide it). `id` is the block id without properties; `shape` is `f
 little-endian uint32 values: the block indices `(y * sz + z) * sx + x` in ascending order, each as the
 difference from the previous one (the first from 0). Several Litematica regions are merged over their
 enclosing box as for `.nbt` exports.
-Logged out is fine for public and unlisted posts, except voting and saving (401). Website pages: `/board`, `/board/<id>`,
-`/b/<id>`, and a player's profile `/u/<uuid>`.
+Logged out is fine for public and unlisted posts, except voting, saving and favouriting (401). Website pages: `/board`, `/board/<id>`,
+`/b/<id>`, and a player's profile `/u/<uuid>`. Cards and post pages carry a heart (favourite) for members.
+
+### Favourites and My listings
+
+| Method & path | Result |
+|---|---|
+| `GET /api/favorites` | Members: `{"posts":[post]}`, most recently favourited first. A post that became private or hidden is left out (unless it is the caller's own) and comes back if it is opened again; a deleted post is gone with its favourites. |
+| `GET /api/listings?sort=&order=asc\|desc` | Members: every post of the caller with how it is doing: `{"listings":[post + {"saves","bytes","page","editPage"}],"sort","order"}`. `saves`: accounts that added it to their cloud; `bytes`: every version's snapshot together; `page` and `editPage` (the page's `#manage` section): absolute URLs. `sort` is one of `created` (default), `updated`, `title`, `visibility`, `score`, `ups`, `downs`, `downloads`, `favorites`, `saves`, `versions`, `size`; `order` defaults to `desc` (`asc` for title and visibility). Unknown values: 400. Ties: newest first. |
+
+Favourites are bookmarks, not copies, so they use nobody's storage. Website: `/listings` ("My listings", a tab next to
+My files) is the same list as a table sortable by each column (cards of label/value lines on phones), with links to
+view and edit each post; My files has a Favourites section with Download and "Add to my cloud" for each.
+
+### The in-game build browser
+
+The mod browses the board with its bearer token (logged out works for public posts too):
+
+- `GET /api/board?q=&sort=top|hot|new|downloads&tag=&size=&complexity=&mc=&page=&limit=` (and `tab=mine|shared` with a
+  token) for lists of post objects, `favorited` included;
+- `GET /api/board/{id}/thumbnail` (`image/png`, 404 without one) and `GET /api/board/{id}/file` (the `.slopmatic`
+  bytes, `X-Sha256`; counts a download) for one post; both take `?version=<n>`;
+- `POST /api/board/{id}/save` to add it to the player's cloud (a reference: it then syncs like any cloud file and costs
+  the player nothing), and `POST`/`DELETE /api/board/{id}/favorite` plus `GET /api/favorites` for favourites.
+
+All answer a private post the token can't see with 404, a bad token with 401, and `save`/`favorite` a player without
+access with 403 `not_whitelisted`. Examples:
+
+```
+GET /api/board?q=farm&sort=downloads&limit=20&page=1
+200 {"posts":[{"id":"Ab3dEf_hIj","title":"Iron farm","visibility":"public","author":{...},"filename":"Iron farm.slopmatic",
+     "size":4410,"sha256":"...","hasThumbnail":true,"score":4,"downloads":17,"favorites":3,"favorited":false,...}],
+     "tab":"public","sort":"downloads","q":"farm","tags":[],"size":null,"complexity":null,"mc":null,"author":null,
+     "page":1,"pageSize":20,"total":1,"pages":1}
+POST /api/board/Ab3dEf_hIj/save
+201 {"path":"board/Iron farm.slopmatic","size":4410,"sha256":"...","modified":1793500000000,"hasThumbnail":true,
+     "source":{"postId":"Ab3dEf_hIj","title":"Iron farm","author":"Alice","authorUuid":"..."},"listing":null,"reference":true}
+POST /api/board/Ab3dEf_hIj/favorite
+200 {"favorites":4,"favorited":true}
+```
 
 ### Settings profiles
 
@@ -288,7 +351,7 @@ thumbnails, exports, the 3D view. Everything else that uses an account's cloud a
 
 after the usual 401 (no or bad token) and CSRF checks. That covers `/api/files*`, `/api/thumbnails*`, `/api/export*`,
 `POST /api/board`, `PATCH`/`DELETE /api/board/{id}`, `/refresh`, `/versions` (posting and deleting), `/vote`, `/save`,
-`POST /api/reports`, `/api/account/storage-request`, `/api/profiles*`, `/api/account/display-name`, `/api/account/avatar`
+`/favorite`, `/api/favorites`, `/api/listings`, `POST /api/reports`, `/api/account/storage-request`, `/api/profiles*`, `/api/account/display-name`, `/api/account/avatar`
 and `/api/account/discord`. Nothing is deleted when a player has no access: their files and posts stay, and come
 back the moment they are (re)added. Their public posts stay on the board; admins can hide them. On the website
 `/` sends them to `/apply`, which explains this and holds the application form (logged out, it says how to log in).
@@ -340,7 +403,8 @@ Feedback is not filtered (bug reports may quote anything).
 
 ### Admin
 
-The page `/admin` (tabs: Applications, Storage, Reports, Feedback = `/admin/feedback`, Whitelist, Badges, Users, Telemetry) and
+The page `/admin` (tabs: Applications, Storage (storage requests), Reports, Feedback = `/admin/feedback`, Whitelist, Badges, Users,
+Telemetry, Site storage = `?tab=disk`) and
 `/admin/feedback` answer 404, the same page as any unknown address, to everyone but admins. Unknown non-API addresses
 now get that HTML page; the API keeps `{"error": "Not Found"}`. The admin API answers 401 logged out and 403
 `{"error": "only admins can do that"}` to everyone else; cookie requests need `X-Requested-With`.
@@ -361,10 +425,44 @@ now get that HTML page; the API keeps `{"error": "Not Found"}`. The admin API an
 | `POST /api/admin/whitelist/remove` | `{"uuids":[...]}`: `{"removed","count"}` (the page's "remove all missing"). |
 | `GET /api/admin/users?q=&page=` | Accounts matching part of the Minecraft, display or Discord name, or the uuid, most recently seen first, 50 a page: `{"users":[{"uuid","name","displayName","tag","discord":{"id","name"}\|null,"avatarVersion","customAvatar","admin","usedBytes","quotaBytes","quotaOverride","badges","whitelisted","whitelistSource","posts","created","lastSeen"}],"total","page","pages"}`. |
 | `GET /api/admin/telemetry` | The telemetry summary (see Telemetry). |
+| `GET /api/admin/storage` | The Site storage summary (see [Site storage](#site-storage)). |
 | `PATCH /api/admin/users/{name or uuid}` | `{"quotaBytes": n \| null}` (null: back to the default). |
 | `PUT` / `DELETE /api/admin/users/{name or uuid}/badges/{badge}` | Give or take a badge; returns the user. |
 
 `users.last_seen` is written on authenticated requests at most every 5 minutes.
+
+### Site storage
+
+`SLOPMATICA_SITE_QUOTA_BYTES` (100 GiB by default) caps everything under the data directory together: cloud files and
+their thumbnails, board snapshots of every version with their thumbnails and 3D view caches, releases, custom pictures and
+cached skins, feedback attachments, and the database (`cloud.db` with its `-wal` and `-shm`). A file with several hard
+links (a board snapshot and the references saved from it) counts once. Any upload that would take the site past the cap
+gets
+
+```json
+507 {"error": "the site's storage is full, so nothing more can be stored for now; please tell an admin", "code": "site_full"}
+```
+
+admins included: cloud files (`PUT /api/files`), thumbnails, posting and new versions and refreshes, custom pictures,
+releases (`POST /api/releases`; `publish_release.py` on the machine is not checked), and feedback attachments. A save
+from the board takes no room (a hard link; a plain copy is checked where links aren't possible). The per-account quota
+(413) is checked first. The size is measured by walking the data directory (not `tmp/`), at most every 30 s, plus what
+was let in since; the estimate errs high, so the directory is measured again before an upload is refused.
+
+`GET /api/admin/storage` (admins; 401/403 otherwise) and the admin page's **Site storage** tab show it:
+
+```
+{"usedBytes","capBytes","freeBytes","diskFreeBytes"|null,
+ "categories":[{"key","label","bytes","files"}],        // posts, models, post_thumbs, files, thumbs, avatars, skins,
+                                                       // releases, feedback, database, other
+ "topUsers":[{"uuid","name","displayName","tag","usedBytes","quotaBytes","fileBytes","postBytes","referenceBytes"}],
+ "largestPosts":[{"id","title","visibility","hidden","author":{"uuid","name","displayName"},"bytes","versionCount","saves","page"}],
+ "largestFiles":[{"owner":{"uuid","name","displayName","tag"},"path","size","reference","sourcePost"}]}
+```
+
+`topUsers` are the 15 accounts with the most counted bytes (`usedBytes` = `fileBytes` + `postBytes`; `referenceBytes`
+are saves from the board, not counted); `largestPosts` and `largestFiles` the 15 largest (posts with every version).
+The tab links each to the post or the account.
 
 ### Releases
 
@@ -396,13 +494,71 @@ database at schema 4 (start the 0.6.0 server once), and may run while the server
 ### Feedback
 
 `/feedback` (the mod's Credits button; `?mod=&mc=&type=` prefill the form) takes bug reports, suggestions and other
-messages, logged in or not. `POST /api/feedback` `{"type":"bug"|"suggestion"|"other","message","modVersion"?,"mcVersion"?,"contact"?}`
-needs `X-Requested-With: slopmatica` unless it has a bearer token, and records the logged-in account. Message at most
-5000 characters, versions 40, contact 200. Limits per 15 minutes: 5 per address logged out, 20 per account
-(429 past that; counted in `login_failures` under `feedback-ip:`/`feedback-user:` keys). Admins only:
+messages, logged in or not. `POST /api/feedback` takes JSON `{"type":"bug"|"suggestion"|"other","message","modVersion"?,"mcVersion"?,"contact"?}`
+(at most 64 KiB), or `multipart/form-data` with the same fields as text parts plus optional file parts:
+
+- `log`: the game's log, text (no NUL bytes) or gzip of text (kept as sent, named `….gz`), at most 5 MiB as sent (and
+  64 MiB unpacked). A plain text part named `log` (no file name) is taken as `latest.log`.
+- `schematic`: a schematic in any supported format, by its file name (`.slopmatic`, `.nbt`, `.litematic`, `.schem`),
+  gzip like all of them, at most 20 MiB. It is not parsed (a report may be about a file that can't be read).
+
+File parts need a `filename`; an empty part (a browser's empty file input) is no attachment. The file name is kept as one
+plain segment for downloads. Too large: 413 `{"error","maxBytes"}`; not text, not gzip or not a schematic name: 400. The
+whole body is at most 25 MiB + 64 KiB. Attachments count toward the site cap (507 `site_full`).
+
+What the mod sends for a bug report: `type=bug`, `message` (what the player typed), `modVersion`, `mcVersion`, the file
+`log` (its `logs/latest.log`) and the file `schematic` (the selected schematic), with its bearer token:
+
+```
+POST /api/feedback
+Authorization: Bearer <token>
+Content-Type: multipart/form-data; boundary=x
+
+--x
+Content-Disposition: form-data; name="type"
+
+bug
+--x
+Content-Disposition: form-data; name="message"
+
+The hologram flickers when I move the schematic.
+--x
+Content-Disposition: form-data; name="modVersion"
+
+0.17.0
+--x
+Content-Disposition: form-data; name="mcVersion"
+
+26.3
+--x
+Content-Disposition: form-data; name="log"; filename="latest.log"
+Content-Type: text/plain
+
+...
+--x
+Content-Disposition: form-data; name="schematic"; filename="Castle.litematic"
+Content-Type: application/octet-stream
+
+...
+--x--
+
+201 {"id":12,"type":"bug","message":"The hologram flickers when I move the schematic.","modVersion":"0.17.0","mcVersion":"26.3",
+     "contact":null,"user":{"uuid":"...","name":"Alice"},"created":1793500000000,"resolved":null,
+     "attachments":[{"kind":"log","filename":"latest.log","size":51234,"sha256":"...","url":"<site>/api/feedback/12/attachments/log"},
+                    {"kind":"schematic","filename":"Castle.litematic","size":4410,"sha256":"...","url":"<site>/api/feedback/12/attachments/schematic"}]}
+```
+
+Without a bearer token the request needs `X-Requested-With: slopmatica` (logged out or by website cookie), and records
+the logged-in account if there is one. Message at most 5000 characters, versions 40, contact 200. Limits per 15 minutes:
+5 per address logged out, 20 per account (429 past that; counted in `login_failures` under `feedback-ip:`/`feedback-user:`
+keys; refused submissions don't count). The website's form can attach both files too. Admins only:
 `GET /api/feedback?status=open|resolved|all` returns `{"feedback":[...],"open","resolved"}`,
-`POST /api/feedback/{id}/resolve` `{"resolved": bool}`, and the page `/admin/feedback` (404 to anyone else).
-A feedback item is `{"id","type","message","modVersion","mcVersion","contact","user":{"uuid","name"}|null,"created","resolved"(unix ms|null)}`.
+`POST /api/feedback/{id}/resolve` `{"resolved": bool}`, `GET /api/feedback/{id}/attachments/log|schematic` (always a
+download: `Content-Disposition: attachment`, `text/plain` for a plain log, else `application/octet-stream`; 404 if there
+is none), `DELETE /api/feedback/{id}/attachments` (all of them) and `DELETE /api/feedback/{id}/attachments/log|schematic`
+(204; the report stays), and the page `/admin/feedback` (404 to anyone else), which links the attachments and can delete
+them. Attachments of reports resolved more than 30 days ago are deleted at startup (the reports stay).
+A feedback item is `{"id","type","message","modVersion","mcVersion","contact","user":{"uuid","name"}|null,"created","resolved"(unix ms|null),"attachments":[{"kind","filename","size","sha256","url"}]}`.
 
 ### Database
 
@@ -419,11 +575,16 @@ partial unique indexes); the whitelist seed is inserted in the same transaction.
 `post_versions` (earlier snapshots), `post_authors`, `post_downloads`, `profiles`, `telemetry` and `meta` (the address
 hashing secret, made at the first start). In the same transaction every account gets its Minecraft name as display name
 (older accounts first; a repeated name gets a random tag) and the unique index on (name, tag) is created. After it, the
-startup reads each existing snapshot once to count its block types. 0.9.0 changes nothing in the database (still 6). Before step 3, board snapshots that aren't
+startup reads each existing snapshot once to count its block types. 0.9.0 changes nothing in the database (still 6).
+7 (0.10.0) adds `files.listing_post` (the owner's post the file is the source of), filled from each post's
+`source_path`, then for files still without one from the owner's posts with the same sha256 (current snapshot or an
+earlier version, newest post first); the tables `favorites`, `post_saves` (filled with every account that had saved a
+post before, not counting its author) and `feedback_files`; and a partial index on `files.source_post`. One transaction. Before step 3, board snapshots that aren't
 `.slopmatic` are converted in place, each committed on its own (size, hash, format, file name, so quota
 usage follows); one that fails to convert is left as it is and logged. An interrupted run converts the
 rest at the next start.
-Board snapshot folders without a post are removed at startup, and posts whose snapshot is missing are dropped.
+Board snapshot folders without a post are removed at startup, and posts whose snapshot is missing are dropped. Feedback
+attachment rows whose file is missing are dropped, and files and folders in `feedback/` without a row are removed.
 Other files in a post's folder (left over from an interrupted refresh or conversion, or a 3D view cache of an
 older snapshot) are removed too, and so are `v<n>/` folders without a version; a version whose snapshot is missing is dropped.
 

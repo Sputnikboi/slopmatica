@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from slopmatica_cloud import __version__, convert, images, nbt
-from slopmatica_cloud.app import CSP, SCHEMA_VERSION, USER_CARD_MAX_AGE
+from slopmatica_cloud.app import CSP, SCHEMA_VERSION, USER_CARD_MAX_AGE, semver_key
 from slopmatica_cloud.convert import ConversionError, parse_state, state_string, varint_array
 from slopmatica_cloud.nbt import ByteArray, Compound, Double, Float, Int, IntArray, List, Long, Short, String
 
@@ -41,7 +41,7 @@ def ppl(gated, mojang):
 
 
 def test_version_bumped():
-    assert __version__ == "0.9.0" and SCHEMA_VERSION == 6  # no migration in 0.9.0
+    assert semver_key(__version__) >= semver_key("0.9.0") and SCHEMA_VERSION >= 6  # no migration; test_v100 checks the current one
 
 
 # ------------------------------------------------------------------ block state strings and varints

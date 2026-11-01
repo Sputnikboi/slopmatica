@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}My listings &middot; Slopmatica Cloud{% endblock %}
+{% block main %}
+{% include "_files_tabs.html" %}
+<section class="panel usage listing-sum">
+  <div class="usage-text">
+    <strong>{{ posts|length }}</strong> post{{ "" if posts|length == 1 else "s" }} on the board
+    <span class="muted"> &middot; {{ totals.downloads|num }} download{{ "" if totals.downloads == 1 else "s" }} &middot; {{ totals.favorites|num }} favourite{{ "" if totals.favorites == 1 else "s" }} &middot; {{ totals.saves|num }} added to someone&rsquo;s cloud &middot; {{ totals.total_bytes|human_size }} of your storage, every version</span>
+  </div>
+  <p class="muted note">Downloads, favourites and saves count each player once; your own don&rsquo;t count. Builds others add to their cloud from your posts count toward your storage here, not theirs.</p>
+</section>
+{% if posts %}
+<form class="toolbar listing-sort" method="get" action="{{ base }}/listings" data-autosubmit>
+  <label class="small" for="listing-sort">Sort by</label>
+  <select id="listing-sort" name="sort">
+    {% for key, label in columns %}<option value="{{ key }}"{% if key == sort %} selected{% endif %}>{{ label }}</option>{% endfor %}
+  </select>
+  <select name="order" aria-label="Order">
+    <option value="desc"{% if desc %} selected{% endif %}>High to low, newest first</option>
+    <option value="asc"{% if not desc %} selected{% endif %}>Low to high, oldest first</option>
+  </select>
+  <noscript><button class="btn ghost small" type="submit">Sort</button></noscript>
+</form>
+<div class="table-wrap"><table class="stat-table listings">
+  <thead><tr>
+    {% for key, label in columns %}
+    <th scope="col"{% if key not in ("title", "visibility") %} class="num"{% endif %}{% if key == sort %} aria-sort="{{ 'descending' if desc else 'ascending' }}"{% endif %}><a class="sort-link{{ ' on' if key == sort else '' }}" href="{{ sort_link(key) }}">{{ label }}{% if key == sort %} <span aria-hidden="true">{{ "&#9660;"|safe if desc else "&#9650;"|safe }}</span>{% endif %}</a></th>
+    {% endfor %}
+    <th scope="col"><span class="visually-hidden">Links</span></th>
+  </tr></thead>
+  <tbody>
+  {% for p in posts %}
+  <tr data-listing-row="{{ p.id }}">
+    <td class="lt-title" data-label="Title"><a href="{{ base }}/board/{{ p.id }}">{{ p.title }}</a></td>
+    <td data-label="Visibility"><span class="badge vis-{{ p.visibility }}">{{ p.visibility|capitalize }}</span>{% if p.hidden %} <span class="badge mod-hidden" title="Hidden by an admin{% if p.hidden_reason %}: {{ p.hidden_reason }}{% endif %}">Hidden</span>{% endif %}</td>
+    <td class="num" data-label="Score"><span class="score{{ ' neg' if p.score < 0 else '' }}">{{ p.score }}</span></td>
+    <td class="num" data-label="Up">{{ p.ups|num }}</td>
+    <td class="num" data-label="Down">{{ p.downs|num }}</td>
+    <td class="num" data-label="Downloads">{{ p.downloads|num }}</td>
+    <td class="num" data-label="Favourites">{{ p.favorites|num }}</td>
+    <td class="num" data-label="Saves">{{ p.saves|num }}</td>
+    <td class="num" data-label="Versions">{{ p.version_count }}</td>
+    <td class="num" data-label="Size">{{ p.total_bytes|human_size }}</td>
+    <td class="num" data-label="Posted"><time datetime="{{ p.created|iso_utc }}">{{ p.created|pretty_utc }}</time></td>
+    <td class="num" data-label="Updated"><time datetime="{{ p.updated|iso_utc }}">{{ p.updated|pretty_utc }}</time></td>
+    <td class="lt-actions"><a class="btn small ghost" href="{{ base }}/board/{{ p.id }}#manage">Edit</a> <a class="btn small ghost" href="{{ base }}/board/{{ p.id }}">View</a></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% else %}
+<p class="empty muted">You haven&rsquo;t posted anything yet. Use <strong>Post to board&hellip;</strong> on one of <a href="{{ base }}/">your files</a>.</p>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="{{ base }}/static/board.js?v={{ v }}"></script>
+{% endblock %}

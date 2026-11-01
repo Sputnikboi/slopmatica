@@ -1,5 +1,15 @@
 {% from "_badges.html" import user_badges %}
-{% macro post_card(p, base, show_visibility=False, chip_url=None, all_tags={}, size_classes={}) %}
+{# The favourite heart: a toggle for members who may favourite the post (anyone but its author can't favourite a
+   private or hidden one), else just the count. #}
+{% macro fav_button(p, favs=(), me=None) %}
+{% if me and (p.uuid == me or (p.visibility != "private" and not p.hidden)) %}
+{% set on = p.id in favs %}
+<button type="button" class="fav-btn{{ ' on' if on else '' }}" data-fav="{{ p.id }}" aria-pressed="{{ 'true' if on else 'false' }}" aria-label="Favourite" title="{{ 'Remove from favourites' if on else 'Add to favourites' }}"><span aria-hidden="true">&#9829;</span> <span data-fav-count>{{ p.favorites|num }}</span></button>
+{%- else -%}
+<span class="fav-count" title="Favourites"><span aria-hidden="true">&#9829;</span> {{ p.favorites|num }}</span>
+{%- endif %}
+{% endmacro %}
+{% macro post_card(p, base, show_visibility=False, chip_url=None, all_tags={}, size_classes={}, favs=(), me=None) %}
 {# The whole card is clickable through the title link's ::after; the chips and the author link sit above it as their own links. #}
 <article class="card post-card">
   <div class="thumb">
@@ -19,6 +29,7 @@
     <div class="sub muted stats">
       <span class="score{{ ' neg' if p.score < 0 else '' }}" title="{{ p.ups }} up, {{ p.downs }} down">&#9650; {{ p.score }}</span>
       <span title="Downloads and saves">&#8681; {{ p.downloads|num }}</span>
+      {{ fav_button(p, favs, me) }}
       <span>{{ p.size|human_size }}</span>
       {% if p.version_count > 1 %}<span title="{{ p.version_count }} versions">v{{ p.version }}</span>{% endif %}
     </div>

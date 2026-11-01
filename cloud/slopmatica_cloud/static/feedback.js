@@ -31,13 +31,23 @@
       };
       if (!body.message) { say(msg, "Write a message first.", true); el.message.focus(); return; }
       const button = form.querySelector("button[type=submit]");
+      // with a log or a schematic attached: the same fields as multipart/form-data
+      const files = ["log", "schematic"].filter((k) => el[k] && el[k].files.length);
+      let request = { method: "POST", headers: HDR, credentials: "same-origin", body: JSON.stringify(body) };
+      if (files.length) {
+        const data = new FormData();
+        Object.entries(body).forEach(([k, v]) => { if (v !== null) data.append(k, v); });
+        files.forEach((k) => data.append(k, el[k].files[0], el[k].files[0].name));
+        request = { method: "POST", headers: { "X-Requested-With": "slopmatica" }, credentials: "same-origin", body: data };
+      }
       button.disabled = true;
-      say(msg, "Sending…");
+      say(msg, files.length ? "Uploading…" : "Sending…");
       try {
-        const r = await fetch(base + "/api/feedback", { method: "POST", headers: HDR, credentials: "same-origin", body: JSON.stringify(body) });
+        const r = await fetch(base + "/api/feedback", request);
         if (!r.ok) { say(msg, await errorText(r), true); return; }
         say(msg, "");
         el.message.value = "";
+        files.forEach((k) => { el[k].value = ""; });
         form.hidden = true;
         thanks.hidden = false;
       } catch (_) {
@@ -52,6 +62,25 @@
       form.elements.message.focus();
     });
   }
+
+  // ---- admin: delete a report's attachments
+  document.querySelectorAll("[data-delete-attachments]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (!confirm("Delete this report's attachments? The report itself stays.")) return;
+      button.disabled = true;
+      try {
+        const r = await fetch(base + "/api/feedback/" + encodeURIComponent(button.dataset.deleteAttachments) + "/attachments", {
+          method: "DELETE", headers: { "X-Requested-With": "slopmatica" }, credentials: "same-origin",
+        });
+        if (!r.ok && r.status !== 404) { say(document.querySelector("[data-fb-msg]"), await errorText(r), true); return; }
+        location.reload();
+      } catch (_) {
+        say(document.querySelector("[data-fb-msg]"), "Network error, try again.", true);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
 
   // ---- admin: resolve / reopen
   document.querySelectorAll("[data-resolve]").forEach((button) => {

@@ -23,6 +23,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -94,7 +95,8 @@ POST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10}$")
 POST_THUMB = "thumb.png"  # inside posts/<id>/, next to the snapshot (which keeps its schematic extension)
 VISIBILITIES = ("public", "unlisted", "private")
 BOARD_TABS = ("public", "shared", "mine")
-BOARD_SORTS = ("top", "hot", "new")
+BOARD_SORTS = ("top", "hot", "new", "downloads")
+MAX_BOARD_LIMIT = 100  # posts per page the API gives at most (?limit=)
 MAX_TITLE_LEN = 100
 MAX_DESCRIPTION_LEN = 5000
 MAX_ALLOWED_NAMES = 50
@@ -232,6 +234,22 @@ COMPLEXITY_CLASSES: tuple[tuple[str, str, int | None], ...] = (
 )
 COMPLEXITY_LABELS = {key: label for key, label, _ in COMPLEXITY_CLASSES}
 
+# ---- 0.10.0: listings, favourites, storage accounting, feedback attachments
+# My listings (/listings, GET /api/listings): the sort keys and whether they sort high to low by default.
+LISTING_SORTS: dict[str, bool] = {
+    "created": True, "updated": True, "title": False, "visibility": False, "score": True, "ups": True, "downs": True,
+    "downloads": True, "favorites": True, "saves": True, "versions": True, "size": True,
+}
+SITE_USAGE_TTL = 30  # seconds a measured total of the data directory is trusted (plus what was written since)
+FEEDBACK_DIR = "feedback"  # <data>/feedback/<id>/log or schematic: a bug report's attachments
+FEEDBACK_ATTACHMENTS: dict[str, str] = {"log": "Game log", "schematic": "Schematic"}
+MAX_FEEDBACK_LOG = 5 * 1024 * 1024
+MAX_FEEDBACK_SCHEMATIC = 20 * 1024 * 1024
+MAX_FEEDBACK_JSON = 64 * 1024  # a feedback body without attachments
+MAX_LOG_TEXT = 64 * 1024 * 1024  # a gzipped log may unpack to at most this much (checked while reading it)
+FEEDBACK_ATTACHMENT_DAYS = 30  # attachments of reports resolved longer ago are deleted at startup
+STORAGE_TOP = 15  # rows in each list of the admin page's Site storage tab
+
 
 # --------------------------------------------------------------------------- settings
 
@@ -270,6 +288,8 @@ class Settings:
     discord_client_id: str = ""
     discord_client_secret: str = ""
     discord_redirect: str = ""  # the callback URL registered with Discord: <site>/account/discord/callback
+    # Everything the site stores together (files, board, releases, pictures, feedback, the database).
+    site_quota_bytes: int = 100 * 1024 ** 3
 
     @property
     def discord_enabled(self) -> bool:
@@ -301,6 +321,8 @@ class Settings:
             kw["admins"] = frozenset(env["SLOPMATICA_ADMINS"].split(","))
         if env.get("SLOPMATICA_QUOTA_BYTES"):
             kw["quota_bytes"] = int(env["SLOPMATICA_QUOTA_BYTES"])
+        if env.get("SLOPMATICA_SITE_QUOTA_BYTES"):
+            kw["site_quota_bytes"] = int(env["SLOPMATICA_SITE_QUOTA_BYTES"])
         if env.get("SLOPMATICA_PUBLIC_URL"):
             kw["public_url"] = env["SLOPMATICA_PUBLIC_URL"]
         if env.get("SLOPMATICA_MOJANG_HASJOINED"):
@@ -546,6 +568,14 @@ class FileRow:
     modified: int
     has_thumb: bool
     source: FileSource | None = None
+    listing_post: str | None = None  # the owner's own board post this file was posted from (files.listing_post)
+    reference: bool = False  # saved from the board and still a post's snapshot byte for byte: costs the saver nothing
+    listing: dict[str, Any] | None = None  # filled by Store.attach_listings
+
+    @property
+    def billed(self) -> int:
+        """Bytes the file counts toward its owner's quota."""
+        return 0 if self.reference else self.size
 
     def api(self) -> dict[str, Any]:
         return {
@@ -555,6 +585,8 @@ class FileRow:
             "modified": self.modified,
             "hasThumbnail": self.has_thumb,
             "source": self.source.api() if self.source else None,
+            "listing": self.listing,
+            "reference": self.reference,
         }
 
     @classmethod
@@ -564,7 +596,8 @@ class FileRow:
             # the author's current name if they have logged in since, else the name when it was saved
             name = r["source_author_now"] or r["source_author_name"] or ""
             source = FileSource(r["source_post"], r["source_title"] or "", r["source_author_uuid"] or "", name)
-        return cls(r["path"], r["size"], r["sha256"], r["modified"], bool(r["has_thumb"]), source)
+        return cls(r["path"], r["size"], r["sha256"], r["modified"], bool(r["has_thumb"]), source,
+                   r["listing_post"], bool(r["is_ref"]))
 
 
 @dataclass
@@ -602,6 +635,9 @@ class PostRow:
     downloads: int = 0
     version_count: int = 1
     coauthors: list["Coauthor"] = field(default_factory=list)  # filled by Store.attach_coauthors
+    favorites: int = 0  # accounts that favourited it
+    saves: int = 0  # accounts (not the author) that added it to their cloud
+    total_bytes: int = 0  # every version's snapshot together (what the author's quota counts for it)
 
     @property
     def score(self) -> int:
@@ -631,6 +667,7 @@ class PostRow:
             badge_list(r["author_badges"]), r["hidden"], r["hidden_reason"] or "",
             r["author_display"] or "", r["author_avatar_v"] or 0, r["version"], r["version_label"] or "",
             r["mc_version"], r["distinct_count"], links, r["downloads"], r["version_count"],
+            favorites=r["favorites"], saves=r["saves"], total_bytes=r["total_bytes"],
         )
 
 
@@ -993,6 +1030,44 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT NOT NULL
 );
 """,
+    # 0.10.0: which board post a cloud file is the source of, favourites, "Add to my cloud" counts, and bug
+    # report attachments. Existing files are linked to their owner's posts by path, then by content.
+    7: """
+ALTER TABLE files ADD COLUMN listing_post TEXT;  -- the owner's post this file was posted (or a version added) from
+UPDATE files SET listing_post = (
+    SELECT p.id FROM posts p WHERE p.uuid = files.uuid AND p.source_path = files.path ORDER BY p.created DESC, p.id LIMIT 1);
+UPDATE files SET listing_post = (
+    SELECT p.id FROM posts p WHERE p.uuid = files.uuid AND (p.sha256 = files.sha256
+        OR EXISTS (SELECT 1 FROM post_versions v WHERE v.post_id = p.id AND v.sha256 = files.sha256))
+    ORDER BY p.created DESC, p.id LIMIT 1)
+WHERE listing_post IS NULL;
+CREATE INDEX IF NOT EXISTS files_source_post ON files(source_post) WHERE source_post IS NOT NULL;
+CREATE TABLE IF NOT EXISTS favorites (
+    post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    uuid TEXT NOT NULL REFERENCES users(uuid),
+    created INTEGER NOT NULL,      -- unix ms
+    PRIMARY KEY (post_id, uuid)
+);
+CREATE INDEX IF NOT EXISTS favorites_uuid ON favorites(uuid, created);
+CREATE TABLE IF NOT EXISTS post_saves (          -- accounts (never the author) that added the post to their cloud
+    post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    uuid TEXT NOT NULL,
+    at INTEGER NOT NULL,           -- unix s
+    PRIMARY KEY (post_id, uuid)
+);
+INSERT OR IGNORE INTO post_saves(post_id, uuid, at)
+    SELECT f.source_post, f.uuid, MIN(f.modified) / 1000 FROM files f JOIN posts p ON p.id = f.source_post
+    WHERE f.uuid != p.uuid GROUP BY f.source_post, f.uuid;
+CREATE TABLE IF NOT EXISTS feedback_files (      -- a report's attachments, in feedback/<id>/<kind>
+    feedback_id INTEGER NOT NULL REFERENCES feedback(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('log', 'schematic')),
+    filename TEXT NOT NULL,        -- the name it was sent with (one plain segment), for downloads
+    size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    created INTEGER NOT NULL,      -- unix ms
+    PRIMARY KEY (feedback_id, kind)
+);
+""",
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 # Created by Store.fill_display_names once every account has a display name (migration 6).
@@ -1004,7 +1079,10 @@ SELECT p.*, u.name AS author_name, u.display_name AS author_display, u.avatar_ve
     (SELECT COUNT(*) FROM votes v WHERE v.post_id = p.id AND v.value = -1) AS downs,
     (SELECT group_concat(t.tag, ',') FROM post_tags t WHERE t.post_id = p.id) AS tags,
     (SELECT group_concat(b.badge, ',') FROM badges b WHERE b.uuid = p.uuid) AS author_badges,
-    1 + (SELECT COUNT(*) FROM post_versions pv WHERE pv.post_id = p.id) AS version_count
+    1 + (SELECT COUNT(*) FROM post_versions pv WHERE pv.post_id = p.id) AS version_count,
+    p.size + (SELECT COALESCE(SUM(pv.size), 0) FROM post_versions pv WHERE pv.post_id = p.id) AS total_bytes,
+    (SELECT COUNT(*) FROM favorites fv WHERE fv.post_id = p.id) AS favorites,
+    (SELECT COUNT(*) FROM post_saves ps WHERE ps.post_id = p.id) AS saves
 FROM posts p JOIN users u ON u.uuid = p.uuid
 """
 # Bytes of an account's board snapshots, every version: the quota counts them all.
@@ -1012,18 +1090,28 @@ POST_BYTES_SQL = (
     "((SELECT COALESCE(SUM(size),0) FROM posts WHERE uuid={owner})"
     " + (SELECT COALESCE(SUM(pv.size),0) FROM post_versions pv JOIN posts pp ON pp.id = pv.post_id WHERE pp.uuid={owner}))"
 )
-FILE_SELECT = """
-SELECT f.*, a.name AS source_author_now
+# A file (alias f) saved from the board that is still byte for byte one of that post's snapshots (any version):
+# a reference, which costs the saver nothing because the post's bytes count for its author. Once it no longer
+# matches (the saver changed it; the author deleted that version or the post), it counts for the saver.
+REFERENCE_SQL = (
+    "(f.source_post IS NOT NULL AND (EXISTS (SELECT 1 FROM posts rp WHERE rp.id = f.source_post AND rp.sha256 = f.sha256)"
+    " OR EXISTS (SELECT 1 FROM post_versions rv WHERE rv.post_id = f.source_post AND rv.sha256 = f.sha256)))"
+)
+# Bytes of an account's cloud files that count toward its quota (references don't).
+FILE_BYTES_SQL = "(SELECT COALESCE(SUM(f.size),0) FROM files f WHERE f.uuid={owner} AND NOT " + REFERENCE_SQL + ")"
+FILE_SELECT = f"""
+SELECT f.*, a.name AS source_author_now, {REFERENCE_SQL} AS is_ref
 FROM files f LEFT JOIN users a ON a.uuid = f.source_author_uuid
 """
 FILE_COLUMNS = (
     "uuid", "path", "size", "sha256", "modified", "has_thumb",
-    "source_post", "source_title", "source_author_uuid", "source_author_name",
+    "source_post", "source_title", "source_author_uuid", "source_author_name", "listing_post",
 )
 BOARD_ORDER = {
     "top": "(ups - downs) DESC, p.created DESC, p.id",
     "new": "p.created DESC, p.id",
     "hot": "slop_hot(ups - downs, p.created, :now) DESC, p.created DESC, p.id",
+    "downloads": "p.downloads DESC, (ups - downs) DESC, p.created DESC, p.id",
 }
 
 
@@ -1097,6 +1185,11 @@ class Store:
         self.releases_dir.mkdir(exist_ok=True)
         self.skins_dir = self.root / "skins"  # <uuid>.png (the skin) and <uuid>.face.png, refreshed daily
         self.skins_dir.mkdir(exist_ok=True)
+        self.feedback_root = self.root / FEEDBACK_DIR  # <id>/log and <id>/schematic: bug report attachments
+        self.feedback_root.mkdir(exist_ok=True)
+        # the data directory's measured size: (time.monotonic() when measured, bytes by category)
+        self._site: tuple[float, dict[str, list[int]]] | None = None
+        self._site_pending = 0  # bytes accepted by check_site since that measurement
         self.migrate()
         # keys anonymous downloads by address without storing the address
         self.ip_salt = self.meta_secret("ip_salt")
@@ -1104,6 +1197,7 @@ class Store:
         self.reconcile()
         self.reconcile_posts()
         self.reconcile_releases()
+        self.reconcile_feedback_files()
         self.backfill_complexity()
 
     def migrate(self) -> None:
@@ -1604,19 +1698,48 @@ class Store:
     def list_files(self, uuid: str) -> list[FileRow]:
         with self.lock:
             rows = self.db.execute(FILE_SELECT + " WHERE f.uuid=? ORDER BY f.path", (uuid,)).fetchall()
-        return [FileRow.from_row(r) for r in rows]
+        return self.attach_listings(uuid, [FileRow.from_row(r) for r in rows])
 
     def get_file(self, uuid: str, path: str) -> FileRow | None:
         with self.lock:
             r = self.db.execute(FILE_SELECT + " WHERE f.uuid=? AND f.path=?", (uuid, path)).fetchone()
-        return FileRow.from_row(r) if r else None
+        return self.attach_listings(uuid, [FileRow.from_row(r)])[0] if r else None
+
+    def attach_listings(self, uuid: str, files: list[FileRow]) -> list[FileRow]:
+        """Fill each file's listing: the owner's board post it was posted (or a version added) from, else one of
+        the owner's posts with exactly its bytes (any version; the newest post wins). Posts that are gone don't count."""
+        if not files:
+            return files
+        with self.lock:
+            posts = {r["id"]: r for r in self.db.execute(
+                "SELECT id, title, visibility, hidden, sha256 FROM posts WHERE uuid=? ORDER BY created DESC, id", (uuid,))}
+            if not posts:
+                return files
+            by_sha: dict[str, str] = {}
+            for r in posts.values():  # current snapshots first, newest post first
+                by_sha.setdefault(r["sha256"], r["id"])
+            for r in self.db.execute(
+                """SELECT v.post_id, v.sha256 FROM post_versions v JOIN posts p ON p.id = v.post_id WHERE p.uuid=?
+                   ORDER BY p.created DESC, p.id, v.num DESC""", (uuid,)):
+                by_sha.setdefault(r["sha256"], r["post_id"])
+        for f in files:
+            pid = f.listing_post if f.listing_post in posts else by_sha.get(f.sha256)
+            if pid is not None:
+                r = posts[pid]
+                f.listing = {"postId": pid, "title": r["title"], "visibility": r["visibility"], "hidden": r["hidden"] is not None}
+        return files
+
+    def set_listing(self, uuid: str, path: str, post_id: str) -> None:
+        """Record that the account's file at path was posted (or a version added) as post_id."""
+        with self.lock:
+            self.db.execute("UPDATE files SET listing_post=? WHERE uuid=? AND path=?", (post_id, uuid, path))
 
     def used_bytes(self, uuid: str) -> int:
-        """Bytes counted against the quota: the account's files plus its board snapshots."""
+        """Bytes counted against the quota: the account's files (not references to board posts) plus its board
+        snapshots, every version."""
         with self.lock:
             (n,) = self.db.execute(
-                "SELECT (SELECT COALESCE(SUM(size),0) FROM files WHERE uuid=:u) + " + POST_BYTES_SQL.format(owner=":u"),
-                {"u": uuid},
+                "SELECT " + FILE_BYTES_SQL.format(owner=":u") + " + " + POST_BYTES_SQL.format(owner=":u"), {"u": uuid},
             ).fetchone()
         return int(n)
 
@@ -1635,7 +1758,7 @@ class Store:
                 f"INSERT OR REPLACE INTO files({','.join(FILE_COLUMNS)}) VALUES({','.join('?' * len(FILE_COLUMNS))})",
                 (uuid, row.path, row.size, row.sha256, row.modified, int(row.has_thumb),
                  src.post_id if src else None, src.title if src else None,
-                 src.author_uuid if src else None, src.author_name if src else None),
+                 src.author_uuid if src else None, src.author_name if src else None, row.listing_post),
             )
 
     def delete_file_row(self, uuid: str, path: str) -> None:
@@ -1762,6 +1885,222 @@ class Store:
                 return False
             self.db.execute("UPDATE posts SET downloads = downloads + 1 WHERE id=?", (post_id,))
             return True
+
+    def count_save(self, post_id: str, uuid: str) -> None:
+        """Record that uuid (not the post's author) added the post to their cloud: counted once per account."""
+        with self.lock:
+            self.db.execute("INSERT OR IGNORE INTO post_saves(post_id, uuid, at) VALUES(?,?,?)", (post_id, uuid, now_s()))
+
+    # ---- favourites and listings
+
+    def set_favorite(self, post_id: str, uuid: str, on: bool) -> None:
+        with self.lock:
+            if on:
+                self.db.execute("INSERT OR IGNORE INTO favorites(post_id, uuid, created) VALUES(?,?,?)",
+                                (post_id, uuid, int(time.time() * 1000)))
+            else:
+                self.db.execute("DELETE FROM favorites WHERE post_id=? AND uuid=?", (post_id, uuid))
+
+    def favorite_ids(self, uuid: str, post_ids: list[str] | None = None) -> set[str]:
+        """Which of post_ids (every post when None) uuid has favourited."""
+        with self.lock:
+            if post_ids is None:
+                rows = self.db.execute("SELECT post_id FROM favorites WHERE uuid=?", (uuid,)).fetchall()
+            elif not post_ids:
+                return set()
+            else:
+                marks = ",".join("?" * len(post_ids))
+                rows = self.db.execute(f"SELECT post_id FROM favorites WHERE uuid=? AND post_id IN ({marks})",
+                                       [uuid, *post_ids]).fetchall()
+        return {r["post_id"] for r in rows}
+
+    def list_favorites(self, uuid: str) -> list[PostRow]:
+        """The posts uuid favourited, most recently favourited first. A post that has become private or hidden
+        (unless it is the caller's own) is left out; a deleted one is gone with its favourites."""
+        with self.lock:
+            rows = self.db.execute(
+                POST_SELECT + """ JOIN favorites fv ON fv.post_id = p.id AND fv.uuid = :u
+                   WHERE p.uuid = :u OR (p.visibility != 'private' AND p.hidden IS NULL)
+                   ORDER BY fv.created DESC, p.id""", {"u": uuid},
+            ).fetchall()
+        return self.attach_coauthors([PostRow.from_row(r) for r in rows])
+
+    def own_posts(self, uuid: str) -> list[PostRow]:
+        """Every post of the account, newest first (at most Settings.max_posts_per_user)."""
+        with self.lock:
+            rows = self.db.execute(POST_SELECT + " WHERE p.uuid=? ORDER BY p.created DESC, p.id", (uuid,)).fetchall()
+        return self.attach_coauthors([PostRow.from_row(r) for r in rows])
+
+    # ---- the site's storage: everything under the data directory together
+
+    SITE_CATEGORIES = (
+        ("posts", "Board snapshots and versions"), ("models", "3D view caches"), ("post_thumbs", "Board thumbnails"),
+        ("files", "Cloud files"), ("thumbs", "File thumbnails"), ("avatars", "Custom pictures"),
+        ("skins", "Cached skins and faces"), ("releases", "Mod releases"), ("feedback", "Feedback attachments"),
+        ("database", "Database"), ("other", "Other"),
+    )
+
+    def _classify(self, rel: tuple[str, ...]) -> str:
+        top = rel[0]
+        if top == "posts":
+            name = rel[-1]
+            if name.startswith(MODEL_CACHE_PREFIX):
+                return "models"
+            return "post_thumbs" if name == POST_THUMB else "posts"
+        if top == "users" and len(rel) >= 3:
+            if rel[2] == "files":
+                return "files"
+            if rel[2] == "thumbs":
+                return "thumbs"
+            if rel[2].startswith("avatar."):
+                return "avatars"
+        if top in ("skins", "releases"):
+            return top
+        if top == FEEDBACK_DIR:
+            return "feedback"
+        if len(rel) == 1 and top.startswith("cloud.db"):
+            return "database"
+        return "other"
+
+    def measure_site(self) -> dict[str, list[int]]:
+        """Walk the data directory: {category: [bytes, files]}. A file with several hard links (a board snapshot
+        and the copies "Add to my cloud" made of it) counts once, where it is met first: board snapshots are walked
+        first, so shared bytes show up there."""
+        out = {key: [0, 0] for key, _ in self.SITE_CATEGORIES}
+        seen: set[tuple[int, int]] = set()
+        # (tmp/ is scratch space: an upload being checked against the cap sits there while it is)
+        roots = [self.posts_root] + sorted(p for p in self.root.iterdir() if p not in (self.posts_root, self.tmp))
+        for top in roots:
+            for dirpath, _, names in os.walk(top) if top.is_dir() else [(str(top.parent), [], [top.name])]:
+                for name in names:
+                    full = os.path.join(dirpath, name)
+                    try:
+                        st = os.lstat(full)
+                    except OSError:
+                        continue
+                    if not (st.st_mode & 0o170000 == 0o100000):  # regular files only
+                        continue
+                    if st.st_nlink > 1:
+                        key = (st.st_dev, st.st_ino)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                    cat = out[self._classify(Path(full).relative_to(self.root).parts)]
+                    cat[0] += st.st_size
+                    cat[1] += 1
+        with self.lock:
+            self._site = (time.monotonic(), out)
+            self._site_pending = 0
+        return out
+
+    def site_used(self, fresh: bool = False) -> int:
+        """The data directory's size: measured at most SITE_USAGE_TTL seconds ago, plus what check_site let in since."""
+        with self.lock:
+            cached = self._site
+            pending = self._site_pending
+        if fresh or cached is None or time.monotonic() - cached[0] > SITE_USAGE_TTL:
+            return sum(v[0] for v in self.measure_site().values())
+        return sum(v[0] for v in cached[1].values()) + pending
+
+    def check_site(self, delta: int) -> None:
+        """507 code "site_full" if delta more bytes would take the site past Settings.site_quota_bytes (admins too).
+        The estimate errs high (deletions only count at the next measurement), so the disk is measured again
+        before anything is refused."""
+        if delta <= 0:
+            return
+        cap = self.settings.site_quota_bytes
+        if self.site_used() + delta > cap and self.site_used(fresh=True) + delta > cap:
+            raise ApiError(507, "the site's storage is full, so nothing more can be stored for now; please tell an admin",
+                           code="site_full")
+        with self.lock:
+            self._site_pending += delta
+
+    def storage_top_users(self, limit: int) -> list[sqlite3.Row]:
+        """Accounts by quota usage, most first: files (not references), board snapshots, references."""
+        with self.lock:
+            return self.db.execute(
+                """SELECT * FROM (SELECT u.uuid, u.name, u.display_name, u.display_tag, u.is_admin, u.quota_bytes,
+                       """ + FILE_BYTES_SQL.format(owner="u.uuid") + """ AS file_bytes,
+                       """ + POST_BYTES_SQL.format(owner="u.uuid") + """ AS post_bytes,
+                       (SELECT COALESCE(SUM(f.size),0) FROM files f WHERE f.uuid = u.uuid AND """ + REFERENCE_SQL + """) AS ref_bytes
+                   FROM users u) WHERE file_bytes + post_bytes > 0
+                   ORDER BY file_bytes + post_bytes DESC, name COLLATE NOCASE LIMIT ?""", (limit,),
+            ).fetchall()
+
+    def storage_largest_posts(self, limit: int) -> list[PostRow]:
+        with self.lock:
+            rows = self.db.execute(POST_SELECT + " ORDER BY total_bytes DESC, p.created DESC LIMIT ?", (limit,)).fetchall()
+        return [PostRow.from_row(r) for r in rows]
+
+    def storage_largest_files(self, limit: int) -> list[sqlite3.Row]:
+        with self.lock:
+            return self.db.execute(
+                f"""SELECT f.uuid, f.path, f.size, f.source_post, {REFERENCE_SQL} AS is_ref, u.name, u.display_name,
+                       u.display_tag FROM files f JOIN users u ON u.uuid = f.uuid
+                   ORDER BY f.size DESC, f.uuid, f.path LIMIT ?""", (limit,),
+            ).fetchall()
+
+    # ---- feedback attachments: feedback/<id>/<kind>, a row each in feedback_files
+
+    def feedback_file(self, feedback_id: int, kind: str) -> Path:
+        assert kind in FEEDBACK_ATTACHMENTS
+        return self.feedback_root / str(int(feedback_id)) / kind
+
+    def feedback_attachments(self, ids: list[int]) -> dict[int, list[sqlite3.Row]]:
+        if not ids:
+            return {}
+        marks = ",".join("?" * len(ids))
+        with self.lock:
+            rows = self.db.execute(
+                f"SELECT * FROM feedback_files WHERE feedback_id IN ({marks}) ORDER BY feedback_id, kind", ids).fetchall()
+        out: dict[int, list[sqlite3.Row]] = {}
+        for r in rows:
+            out.setdefault(r["feedback_id"], []).append(r)
+        return out
+
+    def delete_feedback_files(self, feedback_id: int, kind: str | None = None) -> int:
+        """Remove a report's attachments (one kind, or all): rows and files. Returns how many there were."""
+        kinds = [kind] if kind else list(FEEDBACK_ATTACHMENTS)
+        with self.lock:
+            n = 0
+            for k in kinds:
+                n += self.db.execute("DELETE FROM feedback_files WHERE feedback_id=? AND kind=?", (feedback_id, k)).rowcount
+                self.feedback_file(feedback_id, k).unlink(missing_ok=True)
+            try:
+                (self.feedback_root / str(int(feedback_id))).rmdir()
+            except OSError:
+                pass
+        return n
+
+    def reconcile_feedback_files(self) -> None:
+        """At startup: delete the attachments of reports resolved more than FEEDBACK_ATTACHMENT_DAYS ago, rows whose
+        file is missing, and folders and files without a row (an interrupted submission)."""
+        cutoff = (now_s() - FEEDBACK_ATTACHMENT_DAYS * DAY) * 1000
+        with self.lock:
+            old = [r[0] for r in self.db.execute(
+                """SELECT DISTINCT ff.feedback_id FROM feedback_files ff JOIN feedback f ON f.id = ff.feedback_id
+                   WHERE f.resolved IS NOT NULL AND f.resolved < ?""", (cutoff,))]
+            for fid in old:
+                self.delete_feedback_files(fid)
+            if old:
+                log.info("deleted the attachments of %d feedback reports resolved over %d days ago", len(old),
+                         FEEDBACK_ATTACHMENT_DAYS)
+            rows = {(r["feedback_id"], r["kind"]) for r in self.db.execute("SELECT feedback_id, kind FROM feedback_files")}
+            for fid, kind in rows:
+                if not self.feedback_file(fid, kind).is_file():
+                    log.warning("feedback %d: its %s attachment is missing", fid, kind)
+                    self.db.execute("DELETE FROM feedback_files WHERE feedback_id=? AND kind=?", (fid, kind))
+            for d in self.feedback_root.iterdir():
+                if not d.is_dir() or not d.name.isdigit():
+                    (shutil.rmtree(d, ignore_errors=True) if d.is_dir() else d.unlink(missing_ok=True))
+                    continue
+                for f in d.iterdir():
+                    if (int(d.name), f.name) not in rows:
+                        (shutil.rmtree(f, ignore_errors=True) if f.is_dir() else f.unlink(missing_ok=True))
+                try:
+                    d.rmdir()  # only if now empty
+                except OSError:
+                    pass
 
     # ---- settings profiles
 
@@ -2151,7 +2490,7 @@ class Store:
             (total,) = self.db.execute("SELECT COUNT(*) FROM users u" + where, params).fetchone()
             rows = self.db.execute(
                 """SELECT u.*, w.source AS wl_source,
-                       (SELECT COALESCE(SUM(size),0) FROM files f WHERE f.uuid = u.uuid)
+                       """ + FILE_BYTES_SQL.format(owner="u.uuid") + """
                        + """ + POST_BYTES_SQL.format(owner="u.uuid") + """ AS used,
                        (SELECT COUNT(*) FROM posts p WHERE p.uuid = u.uuid) AS posts,
                        (SELECT group_concat(b.badge, ',') FROM badges b WHERE b.uuid = u.uuid) AS badges
@@ -2953,11 +3292,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return text
 
     def check_quota(user: User, delta: int) -> None:
-        """Raise 413 unless the account has room for delta more bytes. Call with store.lock held."""
+        """Raise 413 unless the account has room for delta more bytes, then 507 unless the site has.
+        Call with store.lock held."""
         quota = quota_for(user)
         used = store.used_bytes(user.uuid)
         if quota is not None and used + delta > quota:
             raise ApiError(413, "quota exceeded", usedBytes=used, quotaBytes=quota)
+        store.check_site(delta)
 
     def session_user(request: Request) -> User | None:
         cookie = request.cookies.get(SESSION_COOKIE)
@@ -3226,24 +3567,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await run_in_threadpool(check_vanilla, tmp, path.rsplit("/", 1)[-1], size)
             with store.lock:
                 old = store.get_file(user.uuid, path)
+                # the same bytes again keep a reference to a board post a reference (free); anything else counts
+                still_ref = old is not None and old.reference and old.sha256 == digest
                 quota = quota_for(user)
                 used = store.used_bytes(user.uuid)
-                if quota is not None and used - (old.size if old else 0) + size > quota:
+                if quota is not None and used - (old.billed if old else 0) + (0 if still_ref else size) > quota:
                     raise ApiError(413, "quota exceeded", usedBytes=used, quotaBytes=quota)
+                if not still_ref:
+                    store.check_site(size - (old.billed if old else 0))
                 dest = store.file_path(user.uuid, path)
-                try:
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    os.replace(tmp, dest)
-                except (NotADirectoryError, IsADirectoryError, FileExistsError):
-                    raise ApiError(409, "path conflicts with an existing file or folder")
+                if not still_ref:  # (the same bytes as a board snapshot: keep the file, a hard link to it)
+                    try:
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        os.replace(tmp, dest)
+                    except (NotADirectoryError, IsADirectoryError, FileExistsError):
+                        raise ApiError(409, "path conflicts with an existing file or folder")
                 has_thumb = bool(old and old.has_thumb)
                 if old and old.sha256 != digest and has_thumb:
                     # content changed: the old thumbnail is stale
                     store.thumb_path(user.uuid, path).unlink(missing_ok=True)
                     has_thumb = False
-                # a file saved from the board stays "from the board" until its content changes
+                # a file saved from the board stays "from the board" until its content changes; a file posted to the
+                # board stays linked to its post (the post can be updated from it)
                 source = old.source if old and old.sha256 == digest else None
-                store.put_file_row(user.uuid, FileRow(path, size, digest, int(time.time() * 1000), has_thumb, source))
+                store.put_file_row(user.uuid, FileRow(path, size, digest, int(time.time() * 1000), has_thumb, source,
+                                                      old.listing_post if old else None))
                 row = store.get_file(user.uuid, path)
         finally:
             tmp.unlink(missing_ok=True)
@@ -3351,6 +3699,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ApiError(400, "not a PNG image")
         with store.lock:
             require_file(user, path)
+            store.check_site(len(data))
             dest = store.thumb_path(user.uuid, path)
             dest.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp_name = tempfile.mkstemp(dir=store.tmp, suffix=".png")
@@ -3603,7 +3952,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             shutil.rmtree(vdir, ignore_errors=True)
             raise
 
-    def post_api(post: PostRow, viewer: User | None, detail: bool = False) -> dict[str, Any]:
+    def post_api(post: PostRow, viewer: User | None, detail: bool = False, favs: set[str] | None = None) -> dict[str, Any]:
+        """A post for the API. favs: the ids viewer has favourited, when known (lists), else looked up."""
+        if viewer is not None and favs is None:
+            favs = store.favorite_ids(viewer.uuid, [post.id])
         out: dict[str, Any] = {
             "id": post.id,
             "title": post.title,
@@ -3635,6 +3987,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "complexity": post.complexity,
             "downloads": post.downloads,
             "shareUrl": f"{settings.site_url}/b/{post.id}",
+            "favorites": post.favorites,
+            "favorited": (post.id in favs) if viewer is not None and favs is not None else None,
         }
         if detail:
             out["description"] = post.description
@@ -3750,6 +4104,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         out["mc"], out["author"] = mc, parse_uuid(author) if author else None
         return out
 
+    def board_limit(params: Any) -> int:
+        """?limit= (1 to MAX_BOARD_LIMIT) for the API, else the board's page size."""
+        raw = params.get("limit") or ""
+        if not raw:
+            return settings.board_page_size
+        if not raw.isdigit() or not 1 <= int(raw) <= MAX_BOARD_LIMIT:
+            raise ApiError(400, f"limit must be a number from 1 to {MAX_BOARD_LIMIT}")
+        return int(raw)
+
     def board_query(params: Any, strict: bool) -> tuple[str, str, str, int]:
         """(tab, sort, query, page) from query parameters; strict raises 400 instead of defaulting."""
         tab = params.get("tab") or "public"
@@ -3775,11 +4138,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def board_list(request: Request) -> dict[str, Any]:
         tab, sort, query, page = board_query(request.query_params, strict=True)
         filters = board_filters(request.query_params, strict=True)
+        size = board_limit(request.query_params)
         user = optional_user(request) if tab == "public" else authenticate(request, mutating=False)
-        size = settings.board_page_size
         posts, total = store.list_posts(tab, user.uuid if user else None, sort, query, page, size, **filters)
+        favs = store.favorite_ids(user.uuid, [p.id for p in posts]) if user else None
         out: dict[str, Any] = {
-            "posts": [post_api(p, user) for p in posts],
+            "posts": [post_api(p, user, favs=favs) for p in posts],
             "tab": tab, "sort": sort, "q": query, **filters, "page": page,
             "pageSize": size, "total": total, "pages": max(1, -(-total // size)),
         }
@@ -3825,6 +4189,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     shutil.rmtree(pdir, ignore_errors=True)
                     store.delete_post_row(post_id)
                     raise
+                store.set_listing(user.uuid, path, post_id)  # My files marks the file as on the board
         finally:
             snap.cleanup()
         post = store.get_post(post_id)
@@ -3884,6 +4249,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 check_quota(user, snap.size - current.size)
                 install_snapshot(store.post_dir(post.id), snap, current.filename)
                 store.update_post(post.id, snapshot_columns(snap))
+                store.set_listing(user.uuid, post.source_path, post.id)
         finally:
             snap.cleanup()
         return post_api(store.get_post(post.id), user, detail=True)  # type: ignore[arg-type]
@@ -3969,6 +4335,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         os.replace(f, pdir / f.name)
                     shutil.rmtree(vdir, ignore_errors=True)
                     raise
+            if source:
+                store.set_listing(user.uuid, source, post_id)
 
     @app.delete("/api/board/{post_id}/versions/{num}")
     def board_delete_version(post_id: str, num: int, request: Request) -> Response:
@@ -3998,8 +4366,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def board_delete(post_id: str, request: Request) -> Response:
         post, user = acting_on_post(request, post_id, owner_only=True, admin_ok=True)
         with store.lock:
+            # Files saved from it stay where they are (hard links keep the bytes, copies are copies) and, no longer
+            # matching a snapshot, count for their owners from now on.
+            (refs,) = store.db.execute("SELECT COUNT(*) FROM files WHERE source_post=?", (post.id,)).fetchone()
             store.delete_post_row(post.id)
             shutil.rmtree(store.post_dir(post.id), ignore_errors=True)
+        if refs:
+            log.info("board post %s was deleted: %d saved copies now count for their owners", post.id, refs)
         if user.uuid != post.uuid:
             log.info("admin %s deleted board post %s (%r by %s)", user.name, post.id, post.title, post.author_name)
         return Response(status_code=204)
@@ -4017,20 +4390,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/board/{post_id}/save")
     def board_save(post_id: str, request: Request) -> JSONResponse:
+        """Add a snapshot to the caller's files as a reference: a hard link to the post's snapshot where the disk
+        allows it (else a copy). It costs the caller nothing while it still matches one of the post's versions."""
         post, user = acting_on_post(request, post_id, owner_only=False)
         ver, vdir = post_version(post, request)
         ext = "." + ver.format if ver.format else ver.filename[ver.filename.rfind("."):]
         stem = board_file_stem(post.title, ext)
+        snapshot = store._under(vdir, ver.filename)
         fd, tmp_name = tempfile.mkstemp(dir=store.tmp, suffix=".save")
+        os.close(fd)
         tmp = Path(tmp_name)
         try:
-            with os.fdopen(fd, "wb") as f:
-                try:
-                    size, digest = copy_hashed(store._under(vdir, ver.filename), f)
-                except FileNotFoundError:
-                    raise ApiError(404, "no such post")
+            tmp.unlink()
+            try:
+                os.link(snapshot, tmp)  # the same bytes on disk: no room taken
+                size, digest = ver.size, ver.sha256
+            except FileNotFoundError:
+                raise ApiError(404, "no such post")
+            except OSError:  # no hard links on this file system: a real copy, which takes room on the disk
+                with store.lock:
+                    store.check_site(ver.size)
+                with tmp.open("wb") as f:
+                    try:
+                        size, digest = copy_hashed(snapshot, f)
+                    except FileNotFoundError:
+                        raise ApiError(404, "no such post")
             with store.lock:
-                check_quota(user, size)
                 for n in range(1, 10000):
                     path = f"{BOARD_FOLDER}/{stem}{'' if n == 1 else f' ({n})'}{ext}"
                     validate_path(path)
@@ -4057,7 +4442,79 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             tmp.unlink(missing_ok=True)
         count_download(post, request, user)
+        if user.uuid != post.uuid:
+            store.count_save(post.id, user.uuid)
         return JSONResponse(row.api(), status_code=201)  # type: ignore[union-attr]
+
+    # ---- favourites: a bookmark per account, never a copy (so it costs nobody storage)
+
+    def favorite_state(post_id: str, user: User) -> dict[str, Any]:
+        post = store.get_post(post_id)
+        return {"favorites": post.favorites if post else 0, "favorited": post_id in store.favorite_ids(user.uuid, [post_id])}
+
+    @app.post("/api/board/{post_id}/favorite")
+    def board_favorite(post_id: str, request: Request) -> dict[str, Any]:
+        post, user = acting_on_post(request, post_id, owner_only=False)
+        if user.uuid != post.uuid and (post.visibility == "private" or post.hidden is not None):
+            raise ApiError(403, "only public and unlisted posts can be favourited", code="private")
+        store.set_favorite(post.id, user.uuid, True)
+        return favorite_state(post.id, user)
+
+    @app.delete("/api/board/{post_id}/favorite")
+    def board_unfavorite(post_id: str, request: Request) -> dict[str, Any]:
+        """Also works for a favourite whose post the caller can no longer see (it became private or hidden)."""
+        post = store.get_post(post_id) if POST_ID_RE.match(post_id) else None
+        user = member_auth(request, mutating=True)
+        if post is None or not (can_view(post, user) or post.id in store.favorite_ids(user.uuid, [post.id])):
+            raise ApiError(404, "no such post")
+        store.set_favorite(post.id, user.uuid, False)
+        return favorite_state(post.id, user)
+
+    @app.get("/api/favorites")
+    def favorites_list(request: Request) -> dict[str, Any]:
+        user = member_auth(request, mutating=False)
+        posts = store.list_favorites(user.uuid)
+        favs = {p.id for p in posts}
+        return {"posts": [post_api(p, user, favs=favs) for p in posts]}
+
+    # ---- My listings: the caller's own posts and how they are doing
+
+    def listing_order(params: Any, strict: bool) -> tuple[str, bool]:
+        """(sort key, high to low) from ?sort=&order=; strict raises 400 instead of defaulting."""
+        sort = params.get("sort") or "created"
+        if sort not in LISTING_SORTS:
+            if strict:
+                raise ApiError(400, "sort must be one of " + ", ".join(LISTING_SORTS))
+            sort = "created"
+        order = params.get("order") or ("desc" if LISTING_SORTS[sort] else "asc")
+        if order not in ("asc", "desc"):
+            if strict:
+                raise ApiError(400, "order must be asc or desc")
+            order = "desc" if LISTING_SORTS[sort] else "asc"
+        return sort, order == "desc"
+
+    def sorted_listings(posts: list[PostRow], sort: str, desc: bool) -> list[PostRow]:
+        key = {
+            "created": lambda p: p.created, "updated": lambda p: p.updated, "title": lambda p: p.title.casefold(),
+            "visibility": lambda p: (VISIBILITIES.index(p.visibility), p.hidden is not None),
+            "score": lambda p: p.score, "ups": lambda p: p.ups, "downs": lambda p: p.downs,
+            "downloads": lambda p: p.downloads, "favorites": lambda p: p.favorites, "saves": lambda p: p.saves,
+            "versions": lambda p: p.version_count, "size": lambda p: p.total_bytes,
+        }[sort]
+        out = sorted(posts, key=lambda p: (-p.created, p.id))  # ties: newest first, either way
+        return sorted(out, key=key, reverse=desc)
+
+    def listing_api(post: PostRow, user: User, favs: set[str]) -> dict[str, Any]:
+        return {**post_api(post, user, favs=favs), "saves": post.saves, "bytes": post.total_bytes,
+                "page": f"{settings.site_url}/board/{post.id}", "editPage": f"{settings.site_url}/board/{post.id}#manage"}
+
+    @app.get("/api/listings")
+    def listings(request: Request) -> dict[str, Any]:
+        user = member_auth(request, mutating=False)
+        sort, desc = listing_order(request.query_params, strict=True)
+        posts = sorted_listings(store.own_posts(user.uuid), sort, desc)
+        favs = store.favorite_ids(user.uuid, [p.id for p in posts])
+        return {"listings": [listing_api(p, user, favs) for p in posts], "sort": sort, "order": "desc" if desc else "asc"}
 
     @app.get("/api/board/{post_id}/file")
     def board_file(post_id: str, request: Request) -> FileResponse:
@@ -4571,6 +5028,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not (0 < w <= MAX_AVATAR_SIDE and 0 < h <= MAX_AVATAR_SIDE):
             raise ApiError(400, f"the icon must be at most {MAX_AVATAR_SIDE} x {MAX_AVATAR_SIDE} pixels (this one is {w} x {h})")
         with store.lock:
+            store.check_site(len(data))
             dest = store.avatar_path(user.uuid, kind)
             dest.parent.mkdir(parents=True, exist_ok=True)
             atomic_write(dest, data)
@@ -4731,6 +5189,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         upload_name, content = files["jar"]
         if len(content) > settings.max_release_bytes:
             raise ApiError(413, "file too large", maxBytes=settings.max_release_bytes)
+        store.check_site(len(content))  # admins too
         filename = fields.get("filename") or upload_name.replace("\\", "/").rsplit("/", 1)[-1]
         hidden = fields.get("hidden", "").strip().lower() in ("1", "true", "yes", "on")
         fd, tmp_name = tempfile.mkstemp(dir=store.tmp, suffix=".jar")
@@ -4804,16 +5263,72 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ApiError(400, f"{what} may not contain control characters or line breaks")
         return value or None
 
-    def feedback_api(r: sqlite3.Row) -> dict[str, Any]:
+    def attachment_api(feedback_id: int, a: sqlite3.Row) -> dict[str, Any]:
+        return {"kind": a["kind"], "filename": a["filename"], "size": a["size"], "sha256": a["sha256"],
+                "url": f"{settings.site_url}/api/feedback/{feedback_id}/attachments/{a['kind']}"}
+
+    def feedback_api(r: sqlite3.Row, attachments: list[sqlite3.Row] | None = None) -> dict[str, Any]:
+        """A feedback item. attachments: its rows in feedback_files when known (lists), else looked up."""
+        if attachments is None:
+            attachments = store.feedback_attachments([r["id"]]).get(r["id"], [])
         return {
             "id": r["id"], "type": r["kind"], "message": r["message"], "modVersion": r["mod_version"],
             "mcVersion": r["mc_version"], "contact": r["contact"],
             "user": {"uuid": r["uuid"], "name": r["name"]} if r["uuid"] else None,
             "created": r["created"], "resolved": r["resolved"],
+            "attachments": [attachment_api(r["id"], a) for a in attachments],
         }
 
+    def feedback_items(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+        files = store.feedback_attachments([r["id"] for r in rows])
+        return [feedback_api(r, files.get(r["id"], [])) for r in rows]
+
+    def attachment_name(raw: str, default: str) -> str:
+        """The name a file part was sent with as one plain, harmless segment (else default)."""
+        name = BAD_SEGMENT_CHARS.sub("", raw.replace("\\", "/").rsplit("/", 1)[-1]).strip().lstrip(".").strip()
+        if len(name) > MAX_SEGMENT_LEN:
+            stem, dot, ext = name.rpartition(".")
+            name = (stem[: MAX_SEGMENT_LEN - len(ext) - 1] + dot + ext) if dot and len(ext) < 12 else name[:MAX_SEGMENT_LEN]
+        return name or default
+
+    def clean_log(raw_name: str, data: bytes) -> tuple[str, bytes]:
+        """The game's log: text (no NUL bytes), or gzip of text; at most MAX_FEEDBACK_LOG as sent."""
+        if len(data) > MAX_FEEDBACK_LOG:
+            raise ApiError(413, f"the log must be at most {MAX_FEEDBACK_LOG // (1024 * 1024)} MiB", maxBytes=MAX_FEEDBACK_LOG)
+        text = data
+        if data.startswith(GZIP_MAGIC):
+            inflate = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            try:
+                text = inflate.decompress(data, MAX_LOG_TEXT)
+            except zlib.error:
+                raise ApiError(400, "the log is not a valid gzip file")
+            if inflate.unconsumed_tail or not inflate.eof:
+                raise ApiError(400, "the log is not a valid gzip file, or unpacks to more than "
+                                    f"{MAX_LOG_TEXT // (1024 * 1024)} MiB")
+        if b"\x00" in text:
+            raise ApiError(400, "the log must be a text file (such as latest.log), plain or gzipped")
+        name = attachment_name(raw_name, "latest.log")
+        if data.startswith(GZIP_MAGIC) and not name.lower().endswith(".gz"):
+            name += ".gz"
+        return name, data
+
+    def clean_attached_schematic(raw_name: str, data: bytes) -> tuple[str, bytes]:
+        """A schematic in any supported format (by its name), gzipped like all of them; not parsed, since a
+        bug report may be about a file the game or the server can't read."""
+        if len(data) > MAX_FEEDBACK_SCHEMATIC:
+            raise ApiError(413, f"the schematic must be at most {MAX_FEEDBACK_SCHEMATIC // (1024 * 1024)} MiB",
+                           maxBytes=MAX_FEEDBACK_SCHEMATIC)
+        name = attachment_name(raw_name, "")
+        if convert.format_of(name) is None:
+            raise ApiError(400, "the schematic must be a .slopmatic, .nbt, .litematic or .schem file")
+        if not data.startswith(GZIP_MAGIC):
+            raise ApiError(400, "the schematic is not a gzip file (every schematic format is gzipped NBT)")
+        return name, data
+
     @app.post("/api/feedback")
-    def feedback_submit(request: Request, body: FeedbackIn) -> JSONResponse:
+    async def feedback_submit(request: Request) -> JSONResponse:
+        """JSON, or multipart/form-data with the same fields as text parts plus optional file parts log and
+        schematic. Login optional (bearer token or session cookie)."""
         if request.headers.get("authorization"):
             user: User | None = authenticate(request, mutating=True)
         else:
@@ -4821,6 +5336,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if request.headers.get(CSRF_HEADER) != CSRF_VALUE:
                 raise ApiError(403, f"missing X-Requested-With: {CSRF_VALUE} header")
             user = session_user(request)
+        ctype = request.headers.get("content-type", "")
+        uploads: dict[str, tuple[str, bytes]] = {}
+        if ctype.split(";")[0].strip().lower() == "multipart/form-data":
+            raw, _, _ = await read_capped(request, MAX_FEEDBACK_LOG + MAX_FEEDBACK_SCHEMATIC + MAX_FEEDBACK_JSON)
+            data: Any
+            data, uploads = parse_multipart(raw, ctype)
+            if isinstance(data.get("log"), str) and "log" not in uploads:  # the log sent as a plain text field
+                uploads["log"] = ("latest.log", data.pop("log").encode())
+        else:
+            raw, _, _ = await read_capped(request, MAX_FEEDBACK_JSON)
+            try:
+                data = json.loads(raw)
+            except ValueError:
+                raise ApiError(400, "invalid request body")
+            if not isinstance(data, dict):
+                raise ApiError(400, "invalid request body")
+        body = FeedbackIn(**{k: data.get(k) for k in ("type", "message", "modVersion", "mcVersion", "contact")})
         if body.type not in FEEDBACK_KINDS:
             raise ApiError(400, "type must be one of " + ", ".join(FEEDBACK_KINDS))
         if not isinstance(body.message, str) or not body.message.strip():
@@ -4833,22 +5365,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         mod_version = clean_short(body.modVersion, "modVersion", MAX_FEEDBACK_VERSION_LEN)
         mc_version = clean_short(body.mcVersion, "mcVersion", MAX_FEEDBACK_VERSION_LEN)
         contact = clean_short(body.contact, "contact", MAX_CONTACT_LEN)
+        attachments: list[tuple[str, str, bytes]] = []  # (kind, file name, bytes)
+        for kind, clean in (("log", clean_log), ("schematic", clean_attached_schematic)):
+            name, content = uploads.get(kind, ("", b""))
+            if content:  # a browser sends an empty part for a file input left empty
+                attachments.append((kind, *clean(name, content)))
         if user is not None:
             key, limit = f"feedback-user:{user.uuid}", FEEDBACK_USER_LIMIT
         else:
             key, limit = f"feedback-ip:{client_ip(request)}", FEEDBACK_IP_LIMIT
-        with store.lock:
-            n, oldest = store.recent_failures(key)
-            if n >= limit:
-                wait = max(1, -(-((oldest or now_s()) + LOGIN_WINDOW - now_s()) // 60))
-                raise ApiError(429, f"too many messages for now, try again in {wait} minute{'s' if wait != 1 else ''}")
-            store.add_failure(key)
-            feedback_id = store.add_feedback({
-                "kind": body.type, "message": message, "mod_version": mod_version, "mc_version": mc_version,
-                "contact": contact, "uuid": user.uuid if user else None, "name": user.name if user else None,
-                "created": int(time.time() * 1000),
-            })
-            row = store.db.execute("SELECT * FROM feedback WHERE id=?", (feedback_id,)).fetchone()
+
+        def save() -> sqlite3.Row:
+            with store.lock:
+                rate_limited(key, limit, "messages")
+                store.check_site(sum(len(content) for _, _, content in attachments))
+                store.add_failure(key)
+                t = int(time.time() * 1000)
+                with store.transaction():
+                    feedback_id = store.add_feedback({
+                        "kind": body.type, "message": message, "mod_version": mod_version, "mc_version": mc_version,
+                        "contact": contact, "uuid": user.uuid if user else None, "name": user.name if user else None,
+                        "created": t,
+                    })
+                    written: list[Path] = []
+                    try:
+                        for kind, name, content in attachments:
+                            dest = store.feedback_file(feedback_id, kind)
+                            dest.parent.mkdir(parents=True, exist_ok=True)
+                            atomic_write(dest, content)
+                            written.append(dest)
+                            store.db.execute(
+                                "INSERT INTO feedback_files(feedback_id, kind, filename, size, sha256, created) VALUES(?,?,?,?,?,?)",
+                                (feedback_id, kind, name, len(content), hashlib.sha256(content).hexdigest(), t))
+                    except BaseException:
+                        for f in written:
+                            f.unlink(missing_ok=True)
+                        raise
+                return store.db.execute("SELECT * FROM feedback WHERE id=?", (feedback_id,)).fetchone()
+
+        row = await run_in_threadpool(save)
+        if attachments:
+            log.info("feedback %d arrived with %s", row["id"], ", ".join(f"{k} {n!r} ({len(c)} bytes)" for k, n, c in attachments))
         return JSONResponse(feedback_api(row), status_code=201)
 
     @app.get("/api/feedback")
@@ -4860,7 +5417,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if status not in FEEDBACK_STATUSES:
             raise ApiError(400, "status must be one of " + ", ".join(FEEDBACK_STATUSES))
         n_open, n_resolved = store.feedback_counts()
-        return {"feedback": [feedback_api(r) for r in store.list_feedback(status)], "open": n_open, "resolved": n_resolved}
+        return {"feedback": feedback_items(store.list_feedback(status)), "open": n_open, "resolved": n_resolved}
+
+    def find_attachment(feedback_id: int, kind: str) -> sqlite3.Row:
+        rows = store.feedback_attachments([feedback_id]).get(feedback_id, []) if kind in FEEDBACK_ATTACHMENTS else []
+        found = next((a for a in rows if a["kind"] == kind), None)
+        if found is None or not store.feedback_file(feedback_id, kind).is_file():
+            raise ApiError(404, "no such attachment")
+        return found
+
+    @app.get("/api/feedback/{feedback_id}/attachments/{kind}")
+    def feedback_attachment(feedback_id: int, kind: str, request: Request) -> FileResponse:
+        """Admins only. Always a download (never shown inline): it is whatever the sender uploaded."""
+        admin_only(request, mutating=False)
+        a = find_attachment(feedback_id, kind)
+        gz = a["filename"].lower().endswith(".gz")
+        media = "application/octet-stream" if kind == "schematic" or gz else "text/plain; charset=utf-8"
+        return FileResponse(store.feedback_file(feedback_id, kind), media_type=media, filename=a["filename"],
+                            headers={"X-Sha256": a["sha256"], "Cache-Control": "private, no-cache"})
+
+    def delete_attachments(feedback_id: int, kind: str | None, request: Request) -> Response:
+        admin = admin_only(request, mutating=True)
+        with store.lock:
+            if store.db.execute("SELECT 1 FROM feedback WHERE id=?", (feedback_id,)).fetchone() is None:
+                raise ApiError(404, "no such feedback")
+            if kind is not None:
+                find_attachment(feedback_id, kind)
+            n = store.delete_feedback_files(feedback_id, kind)
+        if n:
+            log.info("%s deleted %d attachment(s) of feedback %d", admin.name, n, feedback_id)
+        return Response(status_code=204)
+
+    @app.delete("/api/feedback/{feedback_id}/attachments")
+    def feedback_attachments_delete(feedback_id: int, request: Request) -> Response:
+        return delete_attachments(feedback_id, None, request)
+
+    @app.delete("/api/feedback/{feedback_id}/attachments/{kind}")
+    def feedback_attachment_delete(feedback_id: int, kind: str, request: Request) -> Response:
+        return delete_attachments(feedback_id, kind, request)
 
     @app.post("/api/feedback/{feedback_id}/resolve")
     def feedback_resolve(feedback_id: int, request: Request, body: ResolveIn) -> dict[str, Any]:
@@ -5302,6 +5896,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"users": [user_admin_api(r) for r in rows], "q": q, "page": page, "pageSize": ADMIN_PAGE_SIZE,
                 "total": total, "pages": max(1, -(-total // ADMIN_PAGE_SIZE))}
 
+    def storage_summary() -> dict[str, Any]:
+        """What the admin page's Site storage tab shows: the data directory against the site's cap, by category,
+        and who and what takes the most."""
+        cats = store.measure_site()
+        total = sum(v[0] for v in cats.values())
+        cap = settings.site_quota_bytes
+        try:
+            disk = shutil.disk_usage(store.root)
+            disk_free: int | None = disk.free
+        except OSError:
+            disk_free = None
+        users = []
+        for r in store.storage_top_users(STORAGE_TOP):
+            quota = None if r["is_admin"] else (r["quota_bytes"] if r["quota_bytes"] is not None else settings.quota_bytes)
+            users.append({
+                "uuid": r["uuid"], "name": r["name"], "displayName": r["display_name"] or r["name"], "tag": r["display_tag"],
+                "usedBytes": int(r["file_bytes"]) + int(r["post_bytes"]), "quotaBytes": quota,
+                "fileBytes": int(r["file_bytes"]), "postBytes": int(r["post_bytes"]), "referenceBytes": int(r["ref_bytes"]),
+            })
+        posts = [{
+            "id": p.id, "title": p.title, "visibility": p.visibility, "hidden": p.hidden is not None,
+            "author": {"uuid": p.uuid, "name": p.author_name, "displayName": p.author_shown},
+            "bytes": p.total_bytes, "versionCount": p.version_count, "saves": p.saves,
+            "page": f"{settings.site_url}/board/{p.id}",
+        } for p in store.storage_largest_posts(STORAGE_TOP)]
+        files = [{
+            "owner": {"uuid": r["uuid"], "name": r["name"], "displayName": r["display_name"] or r["name"], "tag": r["display_tag"]},
+            "path": r["path"], "size": r["size"], "reference": bool(r["is_ref"]), "sourcePost": r["source_post"],
+        } for r in store.storage_largest_files(STORAGE_TOP)]
+        return {
+            "usedBytes": total, "capBytes": cap, "freeBytes": max(0, cap - total), "diskFreeBytes": disk_free,
+            "categories": [{"key": key, "label": label, "bytes": cats[key][0], "files": cats[key][1]}
+                           for key, label in store.SITE_CATEGORIES],
+            "topUsers": users, "largestPosts": posts, "largestFiles": files,
+        }
+
+    @app.get("/api/admin/storage")
+    def admin_storage(request: Request) -> dict[str, Any]:
+        admin_only(request, mutating=False)
+        return storage_summary()
+
     @app.patch("/api/admin/users/{player}")
     def admin_user_patch(player: str, request: Request, body: UserPatchIn) -> dict[str, Any]:
         """{"quotaBytes": n} sets the account's quota, null goes back to the default."""
@@ -5378,13 +6013,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             })
         folders = sorted({e["folder"] for e in entries if e["folder"]}, key=str.lower)
         pct = 0.0 if not quota else min(100.0, used * 100.0 / quota)
+        favorites = store.list_favorites(user.uuid)
         return render(
             "files.html",
             user=user,
             nav="files",
+            files_tab="files",
             entries=entries,
             post_count=post_count,
             post_bytes=post_bytes,
+            ref_count=sum(1 for f in files if f.reference),
+            favorites=favorites,
+            fav_count=len(favorites),
             folders=folders,
             **post_form_ctx(),
             used=used,
@@ -5423,6 +6063,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "max_links": MAX_LINKS, "max_link": MAX_LINK_LEN, "max_version_label": MAX_VERSION_LABEL_LEN,
             "default_mc": newest[0].mc if newest else "",  # the newest release's Minecraft version
         }
+
+    LISTING_COLUMNS = (
+        ("title", "Title"), ("visibility", "Visibility"), ("score", "Score"), ("ups", "Up"), ("downs", "Down"),
+        ("downloads", "Downloads"), ("favorites", "Favourites"), ("saves", "Saves"), ("versions", "Versions"),
+        ("size", "Size"), ("created", "Posted"), ("updated", "Updated"),
+    )
+
+    @app.get("/listings", response_class=HTMLResponse)
+    def listings_page(request: Request) -> Response:
+        """My listings: the player's own posts with their numbers, sortable by each column."""
+        user = session_user(request)
+        if user is None:
+            return RedirectResponse(f"{base}/", status_code=303)
+        if not is_member(user):
+            return RedirectResponse(f"{base}/apply", status_code=303)
+        sort, desc = listing_order(request.query_params, strict=False)
+        posts = sorted_listings(store.own_posts(user.uuid), sort, desc)
+
+        def sort_link(key: str) -> str:
+            """The column's header: sort by it (its natural order), or flip the order if it is the sort already."""
+            order = ("asc" if desc else "desc") if key == sort else ("desc" if LISTING_SORTS[key] else "asc")
+            return f"{base}/listings?" + urllib.parse.urlencode({"sort": key, "order": order})
+
+        return render(
+            "listings.html",
+            user=user,
+            nav="files",
+            files_tab="listings",
+            posts=posts,
+            sort=sort,
+            desc=desc,
+            columns=LISTING_COLUMNS,
+            sort_link=sort_link,
+            post_count=len(posts),
+            fav_count=len(store.list_favorites(user.uuid)),
+            totals={key: sum(getattr(p, key) for p in posts) for key in ("downloads", "favorites", "saves", "total_bytes")},
+        )
+
+    def fav_context(user: User | None, posts: list[PostRow]) -> dict[str, Any]:
+        """What post cards need for their heart: the viewer's favourites among posts, and who may favourite."""
+        if user is None or not is_member(user):
+            return {"favs": set(), "me": None}
+        return {"favs": store.favorite_ids(user.uuid, [p.id for p in posts]), "me": user.uuid}
 
     @app.get("/board", response_class=HTMLResponse)
     def board_page(request: Request) -> HTMLResponse:
@@ -5481,6 +6164,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             chip_url=chip_url,
             all_tags=TAGS,
             size_classes=SIZE_LABELS,
+            **fav_context(user, posts),
         )
 
     def og_tags(post: PostRow) -> dict[str, str]:
@@ -5534,6 +6218,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             max_report=MAX_REPORT_LEN,
             og=og_tags(post),
             share_url=f"{settings.site_url}/b/{post.id}",
+            **fav_context(user, [post]),
             **post_form_ctx(),
         )
 
@@ -5562,6 +6247,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             all_tags=TAGS,
             size_classes=SIZE_LABELS,
             board_url=board_url,
+            **fav_context(viewer, posts),
         )
 
     DISCORD_MESSAGES = {
@@ -5603,6 +6289,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             over=quota is not None and used >= quota,
             file_count=len(store.list_files(user.uuid)),
             file_bytes=used - post_bytes,
+            ref_count=sum(1 for f in store.list_files(user.uuid) if f.reference),
             post_count=post_count,
             post_bytes=post_bytes,
             has_password=stored is not None,
@@ -5674,6 +6361,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             max_message=MAX_FEEDBACK_LEN,
             max_version=MAX_FEEDBACK_VERSION_LEN,
             max_contact=MAX_CONTACT_LEN,
+            max_log_mb=MAX_FEEDBACK_LOG // (1024 * 1024),
+            max_schematic_mb=MAX_FEEDBACK_SCHEMATIC // (1024 * 1024),
+            attachment_days=FEEDBACK_ATTACHMENT_DAYS,
             github=GITHUB_URL,
         )
 
@@ -5690,10 +6380,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "admin_feedback.html",
             user=user,
             nav="admin",
-            items=[feedback_api(r) for r in store.list_feedback(status)],
+            items=feedback_items(store.list_feedback(status)),
             show=status,
             counts={"open": n_open, "resolved": n_resolved, "all": n_open + n_resolved},
             kinds=FEEDBACK_KINDS,
+            attachment_labels=FEEDBACK_ATTACHMENTS,
             admin_tab="feedback",
             tab_counts=admin_counts(),
         )
@@ -5708,7 +6399,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "whitelist": store.whitelist_count(),
         }
 
-    ADMIN_TABS = ("applications", "storage", "reports", "whitelist", "badges", "users", "telemetry")
+    ADMIN_TABS = ("applications", "storage", "reports", "whitelist", "badges", "users", "telemetry", "disk")
 
     @app.get("/admin", response_class=HTMLResponse)
     def admin_page(request: Request) -> HTMLResponse:
@@ -5733,6 +6424,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 for r in store.badge_holders()])
         elif tab == "telemetry":
             ctx.update(t=telemetry_summary())
+        elif tab == "disk":
+            st = storage_summary()
+            pct = 0.0 if not st["capBytes"] else min(100.0, st["usedBytes"] * 100.0 / st["capBytes"])
+            ctx.update(st=st, site_pct=f"{pct:.2f}", site_over=st["usedBytes"] >= st["capBytes"])
         else:
             query = (q.get("q") or "").strip()[:MAX_QUERY_LEN]
             raw_page = q.get("page") or "1"

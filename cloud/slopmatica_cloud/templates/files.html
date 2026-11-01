@@ -2,6 +2,7 @@
 {% from "_post_form.html" import post_fields %}
 {% block title %}{{ user.name }} &middot; Slopmatica Cloud{% endblock %}
 {% block main %}
+{% include "_files_tabs.html" %}
 <section class="panel usage">
   <div class="usage-text">
     {% if quota is none %}
@@ -11,7 +12,10 @@
     {% endif %}
     <span class="muted"> &middot; {{ entries|length }} schematic{{ "" if entries|length == 1 else "s" }}</span>
     {% if post_count %}
-    <span class="muted"> &middot; <a href="{{ base }}/board?tab=mine">{{ post_count }} board post{{ "" if post_count == 1 else "s" }}</a> use {{ post_bytes|human_size }} of that</span>
+    <span class="muted"> &middot; <a href="{{ base }}/listings">{{ post_count }} board post{{ "" if post_count == 1 else "s" }}</a> use {{ post_bytes|human_size }} of that</span>
+    {% endif %}
+    {% if ref_count %}
+    <span class="muted"> &middot; {{ ref_count }} build{{ "" if ref_count == 1 else "s" }} added from the board {{ "doesn’t" if ref_count == 1 else "don’t" }} count</span>
     {% endif %}
   </div>
   {% if quota is not none %}
@@ -62,10 +66,14 @@
       {% set src = e.f.source %}
       <div class="sub muted from-board">{% if e.source_url %}<a href="{{ e.source_url }}" title="{{ src.title }}">From the board</a>{% else %}<span title="{{ src.title }}">From the board</span>{% endif %} &middot; by <span class="uname" data-user="{{ src.author_uuid }}" tabindex="0">{{ src.author_name }}</span></div>
       {% endif %}
+      {% if e.f.listing %}
+      {% set l = e.f.listing %}
+      <div class="sub listing-line"><a class="badge on-board vis-{{ l.visibility }}" href="{{ base }}/board/{{ l.postId }}" title="On the board as &ldquo;{{ l.title }}&rdquo;" data-listing="{{ l.postId }}">On the board &middot; {{ l.visibility|capitalize }}{% if l.hidden %} &middot; hidden{% endif %}</a></div>
+      {% endif %}
       <div class="sub">
         {% if e.folder %}<button type="button" class="chip" data-act="folder">{{ e.folder }}</button>{% else %}<span class="chip plain">top level</span>{% endif %}
       </div>
-      <div class="sub muted">{{ e.f.size|human_size }} &middot; <time datetime="{{ e.f.modified|iso_utc }}">{{ e.f.modified|pretty_utc }}</time></div>
+      <div class="sub muted">{{ e.f.size|human_size }}{% if e.f.reference %} <span class="not-counted" title="Added from the board: it doesn&rsquo;t count toward your storage until you change it">(not counted)</span>{% endif %} &middot; <time datetime="{{ e.f.modified|iso_utc }}">{{ e.f.modified|pretty_utc }}</time></div>
     </div>
     <div class="actions">
       <a class="btn small dl" href="{{ base }}/api/files/{{ e.f.path|qpath }}" download="{{ e.name }}">Download</a>
@@ -84,6 +92,34 @@
 {% else %}
 <p class="empty muted">No schematics yet. Upload some above, or save one in game into <code>schematics/cloud/</code>.</p>
 {% endif %}
+
+<section class="panel favs" id="favourites" aria-labelledby="favourites-title">
+  <h2 id="favourites-title">Favourites</h2>
+  {% if favorites %}
+  <p class="muted small">Builds you gave a heart on the board. They don&rsquo;t use your storage, and neither does a copy you add to your cloud from here, as long as you don&rsquo;t change it.</p>
+  <ul class="fav-list">
+    {% for p in favorites %}
+    <li class="fav-item" data-fav-item="{{ p.id }}">
+      <a class="thumb fav-thumb" href="{{ base }}/board/{{ p.id }}" tabindex="-1" aria-hidden="true">
+        {% if p.has_thumb %}<img loading="lazy" src="{{ base }}/api/board/{{ p.id }}/thumbnail?v={{ p.updated }}" alt="">{% else %}<div class="ph"></div>{% endif %}
+      </a>
+      <div class="fav-meta">
+        <a class="fav-title" href="{{ base }}/board/{{ p.id }}">{{ p.title }}</a>
+        <div class="muted small">by <span class="uname" data-user="{{ p.uuid }}" tabindex="0">{{ p.author_shown }}</span> &middot; {{ p.size|human_size }}{% if p.visibility != "public" %} &middot; <span class="badge vis-{{ p.visibility }}">{{ p.visibility|capitalize }}</span>{% endif %}</div>
+        <p class="form-msg small" data-fav-msg role="status"></p>
+      </div>
+      <div class="fav-actions">
+        <a class="btn small" href="{{ base }}/api/board/{{ p.id }}/file" download="{{ p.filename }}">Download</a>
+        <button type="button" class="btn small ghost" data-fav-save="{{ p.id }}">Add to my cloud</button>
+        <button type="button" class="fav-btn on" data-fav="{{ p.id }}" aria-pressed="true" aria-label="Favourite" title="Remove from favourites"><span aria-hidden="true">&#9829;</span> <span data-fav-count>{{ p.favorites|num }}</span></button>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted small">Nothing yet. Tap the &#9829; on a build on the <a href="{{ base }}/board">board</a> to keep it here. Favourites don&rsquo;t use your storage.</p>
+  {% endif %}
+</section>
 
 <dialog class="dialog" id="post-dialog" aria-labelledby="post-dialog-title">
   <form class="post-form" data-post-form="create" novalidate>

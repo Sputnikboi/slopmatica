@@ -20,6 +20,13 @@
     </div>
     <p class="desc">{{ f.message }}</p>
     {% if f.contact %}<p class="small"><span class="muted">Contact:</span> {{ f.contact }}</p>{% endif %}
+    {% if f.attachments %}
+    <div class="fb-files small">
+      <span class="muted">Attached:</span>
+      {% for a in f.attachments %}<a class="badge fb-file" href="{{ base }}/api/feedback/{{ f.id }}/attachments/{{ a.kind }}" download="{{ a.filename }}" title="{{ attachment_labels[a.kind] }}">{{ a.filename }} &middot; {{ a.size|human_size }}</a> {% endfor %}
+      <button type="button" class="btn small ghost danger" data-delete-attachments="{{ f.id }}">Delete attachments</button>
+    </div>
+    {% endif %}
     {% if f.resolved %}<p class="muted small">Resolved <time datetime="{{ f.resolved|iso_utc }}">{{ f.resolved|pretty_utc }}</time></p>{% endif %}
   </article>
   {% endfor %}
