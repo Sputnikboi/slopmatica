@@ -161,6 +161,12 @@ public final class CloudSync {
         saveAccount();
     }
 
+    /** A string member, or fallback when it is missing or null. */
+    private static String string(JsonObject object, String key, String fallback) {
+        JsonElement value = object.get(key);
+        return value == null || value.isJsonNull() ? fallback : value.getAsString();
+    }
+
     // ---- login ----------------------------------------------------------------------------
 
     public void login() {
@@ -300,9 +306,7 @@ public final class CloudSync {
             if (f.has("source") && f.get("source").isJsonObject()) {
                 JsonObject src = f.getAsJsonObject("source");
                 sourcesNow.put(f.get("path").getAsString(), new Source(
-                    src.has("author") ? src.get("author").getAsString() : "?",
-                    src.has("title") ? src.get("title").getAsString() : "",
-                    src.has("postId") ? src.get("postId").getAsString() : ""));
+                    string(src, "author", "?"), string(src, "title", ""), string(src, "postId", "")));
             }
         }
         sources = sourcesNow;

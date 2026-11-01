@@ -14,7 +14,10 @@ import com.sputnikboi.slopmatica.view.PlacementView;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents;
+import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
+import com.sputnikboi.slopmatica.gui.WelcomeScreen;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.minecraft.client.gui.screens.TitleScreen;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLevelEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -49,6 +52,12 @@ public final class SlopmaticaClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(SchematicThumbnails.INSTANCE::tick);
         ClientTickEvents.END_CLIENT_TICK.register(mc -> CloudSync.INSTANCE.tick());
         ClientLevelEvents.AFTER_CLIENT_LEVEL_CHANGE.register((mc, level) -> PlacementView.INSTANCE.exit(mc));
+        // First run: the welcome screen, once, over the title screen.
+        ClientTickEvents.END_CLIENT_TICK.register(mc -> {
+            if (!SlopmaticaConfig.get().welcomeShown && mc.gui.screen() instanceof TitleScreen title) {
+                mc.gui.setScreen(new WelcomeScreen(title));
+            }
+        });
         DevHarness.install();
     }
 }

@@ -32,7 +32,7 @@ import org.slf4j.LoggerFactory;
  * One step per line, run once the player is in a world:
  * {@code wait <ticks>}, {@code /<command>} (client or server), {@code hud}, {@code shot <name>},
  * {@code screen <menu|browser|placements|options|keybinds|none>}, {@code type <text>},
- * {@code key <tab|down|enter>} (both go to the open screen), {@code press <mapping>} (one click of a
+ * {@code key <tab|down|enter>}, {@code click <x> <y>}, {@code scroll <amount>} (all go to the open screen), {@code press <mapping>} (one click of a
  * key mapping, e.g. {@code key.slopmatica.placement_view} or {@code key.attack}), {@code down <mapping>}
  * / {@code up <mapping>} (hold and release), {@code bind <mapping> <key.keyboard.o>}, {@code look <dx> <dy>} (mouse movement), {@code quit}.
  */
@@ -40,11 +40,14 @@ public final class DevHarness {
     private static final Logger LOGGER = LoggerFactory.getLogger("Slopmatica/dev");
 
     private final List<String> steps;
+    /** A {@code #title} line runs the script from the title screen instead of waiting for a world. */
+    private final boolean title;
     private int next;
     private int waitTicks;
 
     private DevHarness(List<String> steps) {
         this.steps = steps;
+        this.title = steps.stream().anyMatch(s -> s.trim().equals("#title"));
     }
 
     public static void install() {
@@ -62,7 +65,7 @@ public final class DevHarness {
     }
 
     private void tick(Minecraft mc) {
-        if (mc.player == null || mc.level == null) {
+        if (!title && (mc.player == null || mc.level == null)) {
             return;
         }
         if (waitTicks > 0) {
@@ -77,7 +80,7 @@ public final class DevHarness {
             LOGGER.info("dev> {}", step);
             if (step.startsWith("wait ")) {
                 waitTicks = Integer.parseInt(step.substring(5).trim());
-            } else if (step.startsWith("/")) {
+            } else if (step.startsWith("/") && mc.player != null) {
                 mc.player.connection.sendCommand(step.substring(1));
             } else if (step.equals("hud")) {
                 mc.gui.hud.toggle();
@@ -95,6 +98,8 @@ public final class DevHarness {
                     case "slopkeys" -> new SlopmaticaKeyBindsScreen(null);
                     case "color" -> new com.sputnikboi.slopmatica.gui.ColorPickerScreen(null, com.sputnikboi.slopmatica.verify.BlockStatus.MISSING);
                     case "controls-keys" -> new com.sputnikboi.slopmatica.gui.ControlsKeysScreen(null);
+                    case "welcome" -> new com.sputnikboi.slopmatica.gui.WelcomeScreen(null);
+                    case "import" -> new com.sputnikboi.slopmatica.gui.LitematicaImportScreen(null);
                     case "materials" -> new MaterialListScreen(null, PlacementManager.INSTANCE.selected().orElseThrow());
                     case "keybinds" -> new KeyBindsScreen(null, mc.options);
                     default -> null;
@@ -110,6 +115,17 @@ public final class DevHarness {
                 };
                 boolean handled = mc.gui.screen().keyPressed(event);
                 LOGGER.info("dev key {} handled={} focus={}", step, handled, mc.gui.screen() == null ? null : mc.gui.screen().getFocused());
+            } else if (step.startsWith("click ") && mc.gui.screen() != null) {
+                // click <x> <y> in GUI coordinates, left button.
+                String[] parts = step.split(" ");
+                var event = new net.minecraft.client.input.MouseButtonEvent(Double.parseDouble(parts[1]), Double.parseDouble(parts[2]),
+                    new net.minecraft.client.input.MouseButtonInfo(1, 0)); // SDL numbering: 1 is the left button.
+                Screen screen = mc.gui.screen();
+                screen.mouseClicked(event, false);
+                if (mc.gui.screen() == screen) {
+                    screen.mouseReleased(event);
+                }
+                LOGGER.info("dev click {} on {} -> {}", step, screen.getClass().getSimpleName(), mc.gui.screen() == null ? null : mc.gui.screen().getClass().getSimpleName());
             } else if (step.startsWith("scroll ") && mc.gui.screen() != null) {
                 Screen screen = mc.gui.screen();
                 screen.mouseScrolled(screen.width / 2.0, screen.height / 2.0, 0, Double.parseDouble(step.substring(7).trim()));

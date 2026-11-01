@@ -120,6 +120,14 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
                 .tooltip(Tooltip.create(Component.translatable("slopmatica.options.controls_keys.tooltip"))).width(WIDE).build()
         );
 
+        list.addHeader(Component.translatable("slopmatica.options.other"));
+        list.addSmall(
+            toggle("slopmatica.options.telemetry", c.telemetry, v -> c.telemetry = v, false).createButton(minecraft.options),
+            Button.builder(Component.translatable("slopmatica.options.import_litematica"), b -> minecraft.gui.setScreen(new LitematicaImportScreen(this)))
+                .tooltip(Tooltip.create(Component.translatable("slopmatica.options.import_litematica.tooltip"))).width(WIDE).build()
+        );
+        list.addSmall(Button.builder(Component.translatable("slopmatica.options.welcome"), b -> minecraft.gui.setScreen(new WelcomeScreen(this))).width(WIDE).build(), null);
+
         if (advanced) {
             list.addHeader(Component.translatable("slopmatica.options.cloud"));
             EditBox url = new EditBox(font, 0, 0, WIDE, 20, Component.translatable("slopmatica.cloud.server"));

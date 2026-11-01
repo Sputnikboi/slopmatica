@@ -73,6 +73,10 @@ public final class SlopmaticaKeys {
     private SlopmaticaKeys() {
     }
 
+    public static KeyMapping openMenu() {
+        return OPEN_MENU;
+    }
+
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(SlopmaticaKeys::tick);
         // Before vanilla handles clicks, which the view takes over.

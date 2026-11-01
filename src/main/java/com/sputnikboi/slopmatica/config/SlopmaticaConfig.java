@@ -30,6 +30,10 @@ public final class SlopmaticaConfig {
     public boolean solidGhosts = false;
     /** Show the technical options (thickness, fading, formats, cloud address...). */
     public boolean showAdvanced = false;
+    /** The welcome screen has been seen (finished or skipped), so it no longer opens by itself. */
+    public boolean welcomeShown = false;
+    /** Opted in to sending anonymous usage data to the Slopmatica cloud server. Off unless chosen. */
+    public boolean telemetry = false;
     /** Outline colours, ARGB; null means the default. */
     public Integer colorMissing, colorMatch, colorVariant, colorWrong;
     /** The placement view detaches the camera; off keeps you in your body (no freecam). */
