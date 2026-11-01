@@ -6,6 +6,7 @@ server does), so there are no passwords. See README.md for the API.
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import hmac
 import json
@@ -34,9 +35,10 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
+from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import convert, nbt
+from . import convert, model3d, nbt
 
 log = logging.getLogger("slopmatica_cloud")
 
@@ -93,6 +95,30 @@ MAX_DESCRIPTION_LEN = 5000
 MAX_ALLOWED_NAMES = 50
 MAX_QUERY_LEN = 100
 BOARD_FOLDER = "board"  # "Add to my cloud" saves into this folder of the caller's files
+# Tags a post can carry (the owner picks any number), in display order.
+TAGS: dict[str, str] = {
+    "redstone": "Redstone",
+    "farm": "Farm",
+    "decoration": "Decoration",
+    "building": "Building",
+    "survival-friendly": "Survival friendly",
+    "creative-only": "Creative only",
+    "map-art": "Map art",
+    "transport": "Transport",
+    "technical": "Technical",
+    "terrain": "Terrain",
+    "statue": "Statue",
+    "interior": "Interior",
+}
+# Size categories by block count (non-air, non-void): (key, label, exclusive upper bound or None).
+SIZE_CLASSES: tuple[tuple[str, str, int | None], ...] = (
+    ("small", "Small", 1_000),
+    ("medium", "Medium", 10_000),
+    ("big", "Big", 100_000),
+    ("very-big", "Very big", None),
+)
+SIZE_LABELS = {key: label for key, label, _ in SIZE_CLASSES}
+MODEL_CACHE_PREFIX = "model-"  # posts/<id>/model-<sha256[:16]>.json.gz (or .toobig): the 3D view's cache
 TITLE_BAD_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 DESCRIPTION_BAD_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")  # tabs and newlines are fine
 
@@ -211,6 +237,22 @@ def now_s() -> int:
     return int(time.time())
 
 
+def size_class(block_count: int | None) -> str | None:
+    """The size category of a post with block_count blocks, or None if that is unknown."""
+    if block_count is None:
+        return None
+    for key, _, below in SIZE_CLASSES:
+        if below is None or block_count < below:
+            return key
+    raise AssertionError("unreachable")
+
+
+def size_class_sql(column: str) -> str:
+    """size_class() as an SQL expression over column (used by the migration)."""
+    cases = " ".join(f"WHEN {column} < {below} THEN '{key}'" for key, _, below in SIZE_CLASSES if below is not None)
+    return f"CASE WHEN {column} IS NULL THEN NULL {cases} ELSE '{SIZE_CLASSES[-1][0]}' END"
+
+
 # --------------------------------------------------------------------------- storage
 
 
@@ -222,12 +264,25 @@ class User:
 
 
 @dataclass
+class FileSource:
+    """The board post a file was saved from with "Add to my cloud"."""
+    post_id: str
+    title: str
+    author_uuid: str
+    author_name: str
+
+    def api(self) -> dict[str, str]:
+        return {"postId": self.post_id, "title": self.title, "author": self.author_name, "authorUuid": self.author_uuid}
+
+
+@dataclass
 class FileRow:
     path: str
     size: int
     sha256: str
     modified: int
     has_thumb: bool
+    source: FileSource | None = None
 
     def api(self) -> dict[str, Any]:
         return {
@@ -236,7 +291,17 @@ class FileRow:
             "sha256": self.sha256,
             "modified": self.modified,
             "hasThumbnail": self.has_thumb,
+            "source": self.source.api() if self.source else None,
         }
+
+    @classmethod
+    def from_row(cls, r: sqlite3.Row) -> "FileRow":
+        source = None
+        if r["source_post"]:
+            # the author's current name if they have logged in since, else the name when it was saved
+            name = r["source_author_now"] or r["source_author_name"] or ""
+            source = FileSource(r["source_post"], r["source_title"] or "", r["source_author_uuid"] or "", name)
+        return cls(r["path"], r["size"], r["sha256"], r["modified"], bool(r["has_thumb"]), source)
 
 
 @dataclass
@@ -259,6 +324,8 @@ class PostRow:
     updated: int  # unix ms, when the snapshot was last taken
     ups: int
     downs: int
+    tags: list[str] = field(default_factory=list)  # in TAGS order
+    size_class: str | None = None  # a SIZE_CLASSES key, None if the block count is unknown
 
     @property
     def score(self) -> int:
@@ -267,11 +334,12 @@ class PostRow:
     @classmethod
     def from_row(cls, r: sqlite3.Row) -> "PostRow":
         dims = (r["size_x"], r["size_y"], r["size_z"])
+        tags = set((r["tags"] or "").split(","))
         return cls(
             r["id"], r["uuid"], r["author_name"], r["title"], r["description"], r["visibility"],
             r["source_path"], r["filename"], r["format"], r["size"], r["sha256"], bool(r["has_thumb"]),
             dims if None not in dims else None, r["block_count"], r["created"], r["updated"],
-            r["ups"], r["downs"],
+            r["ups"], r["downs"], [t for t in TAGS if t in tags], r["size_class"],
         )
 
 
@@ -358,15 +426,41 @@ CREATE TABLE IF NOT EXISTS login_failures (
 );
 CREATE INDEX IF NOT EXISTS login_failures_key ON login_failures(key, at);
 """,
+    # 0.5.0: tags, size categories, and where a file saved from the board came from.
+    # Before this step runs, Store.convert_post_snapshots turns board snapshots into .slopmatic.
+    3: f"""
+ALTER TABLE posts ADD COLUMN size_class TEXT;     -- small | medium | big | very-big, NULL if the block count is unknown
+UPDATE posts SET size_class = {size_class_sql("block_count")};
+CREATE INDEX IF NOT EXISTS posts_size_class ON posts(size_class);
+CREATE TABLE IF NOT EXISTS post_tags (
+    post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    tag TEXT NOT NULL,
+    PRIMARY KEY (post_id, tag)
+);
+CREATE INDEX IF NOT EXISTS post_tags_tag ON post_tags(tag, post_id);
+ALTER TABLE files ADD COLUMN source_post TEXT;        -- "Add to my cloud": the post id, NULL for the user's own files
+ALTER TABLE files ADD COLUMN source_title TEXT;       -- the post's title then
+ALTER TABLE files ADD COLUMN source_author_uuid TEXT; -- the post's author
+ALTER TABLE files ADD COLUMN source_author_name TEXT; -- the author's name then
+""",
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 
 POST_SELECT = """
 SELECT p.*, u.name AS author_name,
     (SELECT COUNT(*) FROM votes v WHERE v.post_id = p.id AND v.value = 1) AS ups,
-    (SELECT COUNT(*) FROM votes v WHERE v.post_id = p.id AND v.value = -1) AS downs
+    (SELECT COUNT(*) FROM votes v WHERE v.post_id = p.id AND v.value = -1) AS downs,
+    (SELECT group_concat(t.tag, ',') FROM post_tags t WHERE t.post_id = p.id) AS tags
 FROM posts p JOIN users u ON u.uuid = p.uuid
 """
+FILE_SELECT = """
+SELECT f.*, a.name AS source_author_now
+FROM files f LEFT JOIN users a ON a.uuid = f.source_author_uuid
+"""
+FILE_COLUMNS = (
+    "uuid", "path", "size", "sha256", "modified", "has_thumb",
+    "source_post", "source_title", "source_author_uuid", "source_author_name",
+)
 BOARD_ORDER = {
     "top": "(ups - downs) DESC, p.created DESC, p.id",
     "new": "p.created DESC, p.id",
@@ -382,6 +476,30 @@ def _hot(score: int, created_ms: int, now_ms: int) -> float:
 
 def _fold(value: Any) -> str:
     return value.casefold() if isinstance(value, str) else ""
+
+
+def read_schematic(disk: Path, filename: str, max_volume: int) -> convert.Schematic:
+    """Parse disk as the format filename's extension names. ValueError if it can't be read."""
+    fmt = convert.format_of(filename)
+    if fmt is None:
+        raise convert.ConversionError("not a schematic file name")
+    _, root = nbt.load(disk)
+    return convert.read(root, fmt, filename[: -len(fmt) - 1], max_volume)
+
+
+def slopmatic_name(filename: str) -> str:
+    """<stem>.slopmatic for a schematic file name."""
+    fmt = convert.format_of(filename)
+    return (filename[: -len(fmt) - 1] if fmt else filename) + ".slopmatic"
+
+
+def write_slopmatic(schem: convert.Schematic, dest: Path) -> tuple[int, str]:
+    """Write schem to dest as .slopmatic: (size, sha256)."""
+    with dest.open("wb") as f:
+        nbt.dump(convert.write(schem, "slopmatic"), f)
+        f.flush()
+        os.fsync(f.fileno())
+    return dest.stat().st_size, _hash_file(dest)
 
 
 class Store:
@@ -415,12 +533,49 @@ class Store:
         (version,) = self.db.execute("PRAGMA user_version").fetchone()
         for target in sorted(v for v in MIGRATIONS if v > version):
             log.info("migrating the database to schema version %d", target)
+            if target == 3:
+                # Data before schema: each converted post is committed on its own, so an interrupted
+                # run simply converts the rest next time (version 3 is only recorded after this).
+                self.convert_post_snapshots()
             try:
                 self.db.executescript(f"BEGIN IMMEDIATE;\n{MIGRATIONS[target]}\nPRAGMA user_version = {target};\nCOMMIT;")
             except BaseException:
                 if self.db.in_transaction:
                     self.db.execute("ROLLBACK")
                 raise
+
+    def convert_post_snapshots(self) -> None:
+        """0.5.0: board posts are stored as .slopmatic. Convert older snapshots in place; one that
+        cannot be converted stays as it is (logged)."""
+        rows = self.db.execute("SELECT id, filename FROM posts WHERE format != 'slopmatic' ORDER BY id").fetchall()
+        for r in rows:
+            post_id, filename = r["id"], r["filename"]
+            pdir = self.posts_root / post_id
+            if not POST_ID_RE.match(post_id) or not (pdir / filename).is_file():
+                continue  # reconcile_posts drops it
+            fd, tmp_name = tempfile.mkstemp(dir=self.tmp, suffix=".slopmatic")
+            os.close(fd)
+            tmp = Path(tmp_name)
+            try:
+                schem = read_schematic(self._under(pdir, filename), filename, self.settings.max_export_volume)
+                size, digest = write_slopmatic(schem, tmp)
+                new_name = slopmatic_name(filename)
+                _, dims = schem.bounds()
+                blocks = schem.block_count()
+                with self.lock:
+                    os.replace(tmp, self._under(pdir, new_name))
+                    self.db.execute(
+                        """UPDATE posts SET filename=?, format='slopmatic', size=?, sha256=?,
+                           size_x=?, size_y=?, size_z=?, block_count=? WHERE id=?""",
+                        (new_name, size, digest, *dims, blocks, post_id),
+                    )
+                    if new_name != filename:
+                        self._under(pdir, filename).unlink(missing_ok=True)
+                log.info("converted board post %s from %s to %s (%d bytes)", post_id, filename, new_name, size)
+            except Exception as e:
+                log.warning("could not convert board post %s (%s) to .slopmatic, left as it is: %s", post_id, filename, e)
+            finally:
+                tmp.unlink(missing_ok=True)
 
     @contextmanager
     def transaction(self) -> Any:
@@ -497,6 +652,7 @@ class Store:
                         row = rows.get(rel)
                         if row is None or row["size"] != st.st_size:
                             digest = _hash_file(p)
+                            # new or changed on disk: a plain file of the user's (no board source)
                             self.db.execute(
                                 "INSERT OR REPLACE INTO files(uuid,path,size,sha256,modified,has_thumb) VALUES(?,?,?,?,?,0)",
                                 (uuid, rel, st.st_size, digest, int(st.st_mtime * 1000)),
@@ -512,7 +668,7 @@ class Store:
         """Board snapshots: drop folders without a post (an interrupted post), posts without a
         snapshot, and make sizes and thumbnail flags match the disk."""
         with self.lock:
-            rows = {r["id"]: r for r in self.db.execute("SELECT id, filename, size, has_thumb FROM posts")}
+            rows = {r["id"]: r for r in self.db.execute("SELECT id, filename, size, sha256, has_thumb FROM posts")}
             for d in self.posts_root.iterdir():
                 if d.name not in rows:
                     log.warning("removing board snapshot folder without a post: %s", d.name)
@@ -528,8 +684,17 @@ class Store:
                     self.db.execute("DELETE FROM posts WHERE id=?", (post_id,))
                     continue
                 size = snap.stat().st_size
+                digest = r["sha256"]
                 if size != r["size"]:
-                    self.db.execute("UPDATE posts SET size=?, sha256=? WHERE id=?", (size, _hash_file(snap), post_id))
+                    digest = _hash_file(snap)
+                    self.db.execute("UPDATE posts SET size=?, sha256=? WHERE id=?", (size, digest, post_id))
+                # anything else in the folder is left over from an interrupted refresh or conversion,
+                # or a 3D view cache of an older snapshot
+                cache = f"{MODEL_CACHE_PREFIX}{digest[:16]}."
+                for f in pdir.iterdir():
+                    if f.name not in (r["filename"], POST_THUMB) and not f.name.startswith(cache) and f.is_file():
+                        log.info("removing stale file from board post %s: %s", post_id, f.name)
+                        f.unlink(missing_ok=True)
                 has_thumb = (pdir / POST_THUMB).is_file()
                 if has_thumb != bool(r["has_thumb"]):
                     self.db.execute("UPDATE posts SET has_thumb=? WHERE id=?", (int(has_thumb), post_id))
@@ -677,13 +842,13 @@ class Store:
 
     def list_files(self, uuid: str) -> list[FileRow]:
         with self.lock:
-            rows = self.db.execute("SELECT * FROM files WHERE uuid=? ORDER BY path", (uuid,)).fetchall()
-        return [FileRow(r["path"], r["size"], r["sha256"], r["modified"], bool(r["has_thumb"])) for r in rows]
+            rows = self.db.execute(FILE_SELECT + " WHERE f.uuid=? ORDER BY f.path", (uuid,)).fetchall()
+        return [FileRow.from_row(r) for r in rows]
 
     def get_file(self, uuid: str, path: str) -> FileRow | None:
         with self.lock:
-            r = self.db.execute("SELECT * FROM files WHERE uuid=? AND path=?", (uuid, path)).fetchone()
-        return FileRow(r["path"], r["size"], r["sha256"], r["modified"], bool(r["has_thumb"])) if r else None
+            r = self.db.execute(FILE_SELECT + " WHERE f.uuid=? AND f.path=?", (uuid, path)).fetchone()
+        return FileRow.from_row(r) if r else None
 
     def used_bytes(self, uuid: str) -> int:
         """Bytes counted against the quota: the account's files plus its board snapshots."""
@@ -702,10 +867,13 @@ class Store:
         return int(n), int(size)
 
     def put_file_row(self, uuid: str, row: FileRow) -> None:
+        src = row.source
         with self.lock:
             self.db.execute(
-                "INSERT OR REPLACE INTO files(uuid,path,size,sha256,modified,has_thumb) VALUES(?,?,?,?,?,?)",
-                (uuid, row.path, row.size, row.sha256, row.modified, int(row.has_thumb)),
+                f"INSERT OR REPLACE INTO files({','.join(FILE_COLUMNS)}) VALUES({','.join('?' * len(FILE_COLUMNS))})",
+                (uuid, row.path, row.size, row.sha256, row.modified, int(row.has_thumb),
+                 src.post_id if src else None, src.title if src else None,
+                 src.author_uuid if src else None, src.author_name if src else None),
             )
 
     def delete_file_row(self, uuid: str, path: str) -> None:
@@ -734,20 +902,30 @@ class Store:
             r = self.db.execute(POST_SELECT + " WHERE p.id=?", (post_id,)).fetchone()
         return PostRow.from_row(r) if r else None
 
-    def insert_post(self, values: dict[str, Any], allowed: list[tuple[str, str]]) -> None:
+    def insert_post(self, values: dict[str, Any], allowed: list[tuple[str, str]], tags: list[str] = ()) -> None:
         cols = ", ".join(values)
         marks = ", ".join(":" + k for k in values)
         with self.transaction():
             self.db.execute(f"INSERT INTO posts({cols}) VALUES({marks})", values)
             self._set_allowed(values["id"], allowed)
+            self._set_tags(values["id"], tags)
 
-    def update_post(self, post_id: str, values: dict[str, Any], allowed: list[tuple[str, str]] | None = None) -> None:
+    def update_post(
+        self, post_id: str, values: dict[str, Any], allowed: list[tuple[str, str]] | None = None,
+        tags: list[str] | None = None,
+    ) -> None:
         with self.transaction():
             if values:
                 sets = ", ".join(f"{k}=:{k}" for k in values)
                 self.db.execute(f"UPDATE posts SET {sets} WHERE id=:id", {**values, "id": post_id})
             if allowed is not None:
                 self._set_allowed(post_id, allowed)
+            if tags is not None:
+                self._set_tags(post_id, tags)
+
+    def _set_tags(self, post_id: str, tags: list[str]) -> None:
+        self.db.execute("DELETE FROM post_tags WHERE post_id=?", (post_id,))
+        self.db.executemany("INSERT OR IGNORE INTO post_tags(post_id, tag) VALUES(?,?)", [(post_id, t) for t in tags])
 
     def delete_post_row(self, post_id: str) -> None:
         with self.lock:
@@ -789,11 +967,12 @@ class Store:
                 )
 
     def list_posts(
-        self, tab: str, viewer: str | None, sort: str, query: str, page: int, page_size: int
+        self, tab: str, viewer: str | None, sort: str, query: str, page: int, page_size: int,
+        tags: list[str] = (), size: str | None = None,
     ) -> tuple[list[PostRow], int]:
         """One page of a board tab and the total number of matching posts.
         'public' lists public posts only; 'shared' private posts whose access list has viewer;
-        'mine' every post by viewer."""
+        'mine' every post by viewer. Every tag in tags must be on the post; size is a size class."""
         params: dict[str, Any] = {"viewer": viewer, "now": int(time.time() * 1000)}
         if tab == "public":
             where = ["p.visibility = 'public'"]
@@ -810,6 +989,12 @@ class Store:
         for i, term in enumerate(query.casefold().split()[:10]):
             params[f"t{i}"] = term
             where.append(f"instr(slop_fold(p.title || char(10) || p.description || char(10) || u.name), :t{i}) > 0")
+        for i, tag in enumerate(tags):
+            params[f"tag{i}"] = tag
+            where.append(f"EXISTS (SELECT 1 FROM post_tags g WHERE g.post_id = p.id AND g.tag = :tag{i})")
+        if size is not None:
+            params["size"] = size
+            where.append("p.size_class = :size")
         clause = " WHERE " + " AND ".join(where)
         with self.lock:
             (total,) = self.db.execute(
@@ -1006,6 +1191,7 @@ class PostIn(BaseModel):
     description: str = ""
     visibility: str
     allowed: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
 
 
 class PostPatchIn(BaseModel):
@@ -1013,6 +1199,7 @@ class PostPatchIn(BaseModel):
     description: str | None = None
     visibility: str | None = None
     allowed: list[str] | None = None
+    tags: list[str] | None = None
 
 
 class VoteIn(BaseModel):
@@ -1051,6 +1238,39 @@ class RootPathMiddleware:
         await self.app(scope, receive, send)
 
 
+class CompressedStaticFiles(StaticFiles):
+    """StaticFiles that sends scripts, styles and JSON gzip-compressed to clients that accept it
+    (the vendored three.js is 2 MB, about 420 KB compressed). Compressed once per file version, in memory."""
+
+    COMPRESS = (".js", ".css", ".json", ".svg")
+
+    def __init__(self, *args: Any, **kw: Any) -> None:
+        super().__init__(*args, **kw)
+        self._gz: dict[str, tuple[int, bytes]] = {}
+        self._gz_lock = threading.Lock()
+
+    def _compressed(self, path: str) -> bytes:
+        mtime = os.stat(path).st_mtime_ns
+        with self._gz_lock:
+            hit = self._gz.get(path)
+        if hit is None or hit[0] != mtime:
+            hit = (mtime, gzip.compress(Path(path).read_bytes(), compresslevel=6, mtime=0))
+            with self._gz_lock:
+                self._gz[path] = hit
+        return hit[1]
+
+    async def get_response(self, path: str, scope: dict) -> Response:
+        resp = await super().get_response(path, scope)
+        if not isinstance(resp, FileResponse) or resp.status_code != 200 or not path.lower().endswith(self.COMPRESS):
+            return resp
+        resp.headers["Vary"] = "Accept-Encoding"
+        if "gzip" not in Headers(scope=scope).get("accept-encoding", "").lower():
+            return resp
+        headers = {k: v for k, v in resp.headers.items() if k.lower() not in ("content-length", "content-type")}
+        headers["Content-Encoding"] = "gzip"
+        return Response(self._compressed(str(resp.path)), headers=headers, media_type=resp.headers.get("content-type"))
+
+
 CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' https://mc-heads.net data:; "
     "connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
@@ -1078,13 +1298,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     templates.filters["num"] = lambda n: f"{n:,}"
     static_dir = PKG_DIR / "static"
     static_version = str(max(int(p.stat().st_mtime) for p in static_dir.iterdir()))
+    try:  # block id -> map colour; null for blocks that are clear on maps (glass, panes, ...)
+        block_colors = json.loads((static_dir / "blockcolors.json").read_text())
+    except (OSError, ValueError):
+        block_colors = {}
+    transparent_blocks = frozenset(k for k, v in block_colors.items() if v is None)
 
     from . import __version__
     app = FastAPI(title="Slopmatica Cloud", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings = settings
     app.state.store = store
     app.add_middleware(RootPathMiddleware, root_path=base)
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    app.mount("/static", CompressedStaticFiles(directory=static_dir), name="static")
 
     # ---- error shapes: always {"error": "..."} for the API
 
@@ -1406,11 +1631,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     # content changed: the old thumbnail is stale
                     store.thumb_path(user.uuid, path).unlink(missing_ok=True)
                     has_thumb = False
-                row = FileRow(path, size, digest, int(time.time() * 1000), has_thumb)
-                store.put_file_row(user.uuid, row)
+                # a file saved from the board stays "from the board" until its content changes
+                source = old.source if old and old.sha256 == digest else None
+                store.put_file_row(user.uuid, FileRow(path, size, digest, int(time.time() * 1000), has_thumb, source))
+                row = store.get_file(user.uuid, path)
         finally:
             tmp.unlink(missing_ok=True)
-        return JSONResponse(row.api(), status_code=200 if old else 201)
+        return JSONResponse(row.api(), status_code=200 if old else 201)  # type: ignore[union-attr]
 
     @app.get("/api/files/{path:path}")
     def get_file(path: str, request: Request) -> FileResponse:
@@ -1612,7 +1839,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @dataclass
     class Snapshot:
-        file: Path  # temporary copy in store.tmp
+        file: Path  # temporary .slopmatic in store.tmp
         thumb: Path | None
         filename: str
         fmt: str
@@ -1620,11 +1847,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sha256: str
         dims: tuple[int, int, int] | None = None
         blocks: int | None = None
+        extra: list[Path] = field(default_factory=list)  # other temporary files to remove
 
         def cleanup(self) -> None:
-            self.file.unlink(missing_ok=True)
-            if self.thumb is not None:
-                self.thumb.unlink(missing_ok=True)
+            for p in (self.file, self.thumb, *self.extra):
+                if p is not None:
+                    p.unlink(missing_ok=True)
 
     def copy_hashed(src: Path, dst: Any) -> tuple[int, str]:
         h = hashlib.sha256()
@@ -1636,27 +1864,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 dst.write(chunk)
         return size, h.hexdigest()
 
-    def schematic_meta(disk: Path, filename: str) -> tuple[tuple[int, int, int] | None, int | None]:
-        """(enclosing size, block count) of a snapshot, or (None, None) if it cannot be parsed."""
-        fmt = convert.format_of(filename)
-        if fmt is None or not export_slots.acquire(timeout=EXPORT_WAIT):
-            return None, None
+    @contextmanager
+    def conversion_slot() -> Any:
+        if not export_slots.acquire(timeout=EXPORT_WAIT):
+            raise ApiError(503, "the server is busy converting other files, try again shortly")
         try:
-            _, root = nbt.load(disk)
-            schem = convert.read(root, fmt, filename[: -len(fmt) - 1], settings.max_export_volume)
-            _, dims = schem.bounds()
-            return dims, schem.block_count()
-        except Exception as e:  # any valid gzip file can be posted; it just has no details
-            log.info("could not read %s for board details: %s", filename, e)
-            return None, None
+            yield
         finally:
             export_slots.release()
 
     def take_snapshot(user: User, path: str) -> Snapshot:
-        """Copy one of user's files (and its thumbnail) to temporary files and read its details."""
+        """Copy one of user's files (and its thumbnail) to temporary files, as .slopmatic: a file in
+        another format is converted (block states and data version kept). 400 if it can't be read."""
         fd, tmp_name = tempfile.mkstemp(dir=store.tmp, suffix=".snap")
         tmp = Path(tmp_name)
-        snap = Snapshot(tmp, None, path.rsplit("/", 1)[-1], "", 0, "")
+        name = path.rsplit("/", 1)[-1]
+        snap = Snapshot(tmp, None, slopmatic_name(name), "slopmatic", 0, "")
         try:
             with os.fdopen(fd, "wb") as f, store.lock:
                 row, disk = require_file(user, path)
@@ -1665,8 +1888,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if row.has_thumb and thumb.is_file():
                     snap.thumb = tmp.with_suffix(".png")
                     shutil.copyfile(thumb, snap.thumb)
-            snap.fmt = convert.format_of(snap.filename) or ""
-            snap.dims, snap.blocks = schematic_meta(tmp, snap.filename)
+            src_fmt = convert.format_of(name)
+            with conversion_slot():
+                try:
+                    schem = read_schematic(tmp, name, settings.max_export_volume)
+                    if src_fmt != "slopmatic":
+                        snap.extra.append(tmp)
+                        snap.file = tmp.with_suffix(".slopmatic")
+                        snap.size, snap.sha256 = write_slopmatic(schem, snap.file)
+                except ValueError as e:  # ConversionError, NBTError: not a readable schematic
+                    what = "read" if src_fmt == "slopmatic" else "convert"
+                    raise ApiError(400, f"cannot {what} {name}" + ("" if what == "read" else " to .slopmatic") + f": {e}")
+            _, snap.dims = schem.bounds()
+            snap.blocks = schem.block_count()
         except BaseException:
             snap.cleanup()
             raise
@@ -1677,7 +1911,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "filename": snap.filename, "format": snap.fmt, "size": snap.size, "sha256": snap.sha256,
             "has_thumb": int(snap.thumb is not None), "size_x": dims[0], "size_y": dims[1], "size_z": dims[2],
-            "block_count": snap.blocks, "updated": int(time.time() * 1000),
+            "block_count": snap.blocks, "size_class": size_class(snap.blocks), "updated": int(time.time() * 1000),
         }
 
     def install_snapshot(pdir: Path, snap: Snapshot, old_filename: str | None = None) -> None:
@@ -1686,6 +1920,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         os.replace(snap.file, store._under(pdir, snap.filename))
         if old_filename and old_filename != snap.filename:
             store._under(pdir, old_filename).unlink(missing_ok=True)
+        for cached in pdir.glob(MODEL_CACHE_PREFIX + "*"):  # the 3D view of the old snapshot
+            cached.unlink(missing_ok=True)
         if snap.thumb is not None:
             os.replace(snap.thumb, pdir / POST_THUMB)
         else:
@@ -1703,6 +1939,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "sha256": post.sha256,
             "dimensions": list(post.dims) if post.dims else None,
             "blockCount": post.block_count,
+            "sizeClass": post.size_class,
+            "tags": post.tags,
             "hasThumbnail": post.has_thumb,
             "created": post.created,
             "updated": post.updated,
@@ -1717,6 +1955,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 out["sourcePath"] = post.source_path
                 out["allowed"] = [{"uuid": u, "name": n} for u, n in store.get_allowed(post.id)]
         return out
+
+    def clean_tags(value: Any) -> list[str]:
+        if not isinstance(value, list) or not all(isinstance(t, str) for t in value):
+            raise ApiError(400, "tags must be a list of tag names")
+        unknown = [t for t in value if t not in TAGS]
+        if unknown:
+            raise ApiError(400, ("unknown tags: " if len(unknown) > 1 else "unknown tag: ") + ", ".join(unknown)
+                           + " (known: " + ", ".join(TAGS) + ")")
+        return [t for t in TAGS if t in value]
+
+    def board_filters(params: Any, strict: bool) -> tuple[list[str], str | None]:
+        """(tags, size class) from ?tag=&size=; strict raises 400 for unknown values instead of ignoring them."""
+        raw = params.getlist("tag")
+        tags = [t for t in TAGS if t in raw]
+        if strict and len(tags) < len({t for t in raw if t}):
+            clean_tags([t for t in raw if t])  # raises, naming the unknown ones
+        size = params.get("size") or None
+        if size is not None and size not in SIZE_LABELS:
+            if strict:
+                raise ApiError(400, "size must be one of " + ", ".join(SIZE_LABELS))
+            size = None
+        return tags, size
 
     def board_query(params: Any, strict: bool) -> tuple[str, str, str, int]:
         """(tab, sort, query, page) from query parameters; strict raises 400 instead of defaulting."""
@@ -1742,12 +2002,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/board")
     def board_list(request: Request) -> dict[str, Any]:
         tab, sort, query, page = board_query(request.query_params, strict=True)
+        tags, size_filter = board_filters(request.query_params, strict=True)
         user = optional_user(request) if tab == "public" else authenticate(request, mutating=False)
         size = settings.board_page_size
-        posts, total = store.list_posts(tab, user.uuid if user else None, sort, query, page, size)
+        posts, total = store.list_posts(tab, user.uuid if user else None, sort, query, page, size, tags, size_filter)
         out: dict[str, Any] = {
             "posts": [post_api(p, user) for p in posts],
-            "tab": tab, "sort": sort, "q": query, "page": page,
+            "tab": tab, "sort": sort, "q": query, "tags": tags, "size": size_filter, "page": page,
             "pageSize": size, "total": total, "pages": max(1, -(-total // size)),
         }
         if tab == "mine" and user is not None:
@@ -1761,13 +2022,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title = clean_title(body.title)
         description = clean_description(body.description)
         visibility = clean_visibility(body.visibility)
+        tags = clean_tags(body.tags)
         limit = settings.max_posts_per_user
         if store.post_usage(user.uuid)[0] >= limit:
             raise ApiError(409, f"you already have {limit} posts on the board, which is the limit")
         allowed = resolve_names(body.allowed)
         with store.lock:
-            row, _ = require_file(user, path)
-            check_quota(user, row.size)
+            require_file(user, path)
+            check_quota(user, 1)  # already full: don't convert for nothing (the real check follows)
         snap = take_snapshot(user, path)
         try:
             with store.lock:
@@ -1782,7 +2044,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "id": post_id, "uuid": user.uuid, "title": title, "description": description,
                         "visibility": visibility, "source_path": path, "created": int(time.time() * 1000),
                         **snapshot_columns(snap),
-                    }, allowed)
+                    }, allowed, tags)
                 except BaseException:
                     shutil.rmtree(pdir, ignore_errors=True)
                     store.delete_post_row(post_id)
@@ -1814,7 +2076,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if body.allowed is None:
                 raise ApiError(400, "allowed must be a list of Minecraft usernames")
             allowed = resolve_names(body.allowed, store.get_allowed(post.id))
-        store.update_post(post.id, values, allowed)
+        tags = clean_tags(body.tags) if "tags" in given else None
+        store.update_post(post.id, values, allowed, tags)
         return post_api(store.get_post(post.id), user, detail=True)  # type: ignore[arg-type]
 
     @app.post("/api/board/{post_id}/refresh")
@@ -1896,11 +2159,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     dest_thumb.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(thumb, dest_thumb)
                     has_thumb = True
-                row = FileRow(path, size, digest, int(time.time() * 1000), has_thumb)
-                store.put_file_row(user.uuid, row)
+                source = FileSource(post.id, post.title, post.uuid, post.author_name)
+                store.put_file_row(user.uuid, FileRow(path, size, digest, int(time.time() * 1000), has_thumb, source))
+                row = store.get_file(user.uuid, path)
         finally:
             tmp.unlink(missing_ok=True)
-        return JSONResponse(row.api(), status_code=201)
+        return JSONResponse(row.api(), status_code=201)  # type: ignore[union-attr]
 
     @app.get("/api/board/{post_id}/file")
     def board_file(post_id: str, request: Request) -> FileResponse:
@@ -1932,6 +2196,61 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ApiError(404, "no such post")
         return export_response(disk, post.filename, fmt)
 
+    def too_big(visible: int) -> ApiError:
+        return ApiError(
+            413, f"too big for the 3D view: {visible:,} visible blocks (the limit is {model3d.MAX_VISIBLE:,})",
+            visibleBlocks=visible, maxVisibleBlocks=model3d.MAX_VISIBLE,
+        )
+
+    @app.get("/api/board/{post_id}/model")
+    def board_model(post_id: str, request: Request) -> Response:
+        """The visible blocks of the snapshot for the 3D view (model3d.visible_blocks), gzip JSON.
+        Cached next to the snapshot under its sha256; a refresh removes the cache."""
+        post, _ = visible_post(request, post_id)
+        disk = store.post_file(post)
+        if not disk.is_file():
+            raise ApiError(404, "no such post")
+        pdir = store.post_dir(post.id)
+        key = MODEL_CACHE_PREFIX + post.sha256[:16]
+        cache, big = pdir / f"{key}.json.gz", pdir / f"{key}.toobig"
+        if not cache.is_file() and not big.is_file():
+            with conversion_slot():
+                if not cache.is_file() and not big.is_file():  # another request may have built it meanwhile
+                    build_model(post, disk, cache, big)
+        try:
+            if big.is_file():
+                text = big.read_text().strip()
+                raise too_big(int(text) if text.isdigit() else model3d.MAX_VISIBLE + 1)
+            data = cache.read_bytes()
+        except FileNotFoundError:  # the post was refreshed or deleted just now
+            raise ApiError(404, "no such post")
+        headers = {"Cache-Control": "private, max-age=86400", "Vary": "Accept-Encoding"}
+        if "gzip" in request.headers.get("accept-encoding", "").lower():
+            return Response(data, media_type="application/json", headers={**headers, "Content-Encoding": "gzip"})
+        return Response(gzip.decompress(data), media_type="application/json", headers=headers)
+
+    def build_model(post: PostRow, disk: Path, cache: Path, big: Path) -> None:
+        try:
+            schem = read_schematic(disk, post.filename, settings.max_export_volume)
+            model = model3d.visible_blocks(schem, transparent_blocks, model3d.MAX_VISIBLE, settings.max_export_volume)
+            payload = gzip.compress(json.dumps(model, separators=(",", ":")).encode(), compresslevel=6, mtime=0)
+            dest = cache
+        except model3d.TooManyBlocks as e:
+            payload, dest = str(e.visible).encode(), big
+        except ValueError as e:  # an old post that never could be read
+            raise ApiError(400, f"cannot read this schematic for the 3D view: {e}")
+        fd, tmp_name = tempfile.mkstemp(dir=store.tmp, suffix=".model")
+        with os.fdopen(fd, "wb") as f:
+            f.write(payload)
+        with store.lock:
+            current = store.get_post(post.id)
+            if current is None or current.sha256 != post.sha256:
+                Path(tmp_name).unlink(missing_ok=True)  # refreshed or deleted meanwhile: don't cache
+                if dest is big:
+                    raise too_big(int(payload))
+                raise ApiError(409, "the post changed while its 3D view was built, try again")
+            os.replace(tmp_name, dest)
+
     # ---- website
 
     def render(name: str, status: int = 200, **ctx: Any) -> HTMLResponse:
@@ -1948,12 +2267,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         post_count, post_bytes = store.post_usage(user.uuid)
         quota = quota_for(user)
         entries = []
+        post_visible: dict[str, bool] = {}
         for f in files:
             folder, _, name = f.path.rpartition("/")
             ext = next(e for e in SCHEMATIC_EXTENSIONS if name.lower().endswith(e))
+            source_url = None
+            if f.source:
+                # link to the post only while it exists and this user may see it
+                pid = f.source.post_id
+                if pid not in post_visible:
+                    post = store.get_post(pid) if POST_ID_RE.match(pid) else None
+                    post_visible[pid] = post is not None and can_view(post, user)
+                if post_visible[pid]:
+                    source_url = f"{base}/board/{pid}"
             entries.append({
                 "f": f, "folder": folder, "name": name, "stem": name[: -len(ext)], "ext": ext,
-                "exports": [e for e in SCHEMATIC_EXTENSIONS if e != ext],
+                "exports": [e for e in SCHEMATIC_EXTENSIONS if e != ext], "source_url": source_url,
             })
         folders = sorted({e["folder"] for e in entries if e["folder"]}, key=str.lower)
         pct = 0.0 if not quota else min(100.0, used * 100.0 / quota)
@@ -1967,6 +2296,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             visibilities=VISIBILITIES,
             max_title=MAX_TITLE_LEN,
             max_description=MAX_DESCRIPTION_LEN,
+            all_tags=TAGS,
             folders=folders,
             used=used,
             quota=quota,
@@ -1974,28 +2304,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             over=quota is not None and used >= quota,
         )
 
-    def board_url(tab: str = "public", sort: str | None = None, q: str = "", page: int = 1) -> str:
+    def board_url(
+        tab: str = "public", sort: str | None = None, q: str = "", page: int = 1,
+        tags: Any = (), size: str | None = None,
+    ) -> str:
         """A link to a board page, leaving out parameters at their defaults."""
-        params: dict[str, Any] = {}
+        params: list[tuple[str, Any]] = []
         if tab != "public":
-            params["tab"] = tab
+            params.append(("tab", tab))
         if sort and sort != ("top" if tab == "public" else "new"):
-            params["sort"] = sort
+            params.append(("sort", sort))
         if q:
-            params["q"] = q
+            params.append(("q", q))
+        params.extend(("tag", t) for t in TAGS if t in tags)
+        if size:
+            params.append(("size", size))
         if page > 1:
-            params["page"] = page
+            params.append(("page", page))
         return f"{base}/board" + ("?" + urllib.parse.urlencode(params) if params else "")
 
     @app.get("/board", response_class=HTMLResponse)
     def board_page(request: Request) -> HTMLResponse:
         user = session_user(request)
         tab, sort, query, page = board_query(request.query_params, strict=False)
+        tags, size_filter = board_filters(request.query_params, strict=False)
         size = settings.board_page_size
         posts: list[PostRow] = []
         total = 0
         if tab == "public" or user is not None:
-            posts, total = store.list_posts(tab, user.uuid if user else None, sort, query, page, size)
+            posts, total = store.list_posts(tab, user.uuid if user else None, sort, query, page, size, tags, size_filter)
+
+        def link(**change: Any) -> str:
+            """This board page with some of tab, sort, q, page, tags and size changed (page resets to 1)."""
+            state = {"tab": tab, "sort": sort, "q": query, "page": 1, "tags": tags, "size": size_filter}
+            return board_url(**{**state, **change})
+
+        def toggle_tag(tag: str) -> str:
+            return link(tags=[t for t in tags if t != tag] if tag in tags else [*tags, tag])
+
+        def chip_url(tag: str | None = None, size: str | None = None) -> str:
+            """A card's chip: add its tag (or set its size) to the current filters."""
+            if tag is not None:
+                return link(tags=tags if tag in tags else [*tags, tag])
+            return link(size=size)
+
         return render(
             "board.html",
             user=user,
@@ -2009,6 +2361,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             posts=posts,
             board_url=board_url,
             sorts=BOARD_SORTS,
+            tags=tags,
+            size=size_filter,
+            link=link,
+            toggle_tag=toggle_tag,
+            chip_url=chip_url,
+            all_tags=TAGS,
+            size_classes=SIZE_LABELS,
         )
 
     @app.get("/board/{post_id}", response_class=HTMLResponse)
@@ -2034,6 +2393,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             visibilities=VISIBILITIES,
             max_title=MAX_TITLE_LEN,
             max_description=MAX_DESCRIPTION_LEN,
+            all_tags=TAGS,
+            size_classes=SIZE_LABELS,
+            board_url=board_url,
+            has_model=post.block_count is not None,
+            max_visible=model3d.MAX_VISIBLE,
         )
 
     @app.get("/account", response_class=HTMLResponse)

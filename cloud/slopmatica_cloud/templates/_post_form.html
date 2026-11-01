@@ -1,4 +1,4 @@
-{% macro post_fields(visibilities, max_title, max_description, title="", description="", visibility="public", allowed_text="") %}
+{% macro post_fields(visibilities, max_title, max_description, title="", description="", visibility="public", allowed_text="", all_tags={}, tags=()) %}
 <label class="field">
   <span class="label">Title</span>
   <input type="text" name="title" value="{{ title }}" maxlength="{{ max_title }}" required autocomplete="off">
@@ -7,6 +7,14 @@
   <span class="label">Description <span class="muted">(optional, plain text)</span></span>
   <textarea name="description" rows="5" maxlength="{{ max_description }}">{{ description }}</textarea>
 </label>
+<fieldset class="field tag-field">
+  <legend class="label">Tags <span class="muted">(optional, pick any)</span></legend>
+  <div class="tag-picks">
+    {% for key, label in all_tags.items() %}
+    <label class="tag-pick"><input type="checkbox" name="tags" value="{{ key }}"{% if key in tags %} checked{% endif %}><span>{{ label }}</span></label>
+    {% endfor %}
+  </div>
+</fieldset>
 <fieldset class="field vis">
   <legend class="label">Visibility</legend>
   {% set help = {

@@ -3,16 +3,38 @@
 {% block title %}{{ post.title }} &middot; Slopmatica Cloud{% endblock %}
 {% block main %}
 <article class="post" data-post-id="{{ post.id }}" data-post-filename="{{ post.filename }}"{% if own %} data-own{% endif %}>
-  <div class="post-thumb thumb">
-    {% if post.has_thumb %}
-    <img src="{{ base }}/api/board/{{ post.id }}/thumbnail?v={{ post.updated }}" alt="Preview of {{ post.title }}">
-    {% else %}
-    <div class="ph" aria-hidden="true"></div>
+  <div class="post-media" data-model-v="{{ post.sha256[:12] }}" data-static-v="{{ v }}">
+    {% if has_model %}
+    <div class="seg media-toggle" role="group" aria-label="Show">
+      <button type="button" class="on" data-view="picture" aria-pressed="true">Picture</button>
+      <button type="button" data-view="model" aria-pressed="false">3D model</button>
+    </div>
+    {% endif %}
+    <div class="post-thumb thumb" data-pane="picture">
+      {% if post.has_thumb %}
+      <img src="{{ base }}/api/board/{{ post.id }}/thumbnail?v={{ post.updated }}" alt="Preview of {{ post.title }}">
+      {% else %}
+      <div class="ph" aria-hidden="true"></div>
+      {% endif %}
+    </div>
+    {% if has_model %}
+    <div class="model-view" data-pane="model" hidden>
+      <div class="model-canvas" data-model-canvas></div>
+      <button type="button" class="btn small ghost model-reset" data-model-reset>Reset view</button>
+      <p class="model-hint"><span class="long">Drag to rotate &middot; scroll or pinch to zoom &middot; right-drag or two fingers to pan</span><span class="short">Drag to rotate &middot; pinch to zoom &middot; two fingers to pan</span></p>
+    </div>
+    <p class="form-msg small model-msg" data-model-msg role="status"></p>
     {% endif %}
   </div>
   <div class="post-info">
     <h1 class="post-title">{{ post.title }}</h1>
     {% if post.visibility != "public" %}<span class="badge vis-{{ post.visibility }}">{{ post.visibility|capitalize }}</span>{% endif %}
+    {% if post.tags or post.size_class %}
+    <div class="chips">
+      {% for t in post.tags %}<a class="chip tag-chip" href="{{ board_url(tags=[t]) }}">{{ all_tags[t] }}</a>{% endfor %}
+      {% if post.size_class %}<a class="chip size-chip" href="{{ board_url(size=post.size_class) }}" title="Size by block count">{{ size_classes[post.size_class] }}</a>{% endif %}
+    </div>
+    {% endif %}
     <div class="author">
       <img class="head" src="https://mc-heads.net/avatar/{{ post.uuid }}/24" alt="" width="24" height="24">
       <strong>{{ post.author_name }}</strong>
@@ -69,9 +91,9 @@
   </div>
   <p class="form-msg small" data-owner-msg role="status"></p>
   <details class="edit">
-    <summary>Edit title, description and visibility</summary>
+    <summary>Edit title, description, tags and visibility</summary>
     <form class="post-form" data-post-form="edit" novalidate>
-      {{ post_fields(visibilities, max_title, max_description, post.title, post.description, post.visibility, allowed|map(attribute=1)|join(", ")) }}
+      {{ post_fields(visibilities, max_title, max_description, post.title, post.description, post.visibility, allowed|map(attribute=1)|join(", "), all_tags, post.tags) }}
       <p class="form-msg" role="status"></p>
       <div class="form-actions"><button type="submit" class="btn">Save changes</button></div>
     </form>

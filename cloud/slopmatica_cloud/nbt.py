@@ -463,8 +463,9 @@ def serialize(root: Any, name: str = "", sink: Callable[[bytes], Any] | None = N
 
 
 def dump(root: Any, fileobj: BinaryIO, name: str = "", compresslevel: int = 6) -> None:
-    """Write root as a gzip-compressed NBT file to an open binary file."""
-    with gzip.GzipFile(fileobj=fileobj, mode="wb", compresslevel=compresslevel, mtime=0) as gz:
+    """Write root as a gzip-compressed NBT file to an open binary file. Like dumps, the gzip header
+    carries no file name (GzipFile would otherwise record fileobj's, e.g. a temporary file's)."""
+    with gzip.GzipFile(filename="", fileobj=fileobj, mode="wb", compresslevel=compresslevel, mtime=0) as gz:
         serialize(root, name, gz.write)
 
 

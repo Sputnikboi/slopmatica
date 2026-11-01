@@ -1,5 +1,6 @@
-{% macro post_card(p, base, show_visibility=False) %}
-<a class="card post-card" href="{{ base }}/board/{{ p.id }}">
+{% macro post_card(p, base, show_visibility=False, chip_url=None, all_tags={}, size_classes={}) %}
+{# The whole card is clickable through the title link's ::after; the chips sit above it as their own links. #}
+<article class="card post-card">
   <div class="thumb">
     {% if p.has_thumb %}
     <img loading="lazy" src="{{ base }}/api/board/{{ p.id }}/thumbnail?v={{ p.updated }}" alt="">
@@ -8,7 +9,7 @@
     {% endif %}
   </div>
   <div class="meta">
-    <h3 class="name" title="{{ p.title }}">{{ p.title }}</h3>
+    <h3 class="name" title="{{ p.title }}"><a class="card-link" href="{{ base }}/board/{{ p.id }}">{{ p.title }}</a></h3>
     <div class="sub author">
       <img class="head" src="https://mc-heads.net/avatar/{{ p.uuid }}/16" alt="" width="16" height="16">
       <span>{{ p.author_name }}</span>
@@ -19,7 +20,13 @@
       <span>{{ p.size|human_size }}</span>
     </div>
     <div class="sub muted"><time datetime="{{ p.created|iso_utc }}">{{ p.created|pretty_utc }}</time></div>
+    {% if p.tags or p.size_class %}
+    <div class="sub chips">
+      {% for t in p.tags %}<a class="chip tag-chip" href="{{ chip_url(tag=t) if chip_url else base ~ '/board?tag=' ~ t }}">{{ all_tags.get(t, t) }}</a>{% endfor %}
+      {% if p.size_class %}<a class="chip size-chip" href="{{ chip_url(size=p.size_class) if chip_url else base ~ '/board?size=' ~ p.size_class }}" title="Size by block count">{{ size_classes.get(p.size_class, p.size_class) }}</a>{% endif %}
+    </div>
+    {% endif %}
     {% if show_visibility %}<div class="sub"><span class="badge vis-{{ p.visibility }}">{{ p.visibility|capitalize }}</span></div>{% endif %}
   </div>
-</a>
+</article>
 {% endmacro %}

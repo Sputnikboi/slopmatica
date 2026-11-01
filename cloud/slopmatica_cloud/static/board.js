@@ -47,6 +47,7 @@
         title: form.elements.title.value.trim(),
         description: form.elements.description.value,
         visibility: vis ? vis.value : "public",
+        tags: Array.from(form.querySelectorAll("input[name=tags]:checked")).map((i) => i.value),
       };
       if (!body.title) { say(msg, "Give it a title.", true); form.elements.title.focus(); return; }
       // Names are only sent for private posts; an edit to another visibility keeps the stored list.
@@ -173,6 +174,78 @@
       else say(ownerMsg, "Delete failed: " + (await errorText(r)), true);
     }
   });
+
+  // ---- Picture / 3D model. The viewer (and three.js) is only loaded on the first switch to it.
+  const media = post.querySelector(".post-media");
+  const modelPane = media && media.querySelector("[data-pane=model]");
+  if (modelPane) {
+    const picturePane = media.querySelector("[data-pane=picture]");
+    const modelMsg = media.querySelector("[data-model-msg]");
+    const buttons = media.querySelectorAll("[data-view]");
+    let viewer = null;
+    let loading = false;
+
+    const show = (view) => {
+      picturePane.hidden = view !== "picture";
+      modelPane.hidden = view !== "model";
+      buttons.forEach((b) => {
+        const on = b.dataset.view === view;
+        b.classList.toggle("on", on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+      if (viewer && view === "model") viewer.resize();
+    };
+
+    const webglAvailable = () => {
+      try {
+        const c = document.createElement("canvas");
+        return !!(window.WebGLRenderingContext && (c.getContext("webgl2") || c.getContext("webgl")));
+      } catch (_) {
+        return false;
+      }
+    };
+
+    async function openModel() {
+      if (viewer) { show("model"); return; }
+      if (loading) return;
+      if (!webglAvailable()) {
+        say(modelMsg, "The 3D view needs WebGL, which this browser has turned off or doesn't support.", true);
+        return;
+      }
+      loading = true;
+      say(modelMsg, "Loading the 3D model…");
+      try {
+        const r = await fetch(apiPost(id) + "/model?v=" + encodeURIComponent(media.dataset.modelV), { credentials: "same-origin" });
+        if (r.status === 413) {
+          let detail = "";
+          try {
+            const j = await r.json();
+            if (j.visibleBlocks) detail = " It has " + j.visibleBlocks.toLocaleString() + " visible blocks; the limit is " + j.maxVisibleBlocks.toLocaleString() + ".";
+          } catch (_) {}
+          say(modelMsg, "Too big for the 3D view." + detail, true);
+          return;
+        }
+        if (!r.ok) { say(modelMsg, "Could not load the 3D model: " + (await errorText(r)), true); return; }
+        const model = await r.json();
+        const mod = await import(base + "/static/model3d.js?v=" + encodeURIComponent(media.dataset.staticV));
+        show("model");
+        viewer = await mod.mount(modelPane.querySelector("[data-model-canvas]"), model);
+        modelPane.querySelector("[data-model-reset]").addEventListener("click", () => viewer.reset());
+        say(modelMsg, model.count.toLocaleString() + " visible blocks.");
+      } catch (e) {
+        show("picture");
+        viewer = null;
+        say(modelMsg, "Could not show the 3D model: " + ((e && e.message) || "error"), true);
+      } finally {
+        loading = false;
+      }
+    }
+
+    buttons.forEach((b) => b.addEventListener("click", () => {
+      if (b.dataset.view === "model") openModel();
+      else show("picture");
+    }));
+  }
 
   // export the snapshot as another format (converted on the server)
   const sel = post.querySelector("select[data-post-export]");

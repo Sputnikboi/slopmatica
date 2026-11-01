@@ -27,6 +27,17 @@ def blob(n: int) -> bytes:
     return b"\x1f\x8b" + b"x" * (n - 2)
 
 
+def as_slopmatic(body: bytes, fmt: str = "litematic") -> convert.Schematic:
+    """What a post of body (a fmt file) should hold: the same schematic, written as .slopmatic."""
+    return convert.read(nbt.loads(body)[1], fmt, "x")
+
+
+def same_blocks(a: convert.Schematic, b: convert.Schematic) -> bool:
+    from test_convert import world_blocks, world_block_entities, world_entities
+    return (world_blocks(a), world_block_entities(a), world_entities(a), a.data_version) == \
+        (world_blocks(b), world_block_entities(b), world_entities(b), b.data_version)
+
+
 class Who:
     def __init__(self, client, mojang, name):
         data = login(client, mojang, name)
@@ -86,8 +97,11 @@ def test_post_public(client, ppl, data_dir):
     assert p["title"] == "Castle" and p["description"] == "Line one\nLine two"
     assert p["visibility"] == "public"
     assert p["author"] == {"uuid": ppl.alice.uuid, "name": "Alice"}
-    assert p["filename"] == "Castle.litematic" and p["format"] == "litematic"
-    assert p["size"] == len(body) and p["sha256"] == hashlib.sha256(body).hexdigest()
+    # stored as .slopmatic, converted from the .litematic
+    assert p["filename"] == "Castle.slopmatic" and p["format"] == "slopmatic"
+    stored = (data_dir / "posts" / p["id"] / "Castle.slopmatic").read_bytes()
+    assert p["size"] == len(stored) and p["sha256"] == hashlib.sha256(stored).hexdigest()
+    assert same_blocks(convert.read(nbt.loads(stored)[1], "slopmatic", "x"), as_slopmatic(body))
     expected = synthetic(two_regions=True)
     assert p["dimensions"] == list(expected.bounds()[1]) == [7, 2, 2]
     assert p["blockCount"] == expected.block_count()
@@ -97,7 +111,7 @@ def test_post_public(client, ppl, data_dir):
     assert p["myVote"] == 0
 
     snap_dir = data_dir / "posts" / p["id"]
-    assert (snap_dir / "Castle.litematic").read_bytes() == body
+    assert sorted(f.name for f in snap_dir.iterdir()) == ["Castle.slopmatic", "thumb.png"]
     assert (snap_dir / "thumb.png").read_bytes() == PNG
 
     anon = TestClient(client.app)
@@ -106,27 +120,32 @@ def test_post_public(client, ppl, data_dir):
     assert g.status_code == 200
     assert g.json()["myVote"] is None and "sourcePath" not in g.json() and "allowed" not in g.json()
     f = anon.get(f"/api/board/{p['id']}/file")
-    assert f.status_code == 200 and f.content == body
-    assert 'filename="Castle.litematic"' in f.headers["content-disposition"]
+    assert f.status_code == 200 and f.content == stored
+    assert 'filename="Castle.slopmatic"' in f.headers["content-disposition"]
     assert f.headers["x-sha256"] == p["sha256"]
     t = anon.get(f"/api/board/{p['id']}/thumbnail")
     assert t.status_code == 200 and t.content == PNG and t.headers["content-type"] == "image/png"
     e = anon.get(f"/api/board/{p['id']}/export?format=nbt")
     assert e.status_code == 200 and 'filename="Castle.nbt"' in e.headers["content-disposition"]
     assert convert.read(nbt.loads(e.content)[1], "nbt", "x").block_count() == expected.block_count()
-    assert anon.get(f"/api/board/{p['id']}/export?format=litematic").status_code == 400
+    lit = anon.get(f"/api/board/{p['id']}/export?format=litematic")
+    assert lit.status_code == 200 and 'filename="Castle.litematic"' in lit.headers["content-disposition"]
+    assert same_blocks(as_slopmatic(lit.content), as_slopmatic(body))
+    assert anon.get(f"/api/board/{p['id']}/export?format=slopmatic").status_code == 400
     assert anon.get(f"/api/board/{p['id']}/export?format=schem").status_code == 400
     assert list((data_dir / "tmp").iterdir()) == []
 
 
-def test_post_unparseable_file_still_posts(client, ppl):
-    upload(client, ppl.alice.h, "junk.nbt", gz(b"not nbt"))
-    p = make_post(client, ppl.alice.h, "junk.nbt", "Junk")
-    assert p["dimensions"] is None and p["blockCount"] is None and p["format"] == "nbt"
-    assert p["hasThumbnail"] is False
-    html = TestClient(client.app).get(f"/board/{p['id']}").text
-    assert "unknown" in html
-    assert TestClient(client.app).get(f"/api/board/{p['id']}/thumbnail").status_code == 404
+def test_post_unparseable_file_is_refused(client, ppl, data_dir):
+    # 0.5.0: posts are stored as .slopmatic, so a file that can't be converted can't be posted
+    upload(client, ppl.alice.h, "junk.nbt", gz(b"not nbt"), thumb=True)
+    upload(client, ppl.alice.h, "junk.slopmatic", gz(b"not nbt"))
+    r = client.post("/api/board", json={"path": "junk.nbt", "title": "Junk", "visibility": "public"}, headers=ppl.alice.h)
+    assert r.status_code == 400 and r.json()["error"].startswith("cannot convert junk.nbt to .slopmatic: ")
+    r = client.post("/api/board", json={"path": "junk.slopmatic", "title": "Junk", "visibility": "public"}, headers=ppl.alice.h)
+    assert r.status_code == 400 and r.json()["error"].startswith("cannot read junk.slopmatic: ")
+    assert ids(client.get("/api/board?tab=mine", headers=ppl.alice.h)) == []
+    assert list((data_dir / "posts").iterdir()) == [] and list((data_dir / "tmp").iterdir()) == []
 
 
 def test_post_validation(client, ppl):
@@ -153,7 +172,8 @@ def test_post_validation(client, ppl):
 def test_post_other_formats(client, ppl, fmt):
     upload(client, ppl.alice.h, f"x.{fmt}", schem(fmt))
     p = make_post(client, ppl.alice.h, f"x.{fmt}")
-    assert p["format"] == fmt and p["blockCount"] == synthetic().block_count()
+    assert p["format"] == "slopmatic" and p["filename"] == "x.slopmatic"
+    assert p["blockCount"] == synthetic().block_count()
 
 
 # ------------------------------------------------------------------ visibility
@@ -185,6 +205,7 @@ def private_endpoints(pid):
         ("GET", f"/api/board/{pid}/file", None),
         ("GET", f"/api/board/{pid}/thumbnail", None),
         ("GET", f"/api/board/{pid}/export?format=nbt", None),
+        ("GET", f"/api/board/{pid}/model", None),
         ("POST", f"/api/board/{pid}/vote", {"value": 1}),
         ("POST", f"/api/board/{pid}/save", None),
         ("PATCH", f"/api/board/{pid}", {"title": "x"}),
@@ -349,19 +370,22 @@ def test_snapshot_independent_of_the_file_and_refresh(client, ppl):
     p = make_post(client, h)
     pid = p["id"]
     anon = TestClient(client.app)
+    s1 = anon.get(f"/api/board/{pid}/file").content
+    assert same_blocks(as_slopmatic(s1, "slopmatic"), as_slopmatic(v1))
 
     v2 = schem("litematic", two_regions=True)
     upload(client, h, "a.litematic", v2)  # changes the file and drops its thumbnail
-    assert anon.get(f"/api/board/{pid}/file").content == v1
+    assert anon.get(f"/api/board/{pid}/file").content == s1
     assert anon.get(f"/api/board/{pid}/thumbnail").content == PNG
 
     r = client.post(f"/api/board/{pid}/refresh", headers=h)
     assert r.status_code == 200, r.text
     q = r.json()
-    assert q["sha256"] == hashlib.sha256(v2).hexdigest() and q["size"] == len(v2)
+    s2 = anon.get(f"/api/board/{pid}/file").content
+    assert q["sha256"] == hashlib.sha256(s2).hexdigest() and q["size"] == len(s2)
+    assert same_blocks(as_slopmatic(s2, "slopmatic"), as_slopmatic(v2))
     assert q["dimensions"] == [7, 2, 2] and q["hasThumbnail"] is False
     assert q["created"] == p["created"] and q["updated"] >= p["updated"]
-    assert anon.get(f"/api/board/{pid}/file").content == v2
     assert anon.get(f"/api/board/{pid}/thumbnail").status_code == 404
 
     # the file is renamed, then deleted: the post stays, refresh reports why it can't
@@ -369,14 +393,14 @@ def test_snapshot_independent_of_the_file_and_refresh(client, ppl):
     r = client.post(f"/api/board/{pid}/refresh", headers=h)
     assert r.status_code == 409 and "a.litematic" in r.json()["error"]
     client.delete("/api/files/b.litematic", headers=h)
-    assert anon.get(f"/api/board/{pid}/file").content == v2
+    assert anon.get(f"/api/board/{pid}/file").content == s2
     assert client.post(f"/api/board/{pid}/refresh", headers=h).status_code == 409
     html = ppl.alice.cookie_client(client.app).get(f"/board/{pid}").text
     assert "no longer in your cloud files" in html
     # the file comes back with a thumbnail
     upload(client, h, "a.litematic", v1, thumb=True)
     assert client.post(f"/api/board/{pid}/refresh", headers=h).json()["hasThumbnail"] is True
-    assert anon.get(f"/api/board/{pid}/file").content == v1
+    assert same_blocks(as_slopmatic(anon.get(f"/api/board/{pid}/file").content, "slopmatic"), as_slopmatic(v1))
     # only the author refreshes
     assert client.post(f"/api/board/{pid}/refresh", headers=ppl.bob.h).status_code == 403
     assert client.post(f"/api/board/{pid}/refresh", headers=ppl.admin.h).status_code == 403
@@ -386,48 +410,61 @@ def test_snapshot_independent_of_the_file_and_refresh(client, ppl):
 
 
 def test_quota(make_client, mojang):
-    c = make_client(quota_bytes=100)
+    # .slopmatic sources are stored byte for byte, so the arithmetic is exact
+    small, big = schem("slopmatic"), schem("slopmatic", two_regions=True)
+    a, b = len(small), len(big)
+    assert a < b < 2 * a and a > 21
+    q = 2 * a + 20
+    c = make_client(quota_bytes=q)
     alice = Who(c, mojang, "Alice")
     h = alice.h
-    upload(c, h, "a.litematic", blob(40))
-    p = make_post(c, h)  # 40 + 40
-    assert c.get("/api/me", headers=h).json()["usedBytes"] == 80
-    assert c.get("/api/board?tab=mine", headers=h).json()["postBytes"] == 40
-    r = c.post("/api/board", json={"path": "a.litematic", "title": "T", "visibility": "public"}, headers=h)
+    upload(c, h, "a.slopmatic", small)
+    p = make_post(c, h, "a.slopmatic")  # a + a
+    assert c.get("/api/me", headers=h).json()["usedBytes"] == 2 * a
+    assert c.get("/api/board?tab=mine", headers=h).json()["postBytes"] == a
+    r = c.post("/api/board", json={"path": "a.slopmatic", "title": "T", "visibility": "public"}, headers=h)
     assert r.status_code == 413
-    assert r.json() == {"error": "quota exceeded", "usedBytes": 80, "quotaBytes": 100}
+    assert r.json() == {"error": "quota exceeded", "usedBytes": 2 * a, "quotaBytes": q}
     # file uploads see the snapshot too
     assert c.put("/api/files/b.litematic", content=blob(21), headers=h).status_code == 413
     assert c.put("/api/files/b.litematic", content=blob(20), headers=h).status_code == 201  # exactly full
-    # refresh counts the difference
-    upload(c, h, "a.litematic", blob(30))  # 30 + 40 + 20 = 90
-    assert c.post(f"/api/board/{p['id']}/refresh", headers=h).status_code == 200  # 30 + 30 + 20
-    upload(c, h, "a.litematic", blob(41))  # 41 + 30 + 20 = 91
-    r = c.post(f"/api/board/{p['id']}/refresh", headers=h)  # would be 41 + 41 + 20
-    assert r.status_code == 413
-    assert len(TestClient(c.app).get(f"/api/board/{p['id']}/file").content) == 30
     # saving a post into your files counts as a file
-    bob = Who(c, mojang, "Bob")
-    upload(c, bob.h, "big.litematic", blob(80))
-    assert c.post(f"/api/board/{p['id']}/save", headers=bob.h).status_code == 413
-    assert c.get("/api/files", headers=bob.h).json()["usedBytes"] == 80
+    carol = Who(c, mojang, "Carol")
+    upload(c, carol.h, "pad.litematic", blob(2 * a))
+    assert c.post(f"/api/board/{p['id']}/save", headers=carol.h).status_code == 413
+    assert c.get("/api/files", headers=carol.h).json()["usedBytes"] == 2 * a
     # deleting the post frees its snapshot
     assert c.delete(f"/api/board/{p['id']}", headers=h).status_code == 204
-    assert c.get("/api/me", headers=h).json()["usedBytes"] == 61
+    assert c.get("/api/me", headers=h).json()["usedBytes"] == a + 20
     # the files page says how much is board posts
-    upload(c, h, "a.litematic", blob(20))
-    make_post(c, h)
+    c.delete("/api/files/b.litematic", headers=h)
+    make_post(c, h, "a.slopmatic")
     html = alice.cookie_client(c.app).get("/").text
-    assert "1 board post</a> use 20 B of that" in html
+    assert f"1 board post</a> use {a} B of that" in html
+
+    # refresh counts the difference (another account, quota 2a + b)
+    c2 = make_client(quota_bytes=2 * a + b)
+    bob = Who(c2, mojang, "Bob")
+    upload(c2, bob.h, "x.slopmatic", small)
+    p = make_post(c2, bob.h, "x.slopmatic")  # a + a
+    upload(c2, bob.h, "x.slopmatic", big)  # b + a
+    upload(c2, bob.h, "pad.litematic", blob(a))  # b + a + a: full
+    r = c2.post(f"/api/board/{p['id']}/refresh", headers=bob.h)  # would be b + b + a
+    assert r.status_code == 413
+    assert TestClient(c2.app).get(f"/api/board/{p['id']}/file").content == small
+    c2.delete("/api/files/pad.litematic", headers=bob.h)
+    assert c2.post(f"/api/board/{p['id']}/refresh", headers=bob.h).status_code == 200  # b + b
+    assert c2.get("/api/me", headers=bob.h).json()["usedBytes"] == 2 * b
 
 
 def test_admin_quota_unlimited(make_client, mojang):
-    c = make_client(quota_bytes=100)
+    body = schem("slopmatic")
+    c = make_client(quota_bytes=len(body))
     h = Who(c, mojang, "sputnikboi").h
-    upload(c, h, "a.litematic", blob(90))
-    make_post(c, h)
-    make_post(c, h)
-    assert c.get("/api/me", headers=h).json() == {**c.get("/api/me", headers=h).json(), "usedBytes": 270, "quotaBytes": None}
+    upload(c, h, "a.slopmatic", body)
+    make_post(c, h, "a.slopmatic")
+    make_post(c, h, "a.slopmatic")
+    assert c.get("/api/me", headers=h).json() == {**c.get("/api/me", headers=h).json(), "usedBytes": 3 * len(body), "quotaBytes": None}
 
 
 def test_post_limit(make_client, mojang):
@@ -558,29 +595,30 @@ def test_search_and_pagination(make_client, mojang):
 
 
 def test_save_to_my_cloud(client, ppl):
-    body = schem("nbt")
-    upload(client, ppl.alice.h, "deep/x/a.nbt", body, thumb=True)
+    upload(client, ppl.alice.h, "deep/x/a.nbt", schem("nbt"), thumb=True)
     pid = make_post(client, ppl.alice.h, "deep/x/a.nbt", title="Bob's: <tower>?")["id"]
+    body = client.get(f"/api/board/{pid}/file").content  # the post's .slopmatic
     first = client.post(f"/api/board/{pid}/save", headers=ppl.bob.h)
     assert first.status_code == 201, first.text
-    assert first.json()["path"] == "board/Bob's_ _tower__.nbt"
+    assert first.json()["path"] == "board/Bob's_ _tower__.slopmatic"
     assert first.json()["hasThumbnail"] is True and first.json()["size"] == len(body)
     second = client.post(f"/api/board/{pid}/save", headers=ppl.bob.h).json()
     third = client.post(f"/api/board/{pid}/save", headers=ppl.bob.h).json()
-    assert second["path"] == "board/Bob's_ _tower__ (2).nbt" and third["path"] == "board/Bob's_ _tower__ (3).nbt"
+    assert second["path"] == "board/Bob's_ _tower__ (2).slopmatic"
+    assert third["path"] == "board/Bob's_ _tower__ (3).slopmatic"
     listing = {f["path"]: f for f in client.get("/api/files", headers=ppl.bob.h).json()["files"]}
     assert set(listing) == {first.json()["path"], second["path"], third["path"]}
-    assert client.get("/api/files/board/Bob's_ _tower__.nbt", headers=ppl.bob.h).content == body
-    assert client.get("/api/thumbnails/board/Bob's_ _tower__.nbt", headers=ppl.bob.h).content == PNG
+    assert client.get("/api/files/board/Bob's_ _tower__.slopmatic", headers=ppl.bob.h).content == body
+    assert client.get("/api/thumbnails/board/Bob's_ _tower__.slopmatic", headers=ppl.bob.h).content == PNG
     # the author can save their own post too, into their own files
-    assert client.post(f"/api/board/{pid}/save", headers=ppl.alice.h).json()["path"] == "board/Bob's_ _tower__.nbt"
+    assert client.post(f"/api/board/{pid}/save", headers=ppl.alice.h).json()["path"] == "board/Bob's_ _tower__.slopmatic"
 
 
 @pytest.mark.parametrize("title,expected", [
     ("...", "schematic"),
     (" .hidden. ", "hidden"),
     ("a/b\\c", "a_b_c"),
-    ("x" * 100, "x" * (100 - len(".litematic") - len(" (9999)"))),
+    ("x" * 100, "x" * (100 - len(".slopmatic") - len(" (9999)"))),
     ("Ünïcode ✓", "Ünïcode ✓"),
 ])
 def test_save_names(client, ppl, title, expected):
@@ -588,7 +626,7 @@ def test_save_names(client, ppl, title, expected):
     pid = make_post(client, ppl.alice.h, title=title)["id"]
     r = client.post(f"/api/board/{pid}/save", headers=ppl.bob.h)
     assert r.status_code == 201, r.text
-    assert r.json()["path"] == f"board/{expected}.litematic"
+    assert r.json()["path"] == f"board/{expected}.slopmatic"
 
 
 # ------------------------------------------------------------------ owner tools
@@ -672,8 +710,9 @@ def test_pages(client, ppl):
     page = anon.get(f"/board/{pid}").text
     assert "&lt;script&gt;alert(1)&lt;/script&gt;\nsecond line https://example.com" in page
     assert "<script>alert" not in page and 'href="https://example.com' not in page
-    assert f'href="/api/board/{pid}/file" download="Barn.litematic"' in page
+    assert f'href="/api/board/{pid}/file" download="Barn.slopmatic"' in page
     assert 'data-post-export' in page and '<option value="nbt">.nbt</option>' in page
+    assert '<option value="litematic">.litematic</option>' in page and '<option value="slopmatic">' not in page
     assert "Add to my cloud" not in page and "Update from my file" not in page and "Delete post" not in page
 
     owner = ppl.alice.cookie_client(client.app)
@@ -801,15 +840,16 @@ def test_migrates_a_0_3_0_database(make_client, mojang, data_dir):
     assert me == {"uuid": uuid, "name": "Veteran", "usedBytes": len(body), "quotaBytes": 1073741824}
     listing = c.get("/api/files", headers=h).json()["files"]
     assert listing == [{"path": "builds/Old.litematic", "size": len(body), "sha256": hashlib.sha256(body).hexdigest(),
-                        "modified": 1_700_000_000_000, "hasThumbnail": True}]
+                        "modified": 1_700_000_000_000, "hasThumbnail": True, "source": None}]
     store = c.app.state.store
-    assert store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 2
+    assert store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 3
     tables = {r[0] for r in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"users", "tokens", "challenges", "files", "posts", "post_access", "votes"} <= tables
+    assert {"users", "tokens", "challenges", "files", "posts", "post_access", "votes", "post_tags"} <= tables
 
     # the new features work on the migrated database
     mojang.account("Bob")
-    pid = make_post(c, h, "builds/Old.litematic", title="From before", visibility="private", allowed=["Bob"])["id"]
+    made = make_post(c, h, "builds/Old.litematic", title="From before", visibility="private", allowed=["Bob"])
+    pid = made["id"]
     bob = Who(c, mojang, "Bob")
     c.post(f"/api/board/{pid}/vote", json={"value": 1}, headers=bob.h)
 
@@ -817,7 +857,7 @@ def test_migrates_a_0_3_0_database(make_client, mojang, data_dir):
     c2 = make_client()
     p = c2.get(f"/api/board/{pid}", headers=bob.h).json()
     assert p["title"] == "From before" and p["score"] == 1 and p["hasThumbnail"] is True
-    assert c2.get("/api/me", headers=h).json()["usedBytes"] == 2 * len(body)
+    assert c2.get("/api/me", headers=h).json()["usedBytes"] == len(body) + made["size"]
     assert c2.app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
 
@@ -827,7 +867,7 @@ def test_reconcile_posts_on_startup(make_client, mojang, data_dir):
     upload(c, h, "a.litematic", thumb=True)
     keep = make_post(c, h)["id"]
     lose = make_post(c, h)["id"]
-    (data_dir / "posts" / lose / "a.litematic").unlink()
+    (data_dir / "posts" / lose / "a.slopmatic").unlink()
     (data_dir / "posts" / keep / "thumb.png").unlink()
     (data_dir / "posts" / "orphan1234").mkdir()
     (data_dir / "posts" / "orphan1234" / "x.nbt").write_bytes(b"x")

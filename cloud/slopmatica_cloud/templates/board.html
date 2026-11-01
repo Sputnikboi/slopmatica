@@ -22,33 +22,51 @@
   <form class="search-form" method="get" action="{{ base }}/board" role="search">
     {% if tab != "public" %}<input type="hidden" name="tab" value="{{ tab }}">{% endif %}
     <input type="hidden" name="sort" value="{{ sort }}">
+    {% for t in tags %}<input type="hidden" name="tag" value="{{ t }}">{% endfor %}
+    {% if size %}<input type="hidden" name="size" value="{{ size }}">{% endif %}
     <input type="search" name="q" value="{{ q }}" placeholder="Search titles, descriptions, authors" aria-label="Search the board" maxlength="100">
     <button class="btn ghost" type="submit">Search</button>
   </form>
   <div class="seg" role="group" aria-label="Sort">
     {% for s in sorts %}
-    <a class="{{ 'on' if s == sort else '' }}" href="{{ board_url(tab, s, q) }}"{% if s == sort %} aria-current="true"{% endif %}>{{ s|capitalize }}</a>
+    <a class="{{ 'on' if s == sort else '' }}" href="{{ link(sort=s) }}"{% if s == sort %} aria-current="true"{% endif %}>{{ s|capitalize }}</a>
+    {% endfor %}
+  </div>
+</section>
+<section class="filters" aria-label="Filters">
+  <div class="tag-filter" role="group" aria-label="Tags">
+    {% for key, label in all_tags.items() %}
+    <a class="chip tag-chip{{ ' on' if key in tags else '' }}" href="{{ toggle_tag(key) }}" aria-pressed="{{ 'true' if key in tags else 'false' }}" rel="nofollow">{{ label }}</a>
+    {% endfor %}
+  </div>
+  <div class="seg size-filter" role="group" aria-label="Size by block count">
+    <a class="{{ 'on' if not size else '' }}" href="{{ link(size=None) }}"{% if not size %} aria-current="true"{% endif %}>Any size</a>
+    {% for key, label in size_classes.items() %}
+    <a class="{{ 'on' if size == key else '' }}" href="{{ link(size=key) }}"{% if size == key %} aria-current="true"{% endif %} rel="nofollow">{{ label }}</a>
     {% endfor %}
   </div>
 </section>
 
-{% if q %}<p class="muted result-note">{{ total }} result{{ "" if total == 1 else "s" }} for &ldquo;{{ q }}&rdquo; &middot; <a href="{{ board_url(tab, sort) }}">clear</a></p>{% endif %}
+{% if q %}<p class="muted result-note">{{ total }} result{{ "" if total == 1 else "s" }} for &ldquo;{{ q }}&rdquo; &middot; <a href="{{ link(q='') }}">clear</a></p>{% endif %}
+{% if tags or size %}<p class="muted result-note">{{ total }} post{{ "" if total == 1 else "s" }}
+  {%- if tags %} tagged {% for t in tags %}<strong>{{ all_tags[t] }}</strong>{{ " and " if not loop.last else "" }}{% endfor %}{% endif %}
+  {%- if size %}{{ "," if tags else "" }} size <strong>{{ size_classes[size] }}</strong>{% endif %} &middot; <a href="{{ link(tags=[], size=None) }}">clear filters</a></p>{% endif %}
 
 {% if posts %}
 <section class="grid">
-  {% for p in posts %}{{ post_card(p, base, show_visibility=(tab == "mine")) }}{% endfor %}
+  {% for p in posts %}{{ post_card(p, base, show_visibility=(tab == "mine"), chip_url=chip_url, all_tags=all_tags, size_classes=size_classes) }}{% endfor %}
 </section>
 {% if pages > 1 %}
 <nav class="pager" aria-label="Pages">
-  {% if page > 1 %}<a class="btn ghost small" href="{{ board_url(tab, sort, q, page - 1) }}" rel="prev">&larr; Previous</a>{% else %}<span></span>{% endif %}
+  {% if page > 1 %}<a class="btn ghost small" href="{{ link(page=page - 1) }}" rel="prev">&larr; Previous</a>{% else %}<span></span>{% endif %}
   <span class="muted">Page {{ page }} of {{ pages }}</span>
-  {% if page < pages %}<a class="btn ghost small" href="{{ board_url(tab, sort, q, page + 1) }}" rel="next">Next &rarr;</a>{% else %}<span></span>{% endif %}
+  {% if page < pages %}<a class="btn ghost small" href="{{ link(page=page + 1) }}" rel="next">Next &rarr;</a>{% else %}<span></span>{% endif %}
 </nav>
 {% endif %}
-{% elif q %}
+{% elif q or tags or size %}
 <p class="empty muted">Nothing matches.</p>
 {% elif page > 1 %}
-<p class="empty muted">There is no page {{ page }}. <a href="{{ board_url(tab, sort, q) }}">Back to the first page</a></p>
+<p class="empty muted">There is no page {{ page }}. <a href="{{ link() }}">Back to the first page</a></p>
 {% elif tab == "public" %}
 <p class="empty muted">Nothing on the board yet.{% if user %} Post one of your schematics from <a href="{{ base }}/">your files</a> with <strong>Post to board&hellip;</strong>{% endif %}</p>
 {% elif tab == "shared" %}

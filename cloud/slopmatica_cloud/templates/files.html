@@ -48,7 +48,7 @@
 {% if entries %}
 <section class="grid" id="grid">
   {% for e in entries %}
-  <article class="card" data-path="{{ e.f.path }}" data-folder="{{ e.folder }}" data-search="{{ e.f.path|lower }}">
+  <article class="card" data-path="{{ e.f.path }}" data-folder="{{ e.folder }}" data-search="{{ e.f.path|lower }}{% if e.f.source %} {{ e.f.source.author_name|lower }}{% endif %}">
     <div class="thumb">
       {% if e.f.has_thumb %}
       <img loading="lazy" src="{{ base }}/api/thumbnails/{{ e.f.path|qpath }}?v={{ e.f.sha256[:12] }}" alt="">
@@ -58,6 +58,10 @@
     </div>
     <div class="meta">
       <h3 class="name" title="{{ e.f.path }}">{{ e.stem }} <span class="ext">{{ e.ext }}</span></h3>
+      {% if e.f.source %}
+      {% set src = e.f.source %}
+      <div class="sub muted from-board" title="{{ src.title }}">{% if e.source_url %}<a href="{{ e.source_url }}">From the board &middot; by {{ src.author_name }}</a>{% else %}From the board &middot; by {{ src.author_name }}{% endif %}</div>
+      {% endif %}
       <div class="sub">
         {% if e.folder %}<button type="button" class="chip" data-act="folder">{{ e.folder }}</button>{% else %}<span class="chip plain">top level</span>{% endif %}
       </div>
@@ -85,8 +89,9 @@
   <form class="post-form" data-post-form="create" novalidate>
     <h2 id="post-dialog-title">Post to the board</h2>
     <p class="muted small">Posting <code data-post-path></code>. The board keeps its own copy, so later changes to the file don&rsquo;t affect the post. The copy counts toward your storage.</p>
+    <p class="muted small note-convert">Files that aren&rsquo;t already .slopmatic are converted to Slopmatica&rsquo;s format when posted (usually much smaller). Your own file stays as it is; people can still export the post as .nbt or .litematic.</p>
     <input type="hidden" name="path" value="">
-    {{ post_fields(visibilities, max_title, max_description) }}
+    {{ post_fields(visibilities, max_title, max_description, all_tags=all_tags) }}
     <p class="form-msg" role="status"></p>
     <div class="form-actions">
       <button type="button" class="btn ghost" data-close>Cancel</button>

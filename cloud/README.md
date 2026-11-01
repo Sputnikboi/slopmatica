@@ -10,7 +10,11 @@ links for logging in to the website. Once logged in, a player can set a website 
 and from then on also log in on the website with their Minecraft name and that password.
 
 FastAPI + uvicorn, SQLite (metadata only), files on disk, server-rendered HTML plus a
-little vanilla JS. No build step, no CDN.
+little vanilla JS. No build step, no CDN. The board's 3D view uses three.js, vendored unmodified
+from the npm package `three@0.186.1` in `slopmatica_cloud/static/vendor/three/` (`build/three.module.js`,
+`build/three.core.js`, `examples/jsm/controls/OrbitControls.js` with its `'three'` import changed to
+`'./three.module.js'`, and the MIT `LICENSE`). That release ships no minified build. Static `.js`, `.css`,
+`.json` and `.svg` files are sent gzip-compressed to clients that accept it, so three.js costs about 420 KB.
 
 ## Run
 
@@ -31,7 +35,7 @@ It reads optional overrides from `~/.config/slopmatica-cloud/env`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SLOPMATICA_DATA` | `cloud/data` | Data directory: `cloud.db` plus `users/<uuid>/files/...`, `users/<uuid>/thumbs/<path>.png` and board snapshots in `posts/<id>/` (the file under its original name, plus `thumb.png`) |
+| `SLOPMATICA_DATA` | `cloud/data` | Data directory: `cloud.db` plus `users/<uuid>/files/...`, `users/<uuid>/thumbs/<path>.png` and board snapshots in `posts/<id>/` (`<original stem>.slopmatic`, `thumb.png`, and the 3D view's cache `model-<sha256[:16]>.json.gz` or `.toobig`) |
 | `SLOPMATICA_ROOT_PATH` | *(empty)* | URL prefix when mounted under a path, e.g. `/slopmatica`. Works whether or not the proxy strips the prefix. |
 | `SLOPMATICA_ADMINS` | `sputnikboi` | Comma-separated Minecraft names with unlimited storage. Names are matched case-insensitively at login, and the account's uuid then stays an admin even after a rename. |
 | `SLOPMATICA_QUOTA_BYTES` | `1073741824` | Per-account quota (1 GiB) |
@@ -90,54 +94,79 @@ control characters, `<>:"|?*`, segments with leading or trailing whitespace or a
 | Method & path | Result |
 |---|---|
 | `GET /api/me` | `{"uuid","name","usedBytes","quotaBytes"}` |
-| `GET /api/files` | `{"files":[{"path","size","sha256","modified"(unix ms),"hasThumbnail"}],"usedBytes","quotaBytes"}` |
-| `PUT /api/files/{path}` | Raw body. It must be gzip (`1f 8b`) and at most 256 MiB. Optional `X-Sha256` must match. Returns 201 (new) or 200 (replaced) with the file entry. Over quota gives 413 `{"error":"quota exceeded","usedBytes","quotaBytes"}`; the quota counts the new size minus the size of the file being replaced. Replacing a file with different bytes drops its (now stale) thumbnail. |
+| `GET /api/files` | `{"files":[{"path","size","sha256","modified"(unix ms),"hasThumbnail","source"}],"usedBytes","quotaBytes"}`. `source` is `null`, or for a file saved with "Add to my cloud" `{"postId","title","author","authorUuid"}`: the post, its title when saved, and its author (`author` is the author's current name as last seen at a login, else the name when saved). |
+| `PUT /api/files/{path}` | Raw body. It must be gzip (`1f 8b`) and at most 256 MiB. Optional `X-Sha256` must match. Returns 201 (new) or 200 (replaced) with the file entry. Over quota gives 413 `{"error":"quota exceeded","usedBytes","quotaBytes"}`; the quota counts the new size minus the size of the file being replaced. Replacing a file with different bytes drops its (now stale) thumbnail and its `source` (it is the user's own file from then on); the same bytes keep both. |
 | `GET /api/files/{path}` | Bytes, `application/octet-stream`, `Content-Disposition: attachment`, `X-Sha256` |
 | `GET /api/export/{path}?format=slopmatic\|nbt\|litematic` | The file converted to another format: bytes, `application/octet-stream`, `Content-Disposition: attachment` named like the original with the new extension (no folder). 400 for a missing, unknown or same format, for a file that cannot be parsed, or for more than 64 million blocks of volume. 404 if the file is missing. A read, so cookie requests need no `X-Requested-With`. |
 | `DELETE /api/files/{path}` | 204. The thumbnail is deleted too. |
-| `POST /api/files/move` | `{"from","to"}` returns 200 with the new entry. The thumbnail moves along. 404 if the source is missing, 409 if the target exists. |
+| `POST /api/files/move` | `{"from","to"}` returns 200 with the new entry. The thumbnail and `source` move along. 404 if the source is missing, 409 if the target exists. |
 | `PUT /api/thumbnails/{path}` | Raw PNG, at most 2 MiB, for an existing file (404 otherwise). Returns 200 with the file entry. Thumbnails don't count toward the quota. |
 | `GET /api/thumbnails/{path}` | `image/png` or 404 |
 
 ### Schematics board
 
 Players post one of their cloud files to the board with a title (1 to 100 characters), an optional
-plain-text description (at most 5000 characters) and a visibility:
+plain-text description (at most 5000 characters), any number of tags and a visibility:
 
 - `public`: listed and searchable on the board; anyone can view and download it, logged out too.
 - `unlisted`: never listed or searchable (except in the author's own list); anyone with the link can view and download it.
 - `private`: only the author, the Minecraft names on its access list (at most 50, stored by uuid, so renames keep access) and admins. To anyone else every endpoint for the post, the page included, answers 404 as if it didn't exist.
 
 A post keeps its own snapshot of the file and its thumbnail, so later edits to or deletion of
-the cloud file don't affect it; the author can re-take the snapshot from the same path. Snapshot
-bytes count toward the author's quota (`usedBytes` includes them); deleting a post frees them.
-At most 200 posts per account (409 past that). Format, enclosing size and block count are read
-from the snapshot when it is taken (null if the file can't be parsed; any gzip file can be posted).
+the cloud file don't affect it; the author can re-take the snapshot from the same path. Snapshots
+are stored as `.slopmatic`: a `.nbt` or `.litematic` is converted when it is posted or refreshed
+(block states and data version kept, as for exports) and named `<original stem>.slopmatic`; the
+user's own file is untouched. A file that can't be read or converted is refused with 400 (nothing is
+stored). Snapshot bytes (the converted size) count toward the author's quota (`usedBytes` includes
+them); deleting a post frees them. At most 200 posts per account (409 past that). Enclosing size and
+block count (non-air, non-void blocks) are read from the snapshot when it is taken.
+
+Tags come from a fixed list (any other is 400): `redstone`, `farm`, `decoration`, `building`,
+`survival-friendly`, `creative-only`, `map-art`, `transport`, `technical`, `terrain`, `statue`,
+`interior`. The size category follows the block count: `small` under 1 000, `medium` under 10 000,
+`big` under 100 000, `very-big` from 100 000 (stored per post, null for an old post that can't be read).
 
 Post ids are 10 URL-safe characters. Names on an access list are looked up with Mojang's
 profile API (10 s timeout): an unknown name is 400 naming it, Mojang unreachable is 502.
 
 | Method & path | Result |
 |---|---|
-| `GET /api/board?tab=public\|shared\|mine&sort=top\|hot\|new&q=&page=` | `{"posts":[post],"tab","sort","q","page","pageSize"(24),"total","pages"}`. `public` works logged out; `shared` (private posts listing the caller) and `mine` need a login (`mine` adds `postCount`, `postBytes`). `q` matches every word against title, description and author name, case-insensitively. Top: score, then newest. Hot: score / (hours + 2)^1.5. Default sort: `top` for public, `new` otherwise. |
-| `POST /api/board` | `{"path","title","description"?,"visibility","allowed"?:[names]}` returns 201 with the post. 404 if the file is missing, 413 over quota. |
+| `GET /api/board?tab=public\|shared\|mine&sort=top\|hot\|new&q=&tag=&size=&page=` | `{"posts":[post],"tab","sort","q","tags","size","page","pageSize"(24),"total","pages"}`. `public` works logged out; `shared` (private posts listing the caller) and `mine` need a login (`mine` adds `postCount`, `postBytes`). `q` matches every word against title, description and author name, case-insensitively. `tag` may repeat: the post must have every one (unknown tag: 400). `size` is one size category (else 400). Top: score, then newest. Hot: score / (hours + 2)^1.5. Default sort: `top` for public, `new` otherwise. |
+| `POST /api/board` | `{"path","title","description"?,"visibility","allowed"?:[names],"tags"?:[tags]}` returns 201 with the post. 404 if the file is missing, 400 if it can't be converted, 413 over quota. |
 | `GET /api/board/{id}` | The post, plus `description`, `myVote` (null logged out), and for the author and admins `sourcePath` and `allowed: [{uuid,name}]`. |
-| `PATCH /api/board/{id}` | Author only: any of `title`, `description`, `visibility`, `allowed`. |
-| `POST /api/board/{id}/refresh` | Author only: snapshot the original path again (409 if it is gone). |
+| `PATCH /api/board/{id}` | Author only: any of `title`, `description`, `visibility`, `allowed`, `tags` (replaces the list). |
+| `POST /api/board/{id}/refresh` | Author only: snapshot the original path again (409 if it is gone, 400 if it can't be converted). Drops the 3D view's cache. |
 | `DELETE /api/board/{id}` | Author or admin: 204. |
 | `POST /api/board/{id}/vote` | `{"value": 1\|-1\|0}` (0 clears). Not on your own post (403). Returns `{"score","ups","downs","myVote"}`. |
-| `POST /api/board/{id}/save` | Copies the snapshot (and thumbnail) into the caller's files as `board/<title>.<ext>`, adding ` (2)` etc. if taken. 201 with the file entry, 413 over quota. |
+| `POST /api/board/{id}/save` | Copies the snapshot (and thumbnail) into the caller's files as `board/<title>.<ext>`, adding ` (2)` etc. if taken, and records the post as the file's `source`. 201 with the file entry, 413 over quota. |
 | `GET /api/board/{id}/file`, `/thumbnail`, `/export?format=` | Download, PNG thumbnail, conversion (same rules and limits as `/api/export`). |
+| `GET /api/board/{id}/model` | The 3D view's data (below), gzip-encoded JSON for clients that accept it. 413 `{"error","visibleBlocks","maxVisibleBlocks"}` above 300 000 visible blocks, 400 for an old post that can't be read. Cached in the post's folder per snapshot. |
 
-A post is `{"id","title","visibility","author":{"uuid","name"},"filename","format","size","sha256","dimensions":[x,y,z]|null,"blockCount"|null,"hasThumbnail","created","updated","score","ups","downs"}` (times in unix ms).
+A post is `{"id","title","visibility","author":{"uuid","name"},"filename","format","size","sha256","dimensions":[x,y,z]|null,"blockCount"|null,"sizeClass"|null,"tags":[...],"hasThumbnail","created","updated","score","ups","downs"}` (times in unix ms).
+
+The model is `{"v":1,"size":[sx,sy,sz],"count","palette":[{"id","shape"}],"groups":[{"p","n","d"}]}`. It lists
+only visible blocks: no air or structure voids, and no block whose six neighbours inside the schematic are all
+opaque full blocks (a neighbour with no map colour in `static/blockcolors.json`, such as glass, or a slab or
+carpet, doesn't hide it). `id` is the block id without properties; `shape` is `full`, `bottom`/`top` (slabs) or
+`thin` (carpets, pressure plates). Each group is one palette entry `p` with `n` blocks; `d` is base64 of
+little-endian uint32 values: the block indices `(y * sz + z) * sx + x` in ascending order, each as the
+difference from the previous one (the first from 0). Several Litematica regions are merged over their
+enclosing box as for `.nbt` exports.
 Logged out is fine for public and unlisted posts, except voting and saving (401). Website pages: `/board`, `/board/<id>`.
 
 ### Database
 
 `PRAGMA user_version` records the schema. At startup, `cloud.db` is brought up to date in place,
 one transaction per step: 0 is the 0.3.0 schema; 1 adds `posts`, `post_access` and `votes`;
-2 adds `users.password_hash`, `users.password_set`, `tokens.next` and `login_failures`.
+2 adds `users.password_hash`, `users.password_set`, `tokens.next` and `login_failures`;
+3 (0.5.0) adds `posts.size_class` (filled from the stored block counts), `post_tags`, and `files.source_post`,
+`source_title`, `source_author_uuid`, `source_author_name`. Before step 3, board snapshots that aren't
+`.slopmatic` are converted in place, each committed on its own (size, hash, format, file name, so quota
+usage follows); one that fails to convert is left as it is and logged. An interrupted run converts the
+rest at the next start.
 Board snapshot folders without a post are removed at startup, and posts whose snapshot is missing are dropped.
+Other files in a post's folder (left over from an interrupted refresh or conversion, or a 3D view cache of an
+older snapshot) are removed too.
 
 ### Export (format conversion)
 
