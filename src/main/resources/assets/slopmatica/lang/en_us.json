@@ -292,5 +292,19 @@
   "key.slopmatica.layer_mode": "Layer mode (all/single/below/above)",
   "key.slopmatica.layer_up": "Layer up",
   "key.slopmatica.layer_down": "Layer down",
-  "key.slopmatica.layer_here": "Layer to my height"
+  "key.slopmatica.layer_here": "Layer to my height",
+  "key.slopmatica.spawn_check": "Spawn check on/off",
+  "slopmatica.menu.spawn.off": "Spawn Check: Off",
+  "slopmatica.menu.spawn.on": "Spawn Check: On",
+  "slopmatica.menu.spawn.tooltip": "Marks every spot in the selection (or the selected build) where hostile mobs can spawn, using vanilla's rules. Purple: dark even by day. Pink: only at night.",
+  "slopmatica.spawn.on": "Spawn check on: %s x %s x %s",
+  "slopmatica.spawn.off": "Spawn check off",
+  "slopmatica.spawn.no_area": "Spawn check: select an area or load a build first",
+  "slopmatica.spawn.too_big": "Spawn check: area too big (%s blocks, at most %s). Select a smaller area.",
+  "slopmatica.spawn.title": "Spawn check",
+  "slopmatica.spawn.scanning": "Scanning...",
+  "slopmatica.spawn.none": "No spots where mobs can spawn",
+  "slopmatica.spawn.always": "   %s spots dark even by day (no sky light)",
+  "slopmatica.spawn.night": "   %s more only at night",
+  "slopmatica.spawn.area": "Area %s x %s x %s"
 }

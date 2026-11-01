@@ -1,5 +1,6 @@
 package com.sputnikboi.slopmatica.command;
 
+import com.sputnikboi.slopmatica.spawn.SpawnCheck;
 import static com.mojang.brigadier.arguments.FloatArgumentType.floatArg;
 import static com.mojang.brigadier.arguments.FloatArgumentType.getFloat;
 import static com.mojang.brigadier.arguments.IntegerArgumentType.getInteger;
@@ -129,6 +130,10 @@ public final class SlopmaticaCommands {
             return 1;
         })));
 
+        root.then(literal("spawncheck").executes(c -> {
+            SpawnCheck.INSTANCE.toggle(Minecraft.getInstance());
+            return 1;
+        }));
         root.then(literal("corner").executes(c -> {
             Selection.INSTANCE.setCorner(Minecraft.getInstance());
             return 1;

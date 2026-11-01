@@ -16,6 +16,7 @@ import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallba
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents;
 import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.gui.MaterialPanels;
+import com.sputnikboi.slopmatica.spawn.SpawnCheck;
 import com.sputnikboi.slopmatica.gui.WelcomeScreen;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.gui.screens.TitleScreen;
@@ -48,6 +49,9 @@ public final class SlopmaticaClient implements ClientModInitializer {
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "placement_view"), (graphics, delta) -> PlacementView.INSTANCE.extractHud(graphics));
         LevelRenderEvents.COLLECT_SUBMITS.register(Selection.INSTANCE::submit);
         LevelRenderEvents.COLLECT_SUBMITS.register(PlacementView.INSTANCE::submitToolBoxes);
+        LevelRenderEvents.COLLECT_SUBMITS.register(SpawnCheck.INSTANCE::submit);
+        ClientTickEvents.END_CLIENT_TICK.register(SpawnCheck.INSTANCE::tick);
+        HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "spawn_check"), (graphics, delta) -> SpawnCheck.INSTANCE.extractHud(graphics));
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "block_info"), (graphics, delta) -> BlockInfoHud.INSTANCE.extract(graphics));
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "material_panels"), (graphics, delta) -> MaterialPanels.INSTANCE.extractHud(graphics));
         ClientTickEvents.END_CLIENT_TICK.register(BlockInfoHud.INSTANCE::tick);

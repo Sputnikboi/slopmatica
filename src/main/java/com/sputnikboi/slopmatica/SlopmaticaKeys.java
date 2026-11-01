@@ -8,6 +8,7 @@ import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.gui.SchematicBrowserScreen;
 import com.sputnikboi.slopmatica.gui.SlopmaticaMenuScreen;
 import com.sputnikboi.slopmatica.placement.Layers;
+import com.sputnikboi.slopmatica.spawn.SpawnCheck;
 import com.sputnikboi.slopmatica.placement.Placement;
 import com.sputnikboi.slopmatica.placement.PlacementManager;
 import com.sputnikboi.slopmatica.render.HologramRenderer;
@@ -46,6 +47,7 @@ public final class SlopmaticaKeys {
     private static final KeyMapping TOGGLE_OUTLINES = register(MAIN, "toggle_outlines");
     private static final KeyMapping TOGGLE_GHOSTS = register(MAIN, "toggle_ghosts");
     private static final KeyMapping TOGGLE_EASY_PLACE = register(MAIN, "toggle_easy_place");
+    private static final KeyMapping SPAWN_CHECK = register(MAIN, "spawn_check");
 
     private static final KeyMapping MOVE_HERE = register(PLACEMENT, "move_here");
     private static final KeyMapping NUDGE_FORWARD = register(PLACEMENT, "nudge_forward");
@@ -173,6 +175,9 @@ public final class SlopmaticaKeys {
         }
         while (TOGGLE_EASY_PLACE.consumeClick()) {
             EasyPlace.INSTANCE.toggle();
+        }
+        while (SPAWN_CHECK.consumeClick()) {
+            SpawnCheck.INSTANCE.toggle(mc);
         }
         while (PLACEMENT_VIEW.consumeClick()) {
             PlacementView.INSTANCE.toggle(mc);

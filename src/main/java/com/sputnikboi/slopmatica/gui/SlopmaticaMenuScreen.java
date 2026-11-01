@@ -4,6 +4,7 @@ import com.sputnikboi.slopmatica.build.Clipboard;
 import com.sputnikboi.slopmatica.build.Selection;
 import com.sputnikboi.slopmatica.cloud.CloudSync;
 import com.sputnikboi.slopmatica.placement.Placement;
+import com.sputnikboi.slopmatica.spawn.SpawnCheck;
 import com.sputnikboi.slopmatica.update.Updates;
 import java.net.URI;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -73,10 +74,15 @@ public class SlopmaticaMenuScreen extends Screen {
             .width(BUTTON_WIDTH).build());
         column.addChild(Button.builder(Component.translatable("slopmatica.menu.options"), b -> minecraft.gui.setScreen(new SlopmaticaOptionsScreen(this)))
             .width(BUTTON_WIDTH).build());
-        column.addChild(Button.builder(hologramLabel(), b -> {
+        LinearLayout toggleRow = column.addChild(LinearLayout.horizontal().spacing(4));
+        toggleRow.addChild(Button.builder(hologramLabel(), b -> {
             HologramRenderer.INSTANCE.setHidden(!HologramRenderer.INSTANCE.hidden());
             b.setMessage(hologramLabel());
-        }).width(BUTTON_WIDTH).build());
+        }).width((BUTTON_WIDTH - 4) / 2).build());
+        toggleRow.addChild(Button.builder(spawnLabel(), b -> {
+            SpawnCheck.INSTANCE.toggle(minecraft);
+            b.setMessage(spawnLabel());
+        }).width((BUTTON_WIDTH - 4) / 2).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.spawn.tooltip"))).build());
         column.addChild(new StringWidget(Component.translatable("slopmatica.menu.keybinds_hint").withColor(0xFFA0A0A0), font));
 
         layout.addToFooter(Button.builder(CommonComponents.GUI_DONE, b -> onClose()).width(BUTTON_WIDTH).build());
@@ -135,6 +141,10 @@ public class SlopmaticaMenuScreen extends Screen {
             ? Component.translatable("slopmatica.menu.linked", CloudSync.INSTANCE.account().name).withColor(0xFF55CCFF)
             : Component.translatable("slopmatica.menu.not_linked").withColor(0xFFA0A0A0);
         graphics.text(font, cloud, right - font.width(cloud), 32, -1);
+    }
+
+    private static Component spawnLabel() {
+        return Component.translatable(SpawnCheck.INSTANCE.active() ? "slopmatica.menu.spawn.on" : "slopmatica.menu.spawn.off");
     }
 
     private static Component hologramLabel() {
