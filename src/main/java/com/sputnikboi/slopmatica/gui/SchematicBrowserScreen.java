@@ -5,6 +5,7 @@ import com.sputnikboi.slopmatica.SlopmaticaActions;
 import com.sputnikboi.slopmatica.schematic.SchematicFormats;
 import net.minecraft.nbt.ListTag;
 import com.sputnikboi.slopmatica.online.Online;
+import com.sputnikboi.slopmatica.schematic.VanillaStructures;
 import net.minecraft.client.gui.components.Tooltip;
 import com.sputnikboi.slopmatica.render.SchematicThumbnails;
 import net.minecraft.client.renderer.RenderPipelines;
@@ -66,6 +67,7 @@ public class SchematicBrowserScreen extends Screen {
     /** The tab the browser last showed, so reopening it lands in the same place. */
     private static boolean lastCloudTab;
     private static boolean lastSharedTab;
+    private static boolean lastVanillaTab;
 
     private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, 82, 53);
     private final Path schematics;
@@ -74,11 +76,14 @@ public class SchematicBrowserScreen extends Screen {
     private boolean cloudTab;
     /** Shared tab: the folder shared by every instance on this computer (when this one uses it). */
     private boolean sharedTab;
+    /** Vanilla tab: every structure piece of the game, copied from the player's own jar. */
+    private boolean vanillaTab;
     private Path root;
     private Path current;
     private Button localTabButton;
     private @Nullable Button cloudTabButton;
     private @Nullable Button sharedTabButton;
+    private Button vanillaTabButton;
     private String filter = "";
     private FileList list;
     private StringWidget pathLabel;
@@ -93,6 +98,13 @@ public class SchematicBrowserScreen extends Screen {
         }
     }
 
+    /** Opens on the Vanilla tab. */
+    public static SchematicBrowserScreen vanilla(@Nullable Screen parent) {
+        lastSharedTab = false;
+        lastVanillaTab = true;
+        return new SchematicBrowserScreen(parent, false);
+    }
+
     public SchematicBrowserScreen(@Nullable Screen parent, boolean cloud) {
         super(Component.translatable("slopmatica.browser.title"));
         this.parent = parent;
@@ -104,11 +116,15 @@ public class SchematicBrowserScreen extends Screen {
         this.root = cloudTab ? cloudDir : schematics;
         this.current = root;
         Online.refreshPresence();
+        if (lastVanillaTab && !cloud) {
+            showVanilla();
+        }
     }
 
     private void showTab(boolean cloud) {
         cloudTab = lastCloudTab = cloud;
         sharedTab = lastSharedTab = false;
+        vanillaTab = lastVanillaTab = false;
         root = cloud ? cloudDir : schematics;
         current = root;
         if (list != null) {
@@ -119,8 +135,26 @@ public class SchematicBrowserScreen extends Screen {
     private void showShared() {
         cloudTab = lastCloudTab = false;
         sharedTab = lastSharedTab = true;
+        vanillaTab = lastVanillaTab = false;
         root = SharedFolder.schematicsDir();
         current = root;
+        if (list != null) {
+            refresh();
+        }
+    }
+
+    private void showVanilla() {
+        cloudTab = lastCloudTab = false;
+        sharedTab = lastSharedTab = false;
+        vanillaTab = lastVanillaTab = true;
+        root = VanillaStructures.folder();
+        current = root;
+        // The first time (and after a game update) the pieces are copied out of the game first.
+        VanillaStructures.ready().thenRunAsync(() -> {
+            if (vanillaTab && list != null) {
+                refresh();
+            }
+        }, Minecraft.getInstance());
         if (list != null) {
             refresh();
         }
@@ -132,14 +166,16 @@ public class SchematicBrowserScreen extends Screen {
         header.defaultCellSetting().alignHorizontallyCenter();
         header.addChild(new StringWidget(title, font));
         LinearLayout tabs = header.addChild(LinearLayout.horizontal().spacing(4));
-        localTabButton = tabs.addChild(Button.builder(Component.translatable("slopmatica.browser.tab.local"), b -> showTab(false)).width(110).build());
+        localTabButton = tabs.addChild(Button.builder(Component.translatable("slopmatica.browser.tab.local"), b -> showTab(false)).width(92).build());
         cloudTabButton = Online.available()
-            ? tabs.addChild(Button.builder(Component.translatable("slopmatica.browser.tab.cloud"), b -> showTab(true)).width(110).build())
+            ? tabs.addChild(Button.builder(Component.translatable("slopmatica.browser.tab.cloud"), b -> showTab(true)).width(92).build())
             : null;
         sharedTabButton = SlopmaticaConfig.get().shareSchematics
-            ? tabs.addChild(Button.builder(Component.translatable("slopmatica.browser.tab.shared"), b -> showShared()).width(110)
+            ? tabs.addChild(Button.builder(Component.translatable("slopmatica.browser.tab.shared"), b -> showShared()).width(92)
                 .tooltip(Tooltip.create(Component.translatable("slopmatica.browser.tab.shared.tooltip", SharedFolder.display(SharedFolder.schematicsDir())))).build())
             : null;
+        vanillaTabButton = tabs.addChild(Button.builder(Component.translatable("slopmatica.browser.tab.vanilla"), b -> showVanilla()).width(92)
+            .tooltip(Tooltip.create(Component.translatable("slopmatica.browser.tab.vanilla.tooltip"))).build());
         pathLabel = header.addChild(new StringWidget(Math.min(width - 20, 400), 9, Component.empty(), font));
         EditBox search = header.addChild(new EditBox(font, 0, 0, 200, 15, Component.translatable("slopmatica.browser.search")));
         search.setHint(Component.translatable("slopmatica.browser.search").withStyle(EditBox.SEARCH_HINT_STYLE));
@@ -258,15 +294,16 @@ public class SchematicBrowserScreen extends Screen {
         }
         list.replaceEntries(entries);
         list.setScrollAmount(0);
-        localTabButton.active = cloudTab || sharedTab;
+        localTabButton.active = cloudTab || sharedTab || vanillaTab;
+        vanillaTabButton.active = !vanillaTab;
         if (cloudTabButton != null) {
             cloudTabButton.active = !cloudTab;
         }
         if (sharedTabButton != null) {
             sharedTabButton.active = !sharedTab;
         }
-        uploadButton.visible = !cloudTab && Online.available();
-        String where = cloudTab ? "cloud/" : sharedTab ? "shared/" : "schematics/";
+        uploadButton.visible = !cloudTab && !vanillaTab && Online.available();
+        String where = cloudTab ? "cloud/" : sharedTab ? "shared/" : vanillaTab ? "vanilla/" : "schematics/";
         String label = filter.isEmpty() ? where + pathFromRoot(current) : cloudTab ? "Searching the cloud" : "Searching all folders";
         if (cloudTab && !Online.loggedIn()) {
             label = "Not logged in to the cloud: menu → Cloud";
@@ -464,7 +501,7 @@ public class SchematicBrowserScreen extends Screen {
                 }
             }
             // "in cloud" / "on disk": the same schematic exists on the other side too.
-            String badge = kind != Kind.FILE ? null
+            String badge = kind != Kind.FILE || vanillaTab ? null
                 : cloudTab ? (Online.onDisk(path) ? "on disk" : null)
                 : (Online.inCloud(path) ? "in cloud" : null);
             int badgeWidth = badge == null ? 0 : font.width(badge) + 8;
@@ -472,7 +509,10 @@ public class SchematicBrowserScreen extends Screen {
             // Files added from the schematics board name their author underneath.
             String author = kind == Kind.FILE && cloudTab ? Online.boardAuthor(path) : null;
             String listed = kind == Kind.FILE && cloudTab ? Online.listingOf(path) : null;
-            if (author != null) {
+            if (kind == Kind.FILE && vanillaTab) {
+                y -= 5;
+                graphics.text(font, Component.translatable("slopmatica.browser.vanilla_by"), textX, y + 11, DETAIL_COLOR);
+            } else if (author != null) {
                 y -= 5;
                 String by = font.plainSubstrByWidth("by " + author + "  ·  from the board", getContentRight() - textX - detailWidth - 14);
                 graphics.text(font, by, textX, y + 11, DETAIL_COLOR);
