@@ -143,6 +143,8 @@ public final class DevHarness {
                     screen.mouseDragged(new net.minecraft.client.input.MouseButtonEvent(x, y, info), (x2 - x1) / 10, (y2 - y1) / 10);
                 }
                 screen.mouseReleased(new net.minecraft.client.input.MouseButtonEvent(x2, y2, info));
+            } else if (step.equals("supply")) {
+                com.sputnikboi.slopmatica.plan.SupplyChests.place(mc);
             } else if (step.startsWith("wheel ")) {
                 // The mouse wheel in the world, through vanilla's handler (so mixins on it run).
                 mc.mouseHandler.onScroll(mc.getWindow().handle(), 0, Double.parseDouble(step.substring(6).trim()));

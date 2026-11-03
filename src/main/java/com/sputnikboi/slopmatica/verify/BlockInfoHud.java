@@ -36,6 +36,8 @@ public final class BlockInfoHud {
     private static final int TEXT = 0xFFE0E0E0, DIM = 0xFFA0A0A0;
 
     private SchematicRaycast.@Nullable Hit target;
+    /** The targeted block's data in the schematic (contents, loot table), if it has any. */
+    private net.minecraft.nbt.@org.jspecify.annotations.Nullable CompoundTag targetData;
 
     private BlockInfoHud() {
     }
@@ -54,6 +56,15 @@ public final class BlockInfoHud {
         Camera camera = mc.gameRenderer.mainCamera();
         Vector3fc f = camera.forwardVector();
         target = SchematicRaycast.trace(level, transforms, camera.position(), new Vec3(f.x(), f.y(), f.z()), REACH);
+        targetData = null;
+        if (target != null) {
+            for (Placement.Transform transform : transforms) {
+                targetData = transform.tileEntityAt(target.pos().getX(), target.pos().getY(), target.pos().getZ());
+                if (targetData != null) {
+                    break;
+                }
+            }
+        }
     }
 
     public void extract(GuiGraphicsExtractor graphics) {
@@ -81,6 +92,17 @@ public final class BlockInfoHud {
         }
         if (t.status() == BlockStatus.MISSING && EasyPlace.INSTANCE.enabled()) {
             lines.add(Component.translatable("slopmatica.info.easy_place").withColor(BlockStatus.MATCH.color()));
+        }
+        // Containers: the loot table they fill from when first opened, or what they hold.
+        net.minecraft.nbt.CompoundTag data = targetData;
+        if (data != null) {
+            String loot = data.getStringOr("LootTable", "");
+            int stacks = data.getListOrEmpty("Items").size();
+            if (!loot.isEmpty()) {
+                lines.add(Component.translatable("slopmatica.info.loot_table", loot.replace("minecraft:", "")).withColor(0xFFE0C060));
+            } else if (stacks > 0) {
+                lines.add(Component.translatable("slopmatica.info.contents", stacks).withColor(TEXT));
+            }
         }
         lines.add(Component.literal(t.pos().toShortString()).withColor(DIM));
 

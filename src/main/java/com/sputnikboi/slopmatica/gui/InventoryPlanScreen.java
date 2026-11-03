@@ -112,6 +112,14 @@ public class InventoryPlanScreen extends Screen {
         y += step + 4;
         addRenderableWidget(Button.builder(Component.translatable("slopmatica.plan.calculate").withStyle(ChatFormatting.BOLD), b -> recalculate())
             .bounds(x, y, LEFT_W, 20).build());
+        if (com.sputnikboi.slopmatica.plan.SupplyChests.allowed(minecraft)) {
+            // Creative with cheats: skip the gathering, get it all in chests at your feet.
+            y += step;
+            addRenderableWidget(Button.builder(Component.translatable("slopmatica.supply.button"), b -> {
+                onClose();
+                com.sputnikboi.slopmatica.plan.SupplyChests.place(minecraft);
+            }).bounds(x, y, LEFT_W, 20).tooltip(Tooltip.create(Component.translatable("slopmatica.supply.tooltip"))).build());
+        }
 
         addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> onClose()).bounds(width / 2 - 75, height - 26, 150, 20).build());
         if (InventoryPlanner.INSTANCE.plan() == null) {
