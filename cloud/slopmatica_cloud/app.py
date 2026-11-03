@@ -4653,7 +4653,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         group = posting_group(user, body.group) if body.group is not None else None
         if group is not None and group.post_visibility == "group":
             visibility = "private"  # members only whatever it says; stays private should it leave the group
-        limit = settings.max_posts_per_user
+        limit = settings.max_posts_per_user if not user.is_admin else 10**9  # admins curate collections
         if store.post_usage(user.uuid)[0] >= limit:
             raise ApiError(409, f"you already have {limit} posts on the board, which is the limit")
         allowed = resolve_names(body.allowed)

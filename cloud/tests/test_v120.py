@@ -754,3 +754,13 @@ def test_migration_9_is_one_transaction(make_client, data_dir, monkeypatch):
     db.close()
     monkeypatch.undo()
     assert make_client().app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+
+
+def test_site_admins_have_no_post_cap(make_client, mojang):
+    from test_board import Who, make_post, upload
+    from test_v070 import ADMIN
+    c = make_client(max_posts_per_user=2)
+    h = Who(c, mojang, ADMIN).h
+    upload(c, h, "a.litematic")
+    for _ in range(3):
+        make_post(c, h)
