@@ -109,6 +109,18 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
             ));
         }
 
+        list.addHeader(Component.translatable("slopmatica.options.quick"));
+        list.addSmall(
+            cycle("slopmatica.quick.style", com.sputnikboi.slopmatica.quick.QuickMenu.Style.values(), c.quickStyle, v -> c.quickStyle = v).createButton(minecraft.options),
+            Button.builder(Component.translatable("slopmatica.options.quick_actions"), b -> minecraft.gui.setScreen(new QuickMenuEditScreen(this)))
+                .tooltip(Tooltip.create(Component.translatable("slopmatica.options.quick_actions.tooltip"))).width(WIDE).build());
+        list.addSmall(
+            cycle("slopmatica.quick.mode", com.sputnikboi.slopmatica.quick.QuickMenu.Mode.values(), c.quickMode, v -> c.quickMode = v).createButton(minecraft.options),
+            toggle("slopmatica.options.quick_close", c.quickCloseAfterUse, v -> c.quickCloseAfterUse = v, false).createButton(minecraft.options));
+        list.addSmall(
+            toggle("slopmatica.options.wheel_close", c.wheelCloseAfterUse, v -> c.wheelCloseAfterUse = v, false).createButton(minecraft.options),
+            toggle("slopmatica.wheel.reset_page", c.wheelResetPage, v -> c.wheelResetPage = v, false).createButton(minecraft.options));
+
         list.addHeader(Component.translatable("slopmatica.options.controls"));
         list.addSmall(
             Button.builder(Component.translatable("slopmatica.options.keybinds_all"), b -> minecraft.gui.setScreen(new SlopmaticaKeyBindsScreen(this))).width(WIDE).build(),
@@ -120,8 +132,7 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
             com.sputnikboi.slopmatica.tour.FeatureTour.INSTANCE.start(minecraft);
         }).tooltip(Tooltip.create(Component.translatable("slopmatica.options.tour.tooltip"))).width(WIDE).build();
         tour.active = minecraft.level != null;
-        list.addSmall(Button.builder(Component.translatable("slopmatica.options.quick_actions"), b -> minecraft.gui.setScreen(new QuickMenuEditScreen(this)))
-            .tooltip(Tooltip.create(Component.translatable("slopmatica.options.quick_actions.tooltip"))).width(WIDE).build(), tour);
+        list.addSmall(tour, null);
 
         list.addHeader(Component.translatable("slopmatica.options.other"));
         Button importButton = Button.builder(Component.translatable("slopmatica.options.import_litematica"), b -> minecraft.gui.setScreen(new LitematicaImportScreen(this)))
