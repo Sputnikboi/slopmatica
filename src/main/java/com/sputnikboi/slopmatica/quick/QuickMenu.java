@@ -38,13 +38,12 @@ public final class QuickMenu {
     public enum Mode {
         /** Pick a slot, then left or right click. */
         CLICK,
-        /** Runs when you let go of a hotbar number key (scrolling only moves the selection). */
+        /** Hold the Quick Menu key; letting go runs what is selected (on the wheel: nothing from the middle). */
         RELEASE
     }
 
     private boolean open;
     private int selected;
-    private final boolean[] hotbarDown = new boolean[9];
     private final Map<String, Boolean> boundDown = new HashMap<>();
 
     private QuickMenu() {
@@ -81,9 +80,6 @@ public final class QuickMenu {
         } else if (mc.player != null && mc.gui.screen() == null) {
             open = true;
             selected = mc.player.getInventory().getSelectedSlot();
-            for (int i = 0; i < 9; i++) {
-                hotbarDown[i] = mc.options.keyHotbarSlots[i].isDown();
-            }
         }
     }
 
@@ -116,7 +112,13 @@ public final class QuickMenu {
             mc.gui.setScreen(new QuickMenuEditScreen(null, false));
             return;
         }
-        Mode mode = SlopmaticaConfig.get().quickMode;
+        if (SlopmaticaConfig.get().quickMode == Mode.RELEASE && !com.sputnikboi.slopmatica.SlopmaticaKeys.QUICK_MENU.isDown()) {
+            // Hold to use: letting go of the key runs the selected slot.
+            int slot = selected;
+            close(mc);
+            run(mc, QuickAction.get(layout().get(slot)));
+            return;
+        }
         boolean clicked = false;
         while (mc.options.keyAttack.consumeClick()) {
             clicked = true;
@@ -124,20 +126,21 @@ public final class QuickMenu {
         while (mc.options.keyUse.consumeClick()) {
             clicked = true;
         }
-        if (clicked && mode != Mode.RELEASE) {
+        if (clicked) {
             trigger(mc, selected);
+        }
+    }
+
+    /** Runs an action now (or says why it can't); the caller has dealt with closing. */
+    static void run(Minecraft mc, @org.jspecify.annotations.Nullable QuickAction action) {
+        if (action == null) {
             return;
         }
-        if (mode == Mode.RELEASE) {
-            for (int i = 0; i < 9; i++) {
-                boolean down = mc.options.keyHotbarSlots[i].isDown();
-                if (hotbarDown[i] && !down) {
-                    trigger(mc, i);
-                    return;
-                }
-                hotbarDown[i] = down;
-            }
+        if (!action.availableNow(mc)) {
+            SlopmaticaActions.actionBar(Component.translatable("slopmatica.quick.unavailable", action.label().get()).withColor(SlopmaticaActions.ERROR));
+            return;
         }
+        action.run().accept(mc);
     }
 
     private void trigger(Minecraft mc, int slot) {
@@ -203,10 +206,11 @@ public final class QuickMenu {
         // One line above the hearts and armour: the selected action, then how to use the menu.
         QuickAction current = QuickAction.get(layout.get(selected));
         Component name = current == null ? Component.translatable("slopmatica.quick.empty") : current.label().get();
-        Component hint = Component.translatable(switch (SlopmaticaConfig.get().quickMode) {
-            case CLICK -> "slopmatica.quick.hint.click";
-            case RELEASE -> "slopmatica.quick.hint.release";
-        }, mc.options.keyInventory.getTranslatedKeyMessage());
+        Component hint = switch (SlopmaticaConfig.get().quickMode) {
+            case CLICK -> Component.translatable("slopmatica.quick.hint.click", mc.options.keyInventory.getTranslatedKeyMessage());
+            case RELEASE -> Component.translatable("slopmatica.quick.hint.release", com.sputnikboi.slopmatica.SlopmaticaKeys.QUICK_MENU.getTranslatedKeyMessage(),
+                mc.options.keyInventory.getTranslatedKeyMessage());
+        };
         Component line = Component.empty().append(name.copy().withColor(current != null && current.availableNow(mc) ? 0xFFFFFFFF : 0xFFA0A0A0))
             .append(Component.literal("   ")).append(hint.copy().withColor(0xFFA0A0A0));
         int w = mc.font.width(line), ly = y - 38;

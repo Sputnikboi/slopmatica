@@ -50,11 +50,16 @@ public final class SlopmaticaConfig {
     public long cloudProfilePulled = 0;
     /** The Quick Menu's nine slots: action ids, "" for empty. */
     public java.util.List<String> quickMenu = new java.util.ArrayList<>(com.sputnikboi.slopmatica.quick.QuickLayout.DEFAULT);
-    public com.sputnikboi.slopmatica.quick.QuickMenu.Mode quickMode = com.sputnikboi.slopmatica.quick.QuickMenu.Mode.CLICK;
+    public com.sputnikboi.slopmatica.quick.QuickMenu.Mode quickMode = com.sputnikboi.slopmatica.quick.QuickMenu.Mode.RELEASE;
+    /**
+     * Which Quick Menu defaults this file has had (2: wheel, hold to use). Missing from older files,
+     * so it starts at 0 and the check on load moves them over once.
+     */
+    public int quickDefaults = 0;
     /** Close the Quick Menu after running an action (otherwise it stays open until its key is pressed again). */
     public boolean quickCloseAfterUse = false;
     /** What the Quick Menu key opens: the hotbar of actions or the action wheel. */
-    public com.sputnikboi.slopmatica.quick.QuickMenu.Style quickStyle = com.sputnikboi.slopmatica.quick.QuickMenu.Style.HOTBAR;
+    public com.sputnikboi.slopmatica.quick.QuickMenu.Style quickStyle = com.sputnikboi.slopmatica.quick.QuickMenu.Style.WHEEL;
     /** The action wheel's pages, each {@link com.sputnikboi.slopmatica.quick.QuickLayout#WHEEL_SLOTS} action ids ("" for empty). */
     public java.util.List<java.util.List<String>> wheelPages = wheelDefault();
     /** Close the wheel after running an action. Actions that open a screen close it anyway. */
@@ -294,13 +299,22 @@ public final class SlopmaticaConfig {
             quickMenu = new java.util.ArrayList<>(com.sputnikboi.slopmatica.quick.QuickLayout.DEFAULT);
         }
         if (quickStyle == null) {
-            quickStyle = com.sputnikboi.slopmatica.quick.QuickMenu.Style.HOTBAR;
+            quickStyle = com.sputnikboi.slopmatica.quick.QuickMenu.Style.WHEEL;
+        }
+        if (quickDefaults < 2) {
+            // Settings from before the wheel became the default: still at the old defaults means
+            // never chosen, so they move to the new ones; a choice that was made is kept.
+            if (quickStyle == com.sputnikboi.slopmatica.quick.QuickMenu.Style.HOTBAR && quickMode != com.sputnikboi.slopmatica.quick.QuickMenu.Mode.RELEASE) {
+                quickStyle = com.sputnikboi.slopmatica.quick.QuickMenu.Style.WHEEL;
+                quickMode = com.sputnikboi.slopmatica.quick.QuickMenu.Mode.RELEASE;
+            }
+            quickDefaults = 2;
         }
         if (wheelPages == null || wheelPages.isEmpty() || wheelPages.stream().anyMatch(page -> page == null || page.size() != com.sputnikboi.slopmatica.quick.QuickLayout.WHEEL_SLOTS)) {
             wheelPages = wheelDefault();
         }
         if (quickMode == null) {
-            quickMode = com.sputnikboi.slopmatica.quick.QuickMenu.Mode.CLICK;
+            quickMode = com.sputnikboi.slopmatica.quick.QuickMenu.Mode.RELEASE;
         }
         if (quickToggles == null) {
             quickToggles = new java.util.ArrayList<>();
