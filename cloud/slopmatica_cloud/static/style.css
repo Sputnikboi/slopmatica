@@ -30,6 +30,7 @@ kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 
 
 main.wrap { padding-top: 20px; padding-bottom: 32px; }
 .foot { color: var(--muted); font-size: 13px; padding-bottom: 24px; }
+.foot .disclaimer { margin: 6px 0 0; font-size: 11px; letter-spacing: .02em; }
 
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
 .hero { max-width: 640px; margin: 40px auto; }

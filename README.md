@@ -2,6 +2,8 @@
 
 A ground-up Litematica replacement for Minecraft 26.3 (Fabric, client-side).
 
+**NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.**
+
 Loads `.litematic` files from the game's `schematics` folder and shows them as a hologram:
 vanilla-textured, slightly see-through ghost blocks with outlines traced from each block's
 actual model:

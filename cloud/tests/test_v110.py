@@ -34,3 +34,9 @@ def test_bad_action_ids_become_empty_slots(gated):
     assert gated.post("/api/telemetry", json=body).status_code == 204
     quick = json.loads(gated.app.state.store.db.execute("SELECT quick FROM telemetry").fetchone()["quick"])
     assert quick["quickMenu"][:3] == ["build_view", "", ""]
+
+
+def test_every_page_carries_the_mojang_disclaimer(gated):
+    for url in ("/", "/board", "/releases", "/feedback"):
+        html = gated.get(url).text
+        assert "NOT AN OFFICIAL MINECRAFT SERVICE. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT." in html, url
