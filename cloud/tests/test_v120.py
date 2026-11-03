@@ -764,3 +764,10 @@ def test_site_admins_have_no_post_cap(make_client, mojang):
     upload(c, h, "a.litematic")
     for _ in range(3):
         make_post(c, h)
+
+
+def test_admin_link_only_for_admins(gated, ppl):
+    link = 'href="/admin"'
+    assert link in ppl.admin.cookie_client(gated.app).get("/board").text
+    assert link not in ppl.alice.cookie_client(gated.app).get("/board").text
+    assert link not in gated.get("/board").text
