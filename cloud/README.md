@@ -251,6 +251,63 @@ POST /api/board/Ab3dEf_hIj/favorite
 200 {"favorites":4,"favorited":true}
 ```
 
+### Groups
+
+Groups let players share builds with each other. A group has a name (1 to 60 characters), an optional description (at most
+2000), an id (10 URL-safe characters, like post ids) and a slug for its page, `/g/<slug>`, made from the name when the group
+is created (lowercase ASCII letters, digits and dashes; `-2`, `-3`... if taken) and changed only in its settings. Settings:
+
+- `visibility`: `public` (in the directory at `/groups`), `unlisted` (by link) or `private` (members only: everyone else gets 404 for the group and everything in it).
+- `joinPolicy`: `open` (any member of the site joins), `request` (players ask; admins and moderators approve or deny) or `invite` (admins and moderators, or members allowed to invite, add people).
+- `postPolicy`, who may put builds in it: `members` (members with the `post` permission, moderators, admins), `moderators` or `closed` (admins only).
+- `postVisibility`: `group` (its builds are seen by its members only, whatever their own visibility) or `any` (the poster picks public, unlisted or private as usual; public ones are on the board too, and members of a private group also see its private posts).
+- `memberPerms`: plain members' defaults for `post`, `invite` and `download` (default `true`, `false`, `true`). Each member can have their own over them.
+
+Roles: `admin` (settings, roles, removing anyone but the owner, deleting the group), `moderator` (adding, removing and
+banning plain members, join requests, editing, hiding and removing the group's listings, posting even when `postPolicy` is
+`moderators`; never anything on admins or other moderators) and `member`. The owner is always an admin and can't be
+removed, demoted or banned, nor leave, until they hand the group over. Site admins see every group and act as its admins.
+Members can always leave. A member without `download` sees the group's members-only builds but can't download, export
+or save them (403 `no_download`).
+
+A post is in at most one group (`group` on the post, `null` for none or, for a private group, for players outside it).
+Putting a post in a members-only group makes it `private`, and it stays private if it leaves the group, the group opens
+up, or the group is deleted, so nothing the group hid ever becomes visible by itself. Members-only posts never appear on
+the board, in search, on profiles, in the Minecraft version filter, in hover-card counts or in "Shared with me". A group's
+admins and moderators may change a post's `title`, `description`, `tags` and `credit`, hide it in the group (not listed
+there; members who only saw it through the group no longer do) or take it out of the group; never anything else of it.
+
+A post may also name a `credit` (at most 60 characters on one line, e.g. `Mojang` for a vanilla structure): shown as
+"by <credit> · uploaded by <author>", and searched like the title.
+
+| Method & path | Result |
+|---|---|
+| `GET /api/groups` | `{"groups":[group]}`: public groups (most members first), then the caller's other groups; `role` is the caller's in each (null if none). Logged out: public groups. |
+| `POST /api/groups` | Members: `{"name","description"?,"visibility"?,"joinPolicy"?,"postPolicy"?,"postVisibility"?,"memberPerms"?}` returns 201 with the group (defaults: public, open, members, any). At most 10 owned groups per account (409) and 5 new ones per 15 minutes (429); not for site admins. |
+| `GET /api/groups/{id}` | The group, plus for a logged-in caller `canPost`, `perms` (their permissions there, null if not a member), `requested`, `banned`. |
+| `PATCH /api/groups/{id}` | Admins: any of the settings, and `slug` (409 if taken). `memberPerms` changes only the permissions given. |
+| `DELETE /api/groups/{id}` | Admins: 204. Members, requests and bans go; posts stay, in no group. |
+| `POST /api/groups/{id}/transfer` | The owner (or a site admin): `{"player": name or uuid}` of a member with an account here, who becomes an admin and the owner. |
+| `GET /api/groups/{id}/posts` | The group's builds the caller may see, with the same items, `sort`, `q`, filters, `page` and `limit` as `GET /api/board` (plus `"group"`, no `tab`). Unlisted posts are listed to members only, posts hidden in the group to its admins, moderators and their uploader. |
+| `POST /api/groups/{id}/posts` | `{"post": id}`: put one of the caller's posts in the group (403 unless they may post there). Also `"group"` in `POST`/`PATCH /api/board` (`null` takes it out). |
+| `DELETE /api/groups/{id}/posts/{post}` | The uploader, or admins and moderators: take it out of the group (204). |
+| `POST /api/groups/{id}/posts/{post}/hide` | Admins and moderators: `{"hidden": true\|false}`. |
+| `POST /api/groups/{id}/join`, `/leave` | Join an open group (`request`: 409 `request_required`; `invite`: 403 `invite_only`; banned: 403 `banned`), or leave (204; the owner: 409 `owner`). |
+| `POST`/`DELETE /api/groups/{id}/requests` | Ask to join (`{"message"?}`, at most 500 characters; 10 per 15 minutes), or withdraw. |
+| `GET /api/groups/{id}/requests`; `POST .../requests/{uuid}/approve`, `/deny` | Admins and moderators. |
+| `GET /api/groups/{id}/members` | `{"members":[{"uuid","name","displayName","role","owner","joined","hasAccount","perms"(own, or null),"effective"}]}`, plus `requests` and `bans` for admins and moderators. |
+| `POST /api/groups/{id}/members` | `{"player": Minecraft name or uuid}` (looked up through Mojang like access lists; 30 per 15 minutes): added as a member at once. Admins, moderators, or members allowed to invite. 409 if a member or banned. |
+| `PATCH /api/groups/{id}/members/{uuid}` | `role` (admins), `perms` (a plain member's own permissions, admins and moderators; `null` for none). |
+| `DELETE /api/groups/{id}/members/{uuid}` | Remove (moderators: plain members only; nobody: the owner). |
+| `POST /api/groups/{id}/bans`, `DELETE .../bans/{uuid}` | Admins and moderators: ban `{"player"}` (member or not; same limits as removing), or lift a ban. |
+
+A group is `{"id","slug","name","description","visibility","joinPolicy","postPolicy","postVisibility","memberPerms",
+"owner":{"uuid","name","displayName"},"members","builds","created","updated","url","role"}` (`builds`: posts in it that
+nobody hid). A post's `group` is `{"id","slug","name","postVisibility","hidden","url"}`. Website: `/groups` (directory,
+your groups, New group), `/g/<slug>` (the group and its builds, sorted like the board), `/g/<slug>/members` and
+`/g/<slug>/settings` (admins; 404 for anyone else). The post form has a Group choice (groups the player may post in) and
+a Credit field; a group's admins and moderators get a Group moderation panel on its posts' pages.
+
 ### Settings profiles
 
 Named sets of the mod's settings, kept per account, that game instances can follow. Login and the whitelist gate as for
@@ -579,7 +636,9 @@ startup reads each existing snapshot once to count its block types. 0.9.0 change
 7 (0.10.0) adds `files.listing_post` (the owner's post the file is the source of), filled from each post's
 `source_path`, then for files still without one from the owner's posts with the same sha256 (current snapshot or an
 earlier version, newest post first); the tables `favorites`, `post_saves` (filled with every account that had saved a
-post before, not counting its author) and `feedback_files`; and a partial index on `files.source_post`. One transaction. Before step 3, board snapshots that aren't
+post before, not counting its author) and `feedback_files`; and a partial index on `files.source_post`. One transaction. 8 (0.11.0) adds `telemetry.quick`. 9 (0.12.0) adds the
+tables `groups`, `group_members`, `group_requests` and `group_bans`, and `posts.group_id` (set to NULL when its group is
+deleted), `posts.group_hidden` and `posts.credit`; one transaction, existing posts in no group. Before step 3, board snapshots that aren't
 `.slopmatic` are converted in place, each committed on its own (size, hash, format, file name, so quota
 usage follows); one that fails to convert is left as it is and logged. An interrupted run converts the
 rest at the next start.

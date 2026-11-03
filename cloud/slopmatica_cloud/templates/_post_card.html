@@ -22,6 +22,7 @@
   <div class="meta">
     <h3 class="name" title="{{ p.title }}"><a class="card-link" href="{{ base }}/board/{{ p.id }}">{{ p.title }}</a></h3>
     <div class="sub author">
+      {% if p.credit %}<span class="credit" title="By {{ p.credit }}">by {{ p.credit }}</span> <span class="muted">&middot; uploaded by</span>{% endif %}
       <img class="head" src="{{ avatar_url(p.uuid, p.author_avatar_v) }}" alt="" width="16" height="16" loading="lazy">
       <a class="author-link" href="{{ base }}/u/{{ p.uuid }}" data-user="{{ p.uuid }}">{{ p.author_shown }}</a>{{ user_badges(p.author_badges) }}
       {% if p.coauthors %}<span class="muted" title="With {% for a in p.coauthors %}{{ a.display }}{{ ', ' if not loop.last else '' }}{% endfor %}">+{{ p.coauthors|length }}</span>{% endif %}
@@ -42,7 +43,7 @@
       {% if p.mc %}<a class="chip mc-chip" href="{{ chip_url(mc=p.mc) if chip_url else base ~ '/board?mc=' ~ p.mc|urlencode }}" title="For Minecraft {{ p.mc }}">MC {{ p.mc }}</a>{% endif %}
     </div>
     {% endif %}
-    {% if show_visibility %}<div class="sub"><span class="badge vis-{{ p.visibility }}">{{ p.visibility|capitalize }}</span>{% if p.hidden %} <span class="badge mod-hidden" title="Hidden by an admin">Hidden</span>{% endif %}</div>{% endif %}
+    {% if show_visibility %}<div class="sub">{% if p.group_only %}<span class="badge vis-group" title="In {{ p.group_name }}: its members only">Group</span>{% else %}<span class="badge vis-{{ p.visibility }}">{{ p.visibility|capitalize }}</span>{% endif %}{% if p.hidden %} <span class="badge mod-hidden" title="Hidden by an admin">Hidden</span>{% endif %}</div>{% endif %}
   </div>
 </article>
 {% endmacro %}

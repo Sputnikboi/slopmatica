@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% from "_group_form.html" import group_label %}
+{% block title %}Members of {{ group.name }} &middot; Slopmatica Cloud{% endblock %}
+{% block main %}
+<div class="board-head">
+  <h1 class="page-title"><a href="{{ base }}/g/{{ group.slug }}">{{ group.name }}</a> &middot; members</h1>
+</div>
+<div data-group-id="{{ group.id }}" data-owner="{{ group.owner }}">
+{% if st.may("invite") and member %}
+<section class="panel">
+  <h2>Add someone</h2>
+  <form class="inline-form" data-member-add novalidate>
+    <input type="text" name="player" placeholder="Minecraft name" maxlength="36" spellcheck="false" autocomplete="off" aria-label="Minecraft name">
+    <button type="submit" class="btn">Add</button>
+  </form>
+  <p class="muted small">They join as a member straight away, even before they first log in here.</p>
+  <p class="form-msg small" role="status"></p>
+</section>
+{% endif %}
+
+{% if st.manager and requests %}
+<section class="panel">
+  <h2>Asking to join <span class="count">{{ requests|length }}</span></h2>
+  <ul class="fav-list">
+    {% for r in requests %}
+    <li class="fav-item" data-request="{{ r.uuid }}">
+      <img class="head" src="{{ avatar_url(r.uuid) }}" alt="" width="32" height="32">
+      <div class="fav-meta">
+        <a href="{{ base }}/u/{{ r.uuid }}" data-user="{{ r.uuid }}"><strong>{{ r.displayName }}</strong></a> <span class="muted small">{{ r.name }} &middot; <time datetime="{{ r.created|iso_utc }}">{{ r.created|pretty_utc }}</time></span>
+        {% if r.message %}<p class="request-msg small">{{ r.message }}</p>{% endif %}
+      </div>
+      <div class="fav-actions">
+        <button type="button" class="btn small" data-request-act="approve">Approve</button>
+        <button type="button" class="btn small ghost danger" data-request-act="deny">Deny</button>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Members <span class="count">{{ members|length }}</span></h2>
+  <p class="form-msg small" data-members-msg role="status"></p>
+  <div class="table-wrap"><table class="stat-table member-table">
+    <thead><tr><th scope="col">Player</th><th scope="col">Role</th><th scope="col">Permissions</th><th scope="col">Joined</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+    <tbody>
+    {% for m in members %}
+    {% set over = m.uuid != group.owner and m.uuid != (user.uuid if user else "") and (st.admin or (st.manager and m.role == "member")) %}
+    <tr data-member="{{ m.uuid }}" data-name="{{ m.name }}">
+      <td><span class="who-cell"><img class="head" src="{{ avatar_url(m.uuid) }}" alt="" width="24" height="24">
+        {% if m.hasAccount %}<a href="{{ base }}/u/{{ m.uuid }}" data-user="{{ m.uuid }}">{{ m.displayName }}</a>{% else %}<span title="Hasn&rsquo;t logged in here yet">{{ m.name }}</span>{% endif %}
+        {% if m.owner %}<span class="badge" title="Owns the group">Owner</span>{% endif %}</span></td>
+      <td>{% if st.admin and member and not m.owner %}
+        <select data-member-role aria-label="Role of {{ m.name }}">
+          {% for r in roles %}<option value="{{ r }}"{% if r == m.role %} selected{% endif %}>{{ group_label(r) }}</option>{% endfor %}
+        </select>
+        {% else %}{{ group_label(m.role) }}{% endif %}</td>
+      <td>{% if m.role == "member" %}
+        {% if st.manager and member %}
+        <span class="member-perms">
+          {% for key, label in perm_labels.items() %}
+          <label><span>{{ label }}</span>
+            <select data-member-perm="{{ key }}" aria-label="{{ label }}, {{ m.name }}">
+              <option value=""{% if m.perms is none or key not in m.perms %} selected{% endif %}>Group default ({{ "yes" if group.perms[key] else "no" }})</option>
+              <option value="yes"{% if m.perms and m.perms.get(key) is true %} selected{% endif %}>Yes</option>
+              <option value="no"{% if m.perms and m.perms.get(key) is false %} selected{% endif %}>No</option>
+            </select></label>
+          {% endfor %}
+        </span>
+        {% else %}<span class="muted small">{% for key, label in perm_labels.items() if m.effective[key] %}{{ label }}{{ ", " if not loop.last else "" }}{% else %}None{% endfor %}</span>{% endif %}
+        {% else %}<span class="muted small">Everything</span>{% endif %}</td>
+      <td><time datetime="{{ m.joined|iso_utc }}">{{ m.joined|pretty_utc }}</time></td>
+      <td><span class="member-actions">
+        {% if over and member %}
+        <button type="button" class="btn small ghost" data-member-act="remove">Remove</button>
+        <button type="button" class="btn small ghost danger" data-member-act="ban">Ban</button>
+        {% endif %}
+        {% if (st.owner or st.site_admin) and member and not m.owner and m.hasAccount %}
+        <button type="button" class="btn small ghost" data-member-act="transfer">Make owner</button>
+        {% endif %}
+      </span></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% if st.member and not st.owner and member %}<p><button type="button" class="btn ghost small" data-group-act="leave">Leave the group</button></p>{% endif %}
+</section>
+
+{% if st.manager and member %}
+<section class="panel">
+  <h2>Banned</h2>
+  <form class="inline-form" data-member-ban novalidate>
+    <input type="text" name="player" placeholder="Minecraft name" maxlength="36" spellcheck="false" autocomplete="off" aria-label="Minecraft name to ban">
+    <button type="submit" class="btn ghost danger">Ban</button>
+  </form>
+  <p class="form-msg small" role="status"></p>
+  {% if bans %}
+  <ul class="version-list">
+    {% for b in bans %}
+    <li data-ban="{{ b.uuid }}"><span>{{ b.displayName }} <span class="muted small">{{ b.name }} &middot; <time datetime="{{ b.created|iso_utc }}">{{ b.created|pretty_utc }}</time></span></span>
+      <button type="button" class="btn small ghost" data-unban>Lift the ban</button></li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="muted small">Nobody is banned.</p>{% endif %}
+</section>
+{% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ base }}/static/groups.js?v={{ v }}"></script>
+{% endblock %}

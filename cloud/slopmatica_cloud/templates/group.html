@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% from "_post_card.html" import post_card %}
+{% from "_group_form.html" import group_badges, group_label %}
+{% block title %}{{ group.name }} &middot; Slopmatica Cloud{% endblock %}
+{% block main %}
+<section class="panel group-head" data-group-id="{{ group.id }}">
+  <h1 class="page-title">{{ group.name }}</h1>
+  <div class="group-badges">{{ group_badges(group) }}{% if st.role %} <span class="badge" title="Your role">You: {{ group_label(st.role)|lower }}</span>{% endif %}</div>
+  {% if group.description %}<p class="desc">{{ group.description }}</p>{% endif %}
+  <p class="muted small">{{ group.members|num }} member{{ "" if group.members == 1 else "s" }} &middot; {{ group.builds|num }} build{{ "" if group.builds == 1 else "s" }} &middot; owned by <a href="{{ base }}/u/{{ group.owner }}" data-user="{{ group.owner }}">{{ group.owner_shown }}</a></p>
+  <div class="group-links">
+    {% if user and member %}
+      {% if st.member %}
+        {% if not st.owner %}<button type="button" class="btn ghost" data-group-act="leave">Leave</button>{% endif %}
+      {% elif st.banned %}
+        <span class="muted small">You can&rsquo;t join this group.</span>
+      {% elif st.requested %}
+        <span class="muted small">You asked to join.</span> <button type="button" class="btn ghost small" data-group-act="withdraw">Withdraw</button>
+      {% elif group.join_policy == "open" %}
+        <button type="button" class="btn" data-group-act="join">Join</button>
+      {% elif group.join_policy == "request" %}
+        <button type="button" class="btn" data-group-act="request" data-max="{{ max_join_message }}">Request to join</button>
+      {% else %}
+        <span class="muted small">Invite only: an admin or moderator adds people.</span>
+      {% endif %}
+    {% elif not user %}
+      <span class="muted small">Log in from the game to join.</span>
+    {% endif %}
+    <a class="btn ghost" href="{{ base }}/g/{{ group.slug }}/members">Members</a>
+    {% if st.admin %}<a class="btn ghost" href="{{ base }}/g/{{ group.slug }}/settings">Settings</a>{% endif %}
+  </div>
+  <p class="form-msg small" data-group-msg role="status"></p>
+  {% if st.can_post and member %}<p class="muted small">Post a build here with <strong>Post to board&hellip;</strong> on one of <a href="{{ base }}/">your files</a> and pick this group, or put one of your posts here from its page.</p>{% endif %}
+</section>
+
+<section class="toolbar board-toolbar">
+  <form class="search-form" method="get" action="{{ base }}/g/{{ group.slug }}" role="search">
+    <input type="hidden" name="sort" value="{{ sort }}">
+    <input type="search" name="q" value="{{ q }}" placeholder="Search this group&rsquo;s builds" aria-label="Search the group" maxlength="100">
+    <button class="btn ghost" type="submit">Search</button>
+  </form>
+  <div class="seg" role="group" aria-label="Sort">
+    {% for s in sorts %}
+    <a class="{{ 'on' if s == sort else '' }}" href="{{ link(sort=s) }}"{% if s == sort %} aria-current="true"{% endif %}>{{ s|capitalize }}</a>
+    {% endfor %}
+  </div>
+</section>
+{% if q %}<p class="muted result-note">{{ total }} result{{ "" if total == 1 else "s" }} for &ldquo;{{ q }}&rdquo; &middot; <a href="{{ link(q='') }}">clear</a></p>{% endif %}
+
+{% if posts %}
+<section class="grid">
+  {% for p in posts %}{{ post_card(p, base, show_visibility=st.manager, all_tags=all_tags, size_classes=size_classes, favs=favs, me=me) }}{% endfor %}
+</section>
+{% if pages > 1 %}
+<nav class="pager" aria-label="Pages">
+  {% if page > 1 %}<a class="btn ghost small" href="{{ link(page=page - 1, sort=sort, q=q) }}" rel="prev">&larr; Previous</a>{% else %}<span></span>{% endif %}
+  <span class="muted">Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a class="btn ghost small" href="{{ link(page=page + 1, sort=sort, q=q) }}" rel="next">Next &rarr;</a>{% else %}<span></span>{% endif %}
+</nav>
+{% endif %}
+{% elif q %}
+<p class="empty muted">Nothing matches.</p>
+{% elif page > 1 %}
+<p class="empty muted">There is no page {{ page }}. <a href="{{ link() }}">Back to the first page</a></p>
+{% elif group.post_visibility == "group" and not st.member and not st.site_admin %}
+<p class="empty muted">This group&rsquo;s builds are for its members only.</p>
+{% else %}
+<p class="empty muted">No builds here yet.</p>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="{{ base }}/static/board.js?v={{ v }}"></script>
+<script src="{{ base }}/static/groups.js?v={{ v }}"></script>
+{% endblock %}

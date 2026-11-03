@@ -40,11 +40,18 @@
     const vis = form.querySelector("input[name=visibility]:checked");
     const box = form.querySelector("[data-names]");
     if (box) box.hidden = !vis || vis.value !== "private";
+    // a members-only group decides who sees the build, whatever the visibility says
+    const group = form.querySelector("select[data-group-select]");
+    const note = form.querySelector("[data-group-note]");
+    if (group && note) {
+      const opt = group.selectedOptions[0];
+      note.hidden = !opt || !opt.hasAttribute("data-members-only");
+    }
   }
 
   document.querySelectorAll("form[data-post-form]").forEach((form) => {
     syncNames(form);
-    form.addEventListener("change", (ev) => { if (ev.target.name === "visibility") syncNames(form); });
+    form.addEventListener("change", (ev) => { if (ev.target.name === "visibility" || ev.target.name === "group") syncNames(form); });
     form.addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const msg = form.querySelector(".form-msg");
@@ -62,7 +69,9 @@
         body.links = lines(form.elements.links.value);
         body.versionLabel = form.elements.versionLabel.value.trim();
         body.mc = form.elements.mc.value.trim() || null;
+        body.credit = form.elements.credit.value.trim() || null;
       }
+      if (form.elements.group) body.group = form.elements.group.value || null;
       // Names are only sent for private posts; an edit to another visibility keeps the stored list.
       if (body.visibility === "private") body.allowed = names(form.elements.allowed.value);
       const create = form.dataset.postForm === "create";

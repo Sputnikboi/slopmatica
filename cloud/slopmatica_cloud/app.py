@@ -20,6 +20,7 @@ import sqlite3
 import tempfile
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -251,6 +252,42 @@ MAX_FEEDBACK_JSON = 64 * 1024  # a feedback body without attachments
 MAX_LOG_TEXT = 64 * 1024 * 1024  # a gzipped log may unpack to at most this much (checked while reading it)
 FEEDBACK_ATTACHMENT_DAYS = 30  # attachments of reports resolved longer ago are deleted at startup
 STORAGE_TOP = 15  # rows in each list of the admin page's Site storage tab
+
+# ---- 0.12.0: groups, and credited authors on posts
+GROUP_ID_RE = POST_ID_RE  # same shape as post ids
+GROUP_VISIBILITIES: dict[str, str] = {
+    "public": "Listed in the groups directory. Anyone can see the group page.",
+    "unlisted": "Not listed. Anyone with the link can see the group page.",
+    "private": "Members only. Everyone else gets a 404.",
+}
+JOIN_POLICIES: dict[str, str] = {
+    "open": "Anyone logged in can join.",
+    "request": "Players ask to join; admins and moderators approve or deny.",
+    "invite": "Only admins and moderators (or members allowed to invite) add people.",
+}
+POST_POLICIES: dict[str, str] = {
+    "members": "Members who may post (see member permissions), moderators and admins.",
+    "moderators": "Moderators and admins.",
+    "closed": "Admins only.",
+}
+POST_VISIBILITY_RULES: dict[str, str] = {
+    "group": "Builds posted here are seen by the group's members only, whatever their own visibility.",
+    "any": "The poster picks public, unlisted or private as usual; public builds are on the board too.",
+}
+GROUP_ROLES = ("admin", "moderator", "member")  # in rank order
+MANAGER_ROLES = frozenset({"admin", "moderator"})
+MEMBER_PERMS: dict[str, str] = {"post": "Post builds", "invite": "Add people", "download": "Download builds"}
+DEFAULT_MEMBER_PERMS: dict[str, bool] = {"post": True, "invite": False, "download": True}
+SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$")
+MAX_SLUG_LEN = 40
+MAX_GROUP_NAME_LEN = 60
+MAX_GROUP_DESCRIPTION_LEN = 2000
+MAX_JOIN_MESSAGE_LEN = 500
+MAX_CREDIT_LEN = 60
+GROUPS_PER_USER = 10  # groups an account may own; admins have no limit
+GROUP_CREATE_LIMIT = 5  # new groups per account per LOGIN_WINDOW, counted in login_failures
+GROUP_REQUEST_LIMIT = 10  # join requests per account per LOGIN_WINDOW
+GROUP_ADD_LIMIT = 30  # players added or banned by name per account per LOGIN_WINDOW (each may be a Mojang lookup)
 
 
 # --------------------------------------------------------------------------- settings
@@ -640,6 +677,18 @@ class PostRow:
     favorites: int = 0  # accounts that favourited it
     saves: int = 0  # accounts (not the author) that added it to their cloud
     total_bytes: int = 0  # every version's snapshot together (what the author's quota counts for it)
+    credit: str | None = None  # a credited author shown instead of the uploader ("by Mojang · uploaded by ...")
+    group_id: str | None = None  # the group it is posted in, if any
+    group_slug: str | None = None
+    group_name: str | None = None
+    group_vis: str | None = None  # the group's visibility
+    group_post_vis: str | None = None  # the group's post_visibility: 'group' makes the post members only
+    group_hidden: int | None = None  # unix ms when a group admin or moderator hid it in the group
+
+    @property
+    def group_only(self) -> bool:
+        """Only the group's members (and the uploader and site admins) may see it, whatever its own visibility."""
+        return self.group_id is not None and self.group_post_vis == "group"
 
     @property
     def score(self) -> int:
@@ -669,7 +718,9 @@ class PostRow:
             badge_list(r["author_badges"]), r["hidden"], r["hidden_reason"] or "",
             r["author_display"] or "", r["author_avatar_v"] or 0, r["version"], r["version_label"] or "",
             r["mc_version"], r["distinct_count"], links, r["downloads"], r["version_count"],
-            favorites=r["favorites"], saves=r["saves"], total_bytes=r["total_bytes"],
+            favorites=r["favorites"], saves=r["saves"], total_bytes=r["total_bytes"], credit=r["credit"],
+            group_id=r["group_id"], group_slug=r["group_slug"], group_name=r["group_name"], group_vis=r["group_vis"],
+            group_post_vis=r["group_post_vis"], group_hidden=r["group_hidden"],
         )
 
 
@@ -729,6 +780,114 @@ class VersionRow:
         return cls(r["num"], r["label"] or "", r["mc_version"], r["filename"], r["format"], r["size"], r["sha256"],
                    bool(r["has_thumb"]), dims if None not in dims else None, r["block_count"], r["distinct_count"],
                    r["created"], False)
+
+
+def parse_perms(text: str | None) -> dict[str, bool]:
+    """A stored permission object (JSON) -> its known keys with true/false values."""
+    try:
+        raw = json.loads(text) if text else {}
+    except ValueError:
+        return {}
+    return {k: v for k, v in raw.items() if k in MEMBER_PERMS and isinstance(v, bool)} if isinstance(raw, dict) else {}
+
+
+def slugify(name: str) -> str:
+    """A group's name as a slug: lowercase ASCII letters and digits, runs of anything else as one dash."""
+    folded = unicodedata.normalize("NFKD", name.casefold()).encode("ascii", "ignore").decode()  # é -> e
+    return re.sub(r"[^a-z0-9]+", "-", folded).strip("-")[:MAX_SLUG_LEN].strip("-") or "group"
+
+
+@dataclass
+class GroupRow:
+    id: str
+    slug: str
+    name: str
+    description: str
+    owner: str  # uuid; always one of its admins
+    owner_name: str
+    owner_display: str
+    visibility: str  # GROUP_VISIBILITIES
+    join_policy: str  # JOIN_POLICIES
+    post_policy: str  # POST_POLICIES
+    post_visibility: str  # POST_VISIBILITY_RULES
+    member_perms: dict[str, bool]  # defaults for plain members, over DEFAULT_MEMBER_PERMS
+    created: int  # unix ms
+    updated: int
+    members: int = 0
+    builds: int = 0  # posts in it that neither a site admin nor the group hid
+    role: str | None = None  # the viewer's role, when listed for a viewer (Store.groups_of)
+
+    @property
+    def owner_shown(self) -> str:
+        return self.owner_display or self.owner_name
+
+    @property
+    def perms(self) -> dict[str, bool]:
+        """What plain members may do by default: member_perms over DEFAULT_MEMBER_PERMS."""
+        return {**DEFAULT_MEMBER_PERMS, **self.member_perms}
+
+    @classmethod
+    def from_row(cls, r: sqlite3.Row) -> "GroupRow":
+        return cls(
+            r["id"], r["slug"], r["name"], r["description"], r["owner"], r["owner_name"] or "", r["owner_display"] or "",
+            r["visibility"], r["join_policy"], r["post_policy"], r["post_visibility"], parse_perms(r["member_perms"]),
+            r["created"], r["updated"], r["member_count"], r["build_count"],
+            r["my_role"] if "my_role" in r.keys() else None,
+        )
+
+
+@dataclass
+class Standing:
+    """Someone's place in a group: their role (None if not a member) and what they may do there. Site admins may see
+    and manage every group as its admins can."""
+    group: GroupRow
+    uuid: str | None
+    role: str | None = None
+    override: dict[str, bool] | None = None  # the member's own permissions, over the group's defaults
+    site_admin: bool = False
+    banned: bool = False
+    requested: bool = False  # has a pending join request
+
+    @property
+    def member(self) -> bool:
+        return self.role is not None
+
+    @property
+    def admin(self) -> bool:
+        return self.role == "admin" or self.site_admin
+
+    @property
+    def manager(self) -> bool:
+        """A group admin or moderator (or a site admin)."""
+        return self.role in MANAGER_ROLES or self.site_admin
+
+    @property
+    def owner(self) -> bool:
+        return self.uuid is not None and self.uuid == self.group.owner
+
+    @property
+    def can_see(self) -> bool:
+        return self.group.visibility != "private" or self.member or self.site_admin
+
+    @property
+    def perms(self) -> dict[str, bool]:
+        if self.manager:
+            return {k: True for k in MEMBER_PERMS}
+        if not self.member:
+            return {k: False for k in MEMBER_PERMS}
+        return {**self.group.perms, **(self.override or {})}
+
+    def may(self, perm: str) -> bool:
+        return self.perms[perm]
+
+    @property
+    def can_post(self) -> bool:
+        policy = self.group.post_policy
+        if policy == "closed":
+            return self.admin
+        if policy == "moderators":
+            return self.manager
+        return self.may("post")
 
 
 def badge_list(joined: str | None) -> list[str]:
@@ -1074,6 +1233,53 @@ CREATE TABLE IF NOT EXISTS feedback_files (      -- a report's attachments, in f
     8: """
 ALTER TABLE telemetry ADD COLUMN quick TEXT NOT NULL DEFAULT '{}';
 """,
+    # 0.12.0: groups, and a credited author on posts
+    9: """
+CREATE TABLE IF NOT EXISTS groups (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL UNIQUE,     -- /g/<slug>: from the name when made, changed only in the settings
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    owner TEXT NOT NULL,           -- uuid, always one of its admins
+    visibility TEXT NOT NULL CHECK (visibility IN ('public', 'unlisted', 'private')),
+    join_policy TEXT NOT NULL CHECK (join_policy IN ('open', 'request', 'invite')),
+    post_policy TEXT NOT NULL CHECK (post_policy IN ('members', 'moderators', 'closed')),
+    post_visibility TEXT NOT NULL CHECK (post_visibility IN ('group', 'any')),
+    member_perms TEXT NOT NULL DEFAULT '{}',  -- JSON {post, invite, download}: plain members' defaults
+    created INTEGER NOT NULL,      -- unix ms
+    updated INTEGER NOT NULL       -- unix ms
+);
+CREATE INDEX IF NOT EXISTS groups_visibility ON groups(visibility);
+CREATE TABLE IF NOT EXISTS group_members (
+    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    uuid TEXT NOT NULL,            -- added by Minecraft name, so maybe without an account here yet
+    name TEXT NOT NULL,            -- the Minecraft name when added
+    role TEXT NOT NULL CHECK (role IN ('admin', 'moderator', 'member')),
+    joined INTEGER NOT NULL,       -- unix ms
+    perms TEXT,                    -- JSON: this member's own permissions over member_perms, NULL for none
+    PRIMARY KEY (group_id, uuid)
+);
+CREATE INDEX IF NOT EXISTS group_members_uuid ON group_members(uuid);
+CREATE TABLE IF NOT EXISTS group_requests (
+    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    uuid TEXT NOT NULL REFERENCES users(uuid),
+    message TEXT NOT NULL DEFAULT '',
+    created INTEGER NOT NULL,      -- unix ms
+    PRIMARY KEY (group_id, uuid)
+);
+CREATE TABLE IF NOT EXISTS group_bans (
+    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    uuid TEXT NOT NULL,
+    name TEXT NOT NULL,            -- the Minecraft name when banned
+    banned_by TEXT NOT NULL,       -- uuid
+    created INTEGER NOT NULL,      -- unix ms
+    PRIMARY KEY (group_id, uuid)
+);
+ALTER TABLE posts ADD COLUMN group_id TEXT REFERENCES groups(id) ON DELETE SET NULL;
+ALTER TABLE posts ADD COLUMN group_hidden INTEGER;  -- unix ms when a group admin or moderator hid it in the group
+ALTER TABLE posts ADD COLUMN credit TEXT;          -- a credited author shown instead of the uploader, NULL for none
+CREATE INDEX IF NOT EXISTS posts_group ON posts(group_id) WHERE group_id IS NOT NULL;
+""",
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 # Created by Store.fill_display_names once every account has a display name (migration 6).
@@ -1088,9 +1294,25 @@ SELECT p.*, u.name AS author_name, u.display_name AS author_display, u.avatar_ve
     1 + (SELECT COUNT(*) FROM post_versions pv WHERE pv.post_id = p.id) AS version_count,
     p.size + (SELECT COALESCE(SUM(pv.size), 0) FROM post_versions pv WHERE pv.post_id = p.id) AS total_bytes,
     (SELECT COUNT(*) FROM favorites fv WHERE fv.post_id = p.id) AS favorites,
-    (SELECT COUNT(*) FROM post_saves ps WHERE ps.post_id = p.id) AS saves
-FROM posts p JOIN users u ON u.uuid = p.uuid
+    (SELECT COUNT(*) FROM post_saves ps WHERE ps.post_id = p.id) AS saves,
+    g.slug AS group_slug, g.name AS group_name, g.visibility AS group_vis, g.post_visibility AS group_post_vis
 """
+POST_FROM = "FROM posts p JOIN users u ON u.uuid = p.uuid LEFT JOIN groups g ON g.id = p.group_id"
+POST_SELECT += POST_FROM + "\n"
+# A post (alias p) that is not in a members-only group: the only kind the board, profiles, search and counts list.
+NOT_GROUP_ONLY_SQL = "NOT EXISTS (SELECT 1 FROM groups gx WHERE gx.id = p.group_id AND gx.post_visibility = 'group')"
+# The group tab of list_posts: which of a group's posts (alias p, group g) the viewer is listed. Group posts follow
+# can_view; besides, unlisted ones are listed to members only. :member, :manager and :admin are the viewer's standing.
+GROUP_LISTED_SQL = """(p.uuid = :viewer OR :admin OR CASE WHEN g.post_visibility = 'group' THEN :member
+    ELSE p.visibility = 'public' OR (p.visibility = 'unlisted' AND :member)
+        OR (p.visibility = 'private' AND (EXISTS (SELECT 1 FROM post_access a WHERE a.post_id = p.id AND a.uuid = :viewer)
+            OR (g.visibility = 'private' AND :member))) END)"""
+GROUP_SELECT = """
+SELECT g.*, u.name AS owner_name, u.display_name AS owner_display,
+    (SELECT COUNT(*) FROM group_members m WHERE m.group_id = g.id) AS member_count,
+    (SELECT COUNT(*) FROM posts p WHERE p.group_id = g.id AND p.hidden IS NULL AND p.group_hidden IS NULL) AS build_count
+"""
+GROUP_FROM = "FROM groups g LEFT JOIN users u ON u.uuid = g.owner"
 # Bytes of an account's board snapshots, every version: the quota counts them all.
 POST_BYTES_SQL = (
     "((SELECT COALESCE(SUM(size),0) FROM posts WHERE uuid={owner})"
@@ -1874,9 +2096,10 @@ class Store:
         """The Minecraft versions public posts are (or were) for, newest first: the board's filter."""
         with self.lock:
             rows = self.db.execute(
-                """SELECT mc_version AS mc FROM posts WHERE visibility='public' AND hidden IS NULL AND mc_version IS NOT NULL
+                f"""SELECT mc_version AS mc FROM posts p WHERE visibility='public' AND hidden IS NULL AND mc_version IS NOT NULL
+                   AND {NOT_GROUP_ONLY_SQL}
                    UNION SELECT v.mc_version FROM post_versions v JOIN posts p ON p.id = v.post_id
-                   WHERE p.visibility='public' AND p.hidden IS NULL AND v.mc_version IS NOT NULL"""
+                   WHERE p.visibility='public' AND p.hidden IS NULL AND v.mc_version IS NOT NULL AND {NOT_GROUP_ONLY_SQL}"""
             ).fetchall()
         return sorted((r["mc"] for r in rows), key=mc_version_key, reverse=True)
 
@@ -1921,12 +2144,12 @@ class Store:
         return {r["post_id"] for r in rows}
 
     def list_favorites(self, uuid: str) -> list[PostRow]:
-        """The posts uuid favourited, most recently favourited first. A post that has become private or hidden
-        (unless it is the caller's own) is left out; a deleted one is gone with its favourites."""
+        """The posts uuid favourited, most recently favourited first. A post that has become private, members only
+        in a group, or hidden (unless it is the caller's own) is left out; a deleted one is gone with its favourites."""
         with self.lock:
             rows = self.db.execute(
-                POST_SELECT + """ JOIN favorites fv ON fv.post_id = p.id AND fv.uuid = :u
-                   WHERE p.uuid = :u OR (p.visibility != 'private' AND p.hidden IS NULL)
+                POST_SELECT + f""" JOIN favorites fv ON fv.post_id = p.id AND fv.uuid = :u
+                   WHERE p.uuid = :u OR (p.visibility != 'private' AND p.hidden IS NULL AND {NOT_GROUP_ONLY_SQL})
                    ORDER BY fv.created DESC, p.id""", {"u": uuid},
             ).fetchall()
         return self.attach_coauthors([PostRow.from_row(r) for r in rows])
@@ -1936,6 +2159,169 @@ class Store:
         with self.lock:
             rows = self.db.execute(POST_SELECT + " WHERE p.uuid=? ORDER BY p.created DESC, p.id", (uuid,)).fetchall()
         return self.attach_coauthors([PostRow.from_row(r) for r in rows])
+
+    # ---- groups: members (admin, moderator, member), join requests and bans
+
+    def new_group_id(self) -> str:
+        with self.lock:
+            while True:
+                group_id = secrets.token_urlsafe(8)[:POST_ID_LEN]
+                if GROUP_ID_RE.match(group_id) and self.get_group(group_id) is None:
+                    return group_id
+
+    def get_group(self, group_id: str) -> GroupRow | None:
+        with self.lock:
+            r = self.db.execute(GROUP_SELECT + GROUP_FROM + " WHERE g.id=?", (group_id,)).fetchone()
+        return GroupRow.from_row(r) if r else None
+
+    def group_by_slug(self, slug: str) -> GroupRow | None:
+        with self.lock:
+            r = self.db.execute(GROUP_SELECT + GROUP_FROM + " WHERE g.slug=?", (slug,)).fetchone()
+        return GroupRow.from_row(r) if r else None
+
+    def free_slug(self, name: str) -> str:
+        """A slug for a new group called name that no group has: its slugify(), else with -2, -3... after it."""
+        stem = slugify(name)
+        with self.lock:
+            for n in range(1, 10000):
+                slug = stem if n == 1 else f"{stem[:MAX_SLUG_LEN - len(str(n)) - 1].rstrip('-')}-{n}"
+                if self.group_by_slug(slug) is None:
+                    return slug
+        raise ApiError(409, "too many groups have that name")
+
+    def insert_group(self, values: dict[str, Any], owner_name: str) -> None:
+        """A new group with its owner as its first admin."""
+        cols = ", ".join(values)
+        marks = ", ".join(":" + k for k in values)
+        with self.transaction():
+            self.db.execute(f"INSERT INTO groups({cols}) VALUES({marks})", values)
+            self.db.execute("INSERT INTO group_members(group_id, uuid, name, role, joined) VALUES(?,?,?,'admin',?)",
+                            (values["id"], values["owner"], owner_name, values["created"]))
+
+    def update_group(self, group_id: str, values: dict[str, Any]) -> None:
+        """Change settings. A group made members only also makes its posts private: they stay private if it opens up
+        again, or if it is deleted, so nothing it hid becomes visible on its own."""
+        with self.transaction():
+            if values.get("post_visibility") == "group":
+                self.db.execute("UPDATE posts SET visibility='private' WHERE group_id=?", (group_id,))
+            sets = ", ".join(f"{k}=:{k}" for k in values)
+            self.db.execute(f"UPDATE groups SET {sets}, updated=:now WHERE id=:id",
+                            {**values, "now": int(time.time() * 1000), "id": group_id})
+
+    def delete_group(self, group_id: str) -> int:
+        """Delete a group (members, requests and bans go with it). Its posts stay, outside any group. How many there were."""
+        with self.transaction():
+            n = self.db.execute("UPDATE posts SET group_id=NULL, group_hidden=NULL WHERE group_id=?", (group_id,)).rowcount
+            self.db.execute("DELETE FROM groups WHERE id=?", (group_id,))
+        return n
+
+    def public_groups(self) -> list[GroupRow]:
+        """The groups directory: public groups, the most members first."""
+        with self.lock:
+            rows = self.db.execute(
+                GROUP_SELECT + GROUP_FROM + " WHERE g.visibility='public' ORDER BY member_count DESC, g.name COLLATE NOCASE, g.id"
+            ).fetchall()
+        return [GroupRow.from_row(r) for r in rows]
+
+    def groups_of(self, uuid: str) -> list[GroupRow]:
+        """The groups uuid is a member of, by name, each with their role."""
+        with self.lock:
+            rows = self.db.execute(
+                GROUP_SELECT + ", gm.role AS my_role " + GROUP_FROM
+                + " JOIN group_members gm ON gm.group_id = g.id AND gm.uuid = ? ORDER BY g.name COLLATE NOCASE, g.id", (uuid,),
+            ).fetchall()
+        return [GroupRow.from_row(r) for r in rows]
+
+    def owned_groups(self, uuid: str) -> int:
+        with self.lock:
+            (n,) = self.db.execute("SELECT COUNT(*) FROM groups WHERE owner=?", (uuid,)).fetchone()
+        return int(n)
+
+    def group_member(self, group_id: str, uuid: str) -> sqlite3.Row | None:
+        with self.lock:
+            return self.db.execute("SELECT * FROM group_members WHERE group_id=? AND uuid=?", (group_id, uuid)).fetchone()
+
+    def group_members(self, group_id: str) -> list[sqlite3.Row]:
+        """Members, admins first, then moderators, then by when they joined; with their account's current names."""
+        with self.lock:
+            return self.db.execute(
+                """SELECT m.*, COALESCE(u.name, m.name) AS mc_name, COALESCE(u.display_name, u.name, m.name) AS shown,
+                       u.avatar_version, u.uuid IS NOT NULL AS has_account
+                   FROM group_members m LEFT JOIN users u ON u.uuid = m.uuid WHERE m.group_id=?
+                   ORDER BY CASE m.role WHEN 'admin' THEN 0 WHEN 'moderator' THEN 1 ELSE 2 END, m.joined, m.uuid""",
+                (group_id,),
+            ).fetchall()
+
+    def add_member(self, group_id: str, uuid: str, name: str, role: str = "member") -> bool:
+        """Add uuid (their join request, if any, is done with). False if they were a member already."""
+        with self.lock:
+            self.db.execute("DELETE FROM group_requests WHERE group_id=? AND uuid=?", (group_id, uuid))
+            return self.db.execute(
+                "INSERT OR IGNORE INTO group_members(group_id, uuid, name, role, joined) VALUES(?,?,?,?,?)",
+                (group_id, uuid, name, role, int(time.time() * 1000)),
+            ).rowcount == 1
+
+    def remove_member(self, group_id: str, uuid: str) -> bool:
+        with self.lock:
+            return self.db.execute("DELETE FROM group_members WHERE group_id=? AND uuid=?", (group_id, uuid)).rowcount == 1
+
+    def set_member(self, group_id: str, uuid: str, values: dict[str, Any]) -> None:
+        """Change a member's role and/or own permissions (perms: a JSON object, or None for the group's defaults)."""
+        sets = ", ".join(f"{k}=:{k}" for k in values)
+        with self.lock:
+            self.db.execute(f"UPDATE group_members SET {sets} WHERE group_id=:g AND uuid=:u", {**values, "g": group_id, "u": uuid})
+
+    def transfer_group(self, group_id: str, uuid: str) -> None:
+        """Make the member uuid the owner (and an admin). The old owner stays an admin."""
+        with self.transaction():
+            self.db.execute("UPDATE group_members SET role='admin' WHERE group_id=? AND uuid=?", (group_id, uuid))
+            self.db.execute("UPDATE groups SET owner=?, updated=? WHERE id=?", (uuid, int(time.time() * 1000), group_id))
+
+    def group_request(self, group_id: str, uuid: str) -> sqlite3.Row | None:
+        with self.lock:
+            return self.db.execute("SELECT * FROM group_requests WHERE group_id=? AND uuid=?", (group_id, uuid)).fetchone()
+
+    def add_group_request(self, group_id: str, uuid: str, message: str) -> None:
+        with self.lock:
+            self.db.execute("INSERT INTO group_requests(group_id, uuid, message, created) VALUES(?,?,?,?)",
+                            (group_id, uuid, message, int(time.time() * 1000)))
+
+    def delete_group_request(self, group_id: str, uuid: str) -> bool:
+        with self.lock:
+            return self.db.execute("DELETE FROM group_requests WHERE group_id=? AND uuid=?", (group_id, uuid)).rowcount == 1
+
+    def group_requests(self, group_id: str) -> list[sqlite3.Row]:
+        """Pending join requests, oldest first, with the asker's names."""
+        with self.lock:
+            return self.db.execute(
+                """SELECT r.*, u.name AS mc_name, COALESCE(u.display_name, u.name) AS shown, u.avatar_version
+                   FROM group_requests r JOIN users u ON u.uuid = r.uuid WHERE r.group_id=? ORDER BY r.created, r.uuid""",
+                (group_id,),
+            ).fetchall()
+
+    def group_ban(self, group_id: str, uuid: str) -> sqlite3.Row | None:
+        with self.lock:
+            return self.db.execute("SELECT * FROM group_bans WHERE group_id=? AND uuid=?", (group_id, uuid)).fetchone()
+
+    def ban_from_group(self, group_id: str, uuid: str, name: str, by: str) -> None:
+        """Ban uuid: they stop being a member, their join request goes, and they can't join or be added again."""
+        with self.transaction():
+            self.db.execute("DELETE FROM group_members WHERE group_id=? AND uuid=?", (group_id, uuid))
+            self.db.execute("DELETE FROM group_requests WHERE group_id=? AND uuid=?", (group_id, uuid))
+            self.db.execute("INSERT OR REPLACE INTO group_bans(group_id, uuid, name, banned_by, created) VALUES(?,?,?,?,?)",
+                            (group_id, uuid, name, by, int(time.time() * 1000)))
+
+    def unban_from_group(self, group_id: str, uuid: str) -> bool:
+        with self.lock:
+            return self.db.execute("DELETE FROM group_bans WHERE group_id=? AND uuid=?", (group_id, uuid)).rowcount == 1
+
+    def group_bans(self, group_id: str) -> list[sqlite3.Row]:
+        with self.lock:
+            return self.db.execute(
+                """SELECT b.*, COALESCE(u.name, b.name) AS mc_name, COALESCE(u.display_name, u.name, b.name) AS shown
+                   FROM group_bans b LEFT JOIN users u ON u.uuid = b.uuid WHERE b.group_id=? ORDER BY b.created DESC, b.uuid""",
+                (group_id,),
+            ).fetchall()
 
     # ---- the site's storage: everything under the data directory together
 
@@ -2185,32 +2571,44 @@ class Store:
     def list_posts(
         self, tab: str, viewer: str | None, sort: str, query: str, page: int, page_size: int,
         tags: list[str] = (), size: str | None = None, complexity: str | None = None, mc: str | None = None,
-        author: str | None = None,
+        author: str | None = None, group: Standing | None = None,
     ) -> tuple[list[PostRow], int]:
         """One page of a board tab and the total number of matching posts.
         'public' lists public posts only; 'shared' private posts whose access list has viewer;
-        'mine' every post by viewer. Posts an admin hid are only listed in 'mine'. Every tag in tags must be on the post;
-        size is a size class, complexity a complexity class; mc a Minecraft version any version of the post is for;
-        author a uuid that owns the post or is a co-author of it."""
+        'mine' every post by viewer; 'group' the posts in group (viewer's standing there) that viewer may see, minus
+        those the group hid (but for its admins and moderators). Posts in a members-only group are never in 'public' or
+        'shared'. Posts an admin hid are only listed in 'mine' (and to their author in 'group'). Every tag in tags must
+        be on the post; size is a size class, complexity a complexity class; mc a Minecraft version any version of the
+        post is for; author a uuid that owns the post or is a co-author of it."""
         params: dict[str, Any] = {"viewer": viewer, "now": int(time.time() * 1000)}
         if tab == "public":
-            where = ["p.visibility = 'public'", "p.hidden IS NULL"]
+            where = ["p.visibility = 'public'", "p.hidden IS NULL", NOT_GROUP_ONLY_SQL]
         elif tab == "shared":
             where = [
                 "p.visibility = 'private'",
                 "p.hidden IS NULL",
                 "p.uuid != :viewer",
                 "EXISTS (SELECT 1 FROM post_access a WHERE a.post_id = p.id AND a.uuid = :viewer)",
+                NOT_GROUP_ONLY_SQL,  # an access list doesn't open those
             ]
         elif tab == "mine":
             where = ["p.uuid = :viewer"]
+        elif tab == "group" and group is not None:
+            params.update(group=group.group.id, member=int(group.member), manager=int(group.manager),
+                          admin=int(group.site_admin))
+            where = [
+                "p.group_id = :group",
+                "(p.hidden IS NULL OR p.uuid = :viewer)",
+                "(p.group_hidden IS NULL OR p.uuid = :viewer OR :manager)",
+                GROUP_LISTED_SQL,
+            ]
         else:
             raise ValueError(tab)
         for i, term in enumerate(query.casefold().split()[:10]):
             params[f"t{i}"] = term
             where.append(
                 f"instr(slop_fold(p.title || char(10) || p.description || char(10) || u.name || char(10)"
-                f" || COALESCE(u.display_name, '') || char(10) || COALESCE((SELECT group_concat(COALESCE(cu.display_name, a.name),"
+                f" || COALESCE(u.display_name, '') || char(10) || COALESCE(p.credit, '') || char(10) || COALESCE((SELECT group_concat(COALESCE(cu.display_name, a.name),"
                 f" char(10)) FROM post_authors a LEFT JOIN users cu ON cu.uuid = a.uuid WHERE a.post_id = p.id), '')), :t{i}) > 0"
             )
         for i, tag in enumerate(tags):
@@ -2230,9 +2628,7 @@ class Store:
             where.append("(p.uuid = :author OR EXISTS (SELECT 1 FROM post_authors a WHERE a.post_id = p.id AND a.uuid = :author))")
         clause = " WHERE " + " AND ".join(where)
         with self.lock:
-            (total,) = self.db.execute(
-                "SELECT COUNT(*) FROM posts p JOIN users u ON u.uuid = p.uuid" + clause, params
-            ).fetchone()
+            (total,) = self.db.execute(f"SELECT COUNT(*) {POST_FROM}" + clause, params).fetchone()
             rows = self.db.execute(
                 POST_SELECT + clause + f" ORDER BY {BOARD_ORDER[sort]} LIMIT :limit OFFSET :offset",
                 {**params, "limit": page_size, "offset": (page - 1) * page_size},
@@ -2439,7 +2835,7 @@ class Store:
         list), and when the account was made (its first login), in unix s."""
         with self.lock:
             (count,) = self.db.execute(
-                """SELECT COUNT(*) FROM posts p WHERE p.visibility = 'public' AND p.hidden IS NULL
+                f"""SELECT COUNT(*) FROM posts p WHERE p.visibility = 'public' AND p.hidden IS NULL AND {NOT_GROUP_ONLY_SQL}
                    AND (p.uuid = :u OR EXISTS (SELECT 1 FROM post_authors a WHERE a.post_id = p.id AND a.uuid = :u))""",
                 {"u": uuid},
             ).fetchone()
@@ -2982,6 +3378,8 @@ class PostIn(BaseModel):
     links: Any = None  # [http(s) URL]
     versionLabel: Any = None
     mc: Any = None  # the Minecraft version the build is for
+    group: Any = None  # a group's id to post it in
+    credit: Any = None  # a credited author shown instead of the uploader
 
 
 class PostPatchIn(BaseModel):
@@ -2994,6 +3392,8 @@ class PostPatchIn(BaseModel):
     links: Any = None
     versionLabel: Any = None  # of the current version
     mc: Any = None
+    group: Any = None  # a group's id, or null to take it out of its group
+    credit: Any = None
 
 
 class VersionIn(BaseModel):
@@ -3073,6 +3473,31 @@ class UserPatchIn(BaseModel):
 class HideIn(BaseModel):
     hidden: Any = None
     reason: Any = None
+
+
+class GroupIn(BaseModel):
+    """A new group, or (PATCH) the settings to change."""
+    name: Any = None
+    description: Any = None
+    slug: Any = None  # PATCH only; a new group's slug comes from its name
+    visibility: Any = None
+    joinPolicy: Any = None
+    postPolicy: Any = None
+    postVisibility: Any = None
+    memberPerms: Any = None  # {"post", "invite", "download": true | false}, plain members' defaults
+
+
+class MemberPatchIn(BaseModel):
+    role: Any = None
+    perms: Any = None  # this member's own permissions over the group's defaults; null: none
+
+
+class JoinRequestIn(BaseModel):
+    message: Any = None
+
+
+class GroupPostIn(BaseModel):
+    post: Any = None  # a post id
 
 
 def parse_multipart(body: bytes, content_type: str) -> tuple[dict[str, str], dict[str, tuple[str, bytes]]]:
@@ -3737,11 +4162,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def can_view(post: PostRow, user: User | None) -> bool:
         if post.hidden is not None and not (user and (user.uuid == post.uuid or user.is_admin)):
             return False  # hidden by an admin: the author and admins only, whatever the visibility
+        if user is not None and (user.uuid == post.uuid or user.is_admin):
+            return True
+        if post.group_only:  # whatever its own visibility (and access list): the group's members
+            return group_grants(post, user)
         if post.visibility != "private":
             return True
         if user is None:
             return False
-        return user.uuid == post.uuid or user.is_admin or store.is_allowed(post.id, user.uuid)
+        # members of a private group also see the private posts in it
+        return store.is_allowed(post.id, user.uuid) or (post.group_vis == "private" and group_grants(post, user))
+
+    def group_grants(post: PostRow, user: User | None) -> bool:
+        """Whether user sees post through its group: as a member, or as one of its admins and moderators if the
+        group hid the post."""
+        if user is None or post.group_id is None:
+            return False
+        row = store.group_member(post.group_id, user.uuid)
+        return row is not None and (post.group_hidden is None or row["role"] in MANAGER_ROLES)
+
+    def require_download(post: PostRow, user: User | None) -> None:
+        """403 for a plain member who only sees the post through its group, when the group doesn't let them download
+        its builds. Call after can_view."""
+        if user is None or user.uuid == post.uuid or user.is_admin or post.group_id is None:
+            return
+        if not post.group_only and (post.visibility != "private" or store.is_allowed(post.id, user.uuid)):
+            return  # open to them without the group
+        group = store.get_group(post.group_id)
+        if group is not None and not standing(group, user).may("download"):
+            raise ApiError(403, f"members of {group.name} can't download its builds", code="no_download")
 
     def find_post(post_id: str, user: User | None) -> PostRow:
         """The post if user may see it. Otherwise 404, whether or not it exists."""
@@ -3995,6 +4444,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "shareUrl": f"{settings.site_url}/b/{post.id}",
             "favorites": post.favorites,
             "favorited": (post.id in favs) if viewer is not None and favs is not None else None,
+            "credit": post.credit,  # shown instead of the author ("by <credit> · uploaded by <author>")
+            "group": post_group_api(post, viewer),
         }
         if detail:
             out["description"] = post.description
@@ -4004,6 +4455,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 out["hiddenReason"] = post.hidden_reason if post.hidden is not None else None
                 out["allowed"] = [{"uuid": u, "name": n} for u, n in store.get_allowed(post.id)]
         return out
+
+    def post_group_api(post: PostRow, viewer: User | None) -> dict[str, Any] | None:
+        """The group a post is in, unless the group is private and viewer isn't in it."""
+        if post.group_id is None:
+            return None
+        if post.group_vis == "private" and not (viewer and (viewer.is_admin or store.group_member(post.group_id, viewer.uuid))):
+            return None
+        return {"id": post.group_id, "slug": post.group_slug, "name": post.group_name, "postVisibility": post.group_post_vis,
+                "hidden": post.group_hidden is not None, "url": f"{settings.site_url}/g/{post.group_slug}"}
+
+    def clean_credit(user: User, value: Any) -> str | None:
+        """A credited author (free text on one line, e.g. Mojang for a vanilla structure), None for none."""
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        if not isinstance(value, str):
+            raise ApiError(400, "credit must be text")
+        text = " ".join(value.split())
+        if len(text) > MAX_CREDIT_LEN or TITLE_BAD_CHARS.search(text):
+            raise ApiError(400, f"credit must be at most {MAX_CREDIT_LEN} characters on one line")
+        return filtered(user, text, "credit")
+
+    def posting_group(user: User, value: Any) -> GroupRow:
+        """The group (by id) user puts a post in: 404 if they can't see it, 403 if they may not post there."""
+        group = store.get_group(value) if isinstance(value, str) and GROUP_ID_RE.match(value) else None
+        st = standing(group, user) if group is not None else None
+        if group is None or st is None or not st.can_see:
+            raise ApiError(404, "no such group")
+        if not st.can_post:
+            raise ApiError(403, f"you can't post in {group.name}", code="group_post")
+        return group
 
     def clean_tags(value: Any) -> list[str]:
         if not isinstance(value, list) or not all(isinstance(t, str) for t in value):
@@ -4168,6 +4649,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         coauthors = clean_coauthors(user, body.coauthors)
         links = clean_links(user, body.links)
         label, mc = clean_version_label(user, body.versionLabel), clean_mc(body.mc)
+        credit = clean_credit(user, body.credit)
+        group = posting_group(user, body.group) if body.group is not None else None
+        if group is not None and group.post_visibility == "group":
+            visibility = "private"  # members only whatever it says; stays private should it leave the group
         limit = settings.max_posts_per_user
         if store.post_usage(user.uuid)[0] >= limit:
             raise ApiError(409, f"you already have {limit} posts on the board, which is the limit")
@@ -4189,6 +4674,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "id": post_id, "uuid": user.uuid, "title": title, "description": description,
                         "visibility": visibility, "source_path": path, "created": int(time.time() * 1000),
                         "links": json.dumps(links), "version_label": label, "mc_version": mc,
+                        "credit": credit, "group_id": group.id if group else None,
                         **snapshot_columns(snap),
                     }, allowed, tags, coauthors)
                 except BaseException:
@@ -4209,8 +4695,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.patch("/api/board/{post_id}")
     def board_patch(post_id: str, request: Request, body: PostPatchIn) -> dict[str, Any]:
-        post, user = acting_on_post(request, post_id, owner_only=True)
+        """The author changes anything. A group's admins and moderators may change the title, description, tags and
+        credit of a post in their group, or take it out of the group (group: null)."""
+        post, user = acting_on_post(request, post_id, owner_only=False)
         given = body.model_fields_set
+        if post.uuid != user.uuid:
+            group = store.get_group(post.group_id) if post.group_id else None
+            if group is None or not standing(group, user).manager:
+                raise ApiError(403, "only the author can do that")
+            if given - {"title", "description", "tags", "credit", "group"} or ("group" in given and body.group not in (None, post.group_id)):
+                raise ApiError(403, "group admins and moderators can only change the title, description, tags and credit"
+                                    " of a post, or take it out of the group")
         values: dict[str, Any] = {}
         if "title" in given:
             values["title"] = filtered(user, clean_title(body.title), "title")
@@ -4224,6 +4719,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             values["version_label"] = clean_version_label(user, body.versionLabel)
         if "mc" in given:
             values["mc_version"] = clean_mc(body.mc)
+        if "credit" in given:
+            values["credit"] = clean_credit(user, body.credit)
+        if "group" in given and body.group != post.group_id:
+            values.update(group_values(posting_group(user, body.group) if body.group is not None else None))
+        elif post.group_only and "visibility" in values:
+            values["visibility"] = "private"  # members only in its group, whatever it says
         allowed = None
         if "allowed" in given:
             if body.allowed is None:
@@ -4399,6 +4900,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Add a snapshot to the caller's files as a reference: a hard link to the post's snapshot where the disk
         allows it (else a copy). It costs the caller nothing while it still matches one of the post's versions."""
         post, user = acting_on_post(request, post_id, owner_only=False)
+        require_download(post, user)
         ver, vdir = post_version(post, request)
         ext = "." + ver.format if ver.format else ver.filename[ver.filename.rfind("."):]
         stem = board_file_stem(post.title, ext)
@@ -4525,6 +5027,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/board/{post_id}/file")
     def board_file(post_id: str, request: Request) -> FileResponse:
         post, user = visible_post(request, post_id)
+        require_download(post, user)
         ver, vdir = post_version(post, request)
         disk = store._under(vdir, ver.filename)
         if not disk.is_file():
@@ -4549,6 +5052,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/board/{post_id}/export")
     def board_export(post_id: str, request: Request) -> FileResponse:
         post, user = visible_post(request, post_id)
+        require_download(post, user)
         ver, vdir = post_version(post, request)
         fmt = export_format(request)
         disk = store._under(vdir, ver.filename)
@@ -4623,6 +5127,467 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not POST_ID_RE.match(post_id):
             return not_found_page(request)
         return RedirectResponse(f"{base}/board/{post_id}", status_code=302)
+
+    # ---- groups: players sharing builds. Admins (the owner is always one) run it, moderators look after members and
+    # listings, members do what the group's permissions (or their own) allow. Site admins act as a group's admins.
+
+    def standing(group: GroupRow, user: User | None) -> Standing:
+        if user is None:
+            return Standing(group, None)
+        row = store.group_member(group.id, user.uuid)
+        if row is not None:
+            return Standing(group, user.uuid, row["role"], parse_perms(row["perms"]) if row["perms"] else None,
+                            site_admin=user.is_admin)
+        return Standing(group, user.uuid, site_admin=user.is_admin,
+                        banned=store.group_ban(group.id, user.uuid) is not None,
+                        requested=store.group_request(group.id, user.uuid) is not None)
+
+    def find_group(group_id: str, user: User | None) -> tuple[GroupRow, Standing]:
+        """The group and user's standing in it. 404 if there is none, or it is private and user isn't in it."""
+        group = store.get_group(group_id) if GROUP_ID_RE.match(group_id) else None
+        st = standing(group, user) if group is not None else None
+        if group is None or st is None or not st.can_see:
+            raise ApiError(404, "no such group")
+        return group, st
+
+    def acting_on_group(request: Request, group_id: str) -> tuple[GroupRow, Standing, User]:
+        """For changes: 401/403 for auth, CSRF and access, then 404 if the caller can't see the group."""
+        user = member_auth(request, mutating=True)
+        group, st = find_group(group_id, user)
+        return group, st, user
+
+    def require_manager(st: Standing) -> None:
+        if not st.manager:
+            raise ApiError(403, "only the group's admins and moderators can do that")
+
+    def require_group_admin(st: Standing) -> None:
+        if not st.admin:
+            raise ApiError(403, "only the group's admins can do that")
+
+    def check_over(group: GroupRow, st: Standing, uuid: str, role: str | None, done: str) -> None:
+        """403 unless st may remove or ban the player uuid (role: theirs in the group, None if not a member): the owner
+        never; admins and moderators only by admins; plain members (and outsiders) by moderators too."""
+        require_manager(st)
+        if uuid == group.owner:
+            raise ApiError(403, f"the owner can't be {done}; transfer ownership first", code="owner")
+        if role in MANAGER_ROLES and not st.admin:
+            raise ApiError(403, "only the group's admins can act on its admins and moderators")
+
+    def group_values(group: GroupRow | None) -> dict[str, Any]:
+        """The post columns for putting a post in group (None: out of its group). In a members-only group a post is
+        private, so it stays private if it ever leaves the group."""
+        values: dict[str, Any] = {"group_id": group.id if group else None, "group_hidden": None}
+        if group is not None and group.post_visibility == "group":
+            values["visibility"] = "private"
+        return values
+
+    def group_api(group: GroupRow, st: Standing | None = None, role: str | None = None) -> dict[str, Any]:
+        """A group for the API. With st (the caller's standing), what the caller may do there."""
+        out: dict[str, Any] = {
+            "id": group.id, "slug": group.slug, "name": group.name, "description": group.description,
+            "visibility": group.visibility, "joinPolicy": group.join_policy, "postPolicy": group.post_policy,
+            "postVisibility": group.post_visibility, "memberPerms": group.perms,
+            "owner": {"uuid": group.owner, "name": group.owner_name, "displayName": group.owner_shown},
+            "members": group.members, "builds": group.builds, "created": group.created, "updated": group.updated,
+            "url": f"{settings.site_url}/g/{group.slug}", "role": st.role if st is not None else role,
+        }
+        if st is not None and st.uuid is not None:
+            out.update(canPost=st.can_post, perms=st.perms if st.member else None, requested=st.requested, banned=st.banned)
+        return out
+
+    def member_api(group: GroupRow, r: sqlite3.Row) -> dict[str, Any]:
+        override = parse_perms(r["perms"]) if r["perms"] else None
+        return {
+            "uuid": r["uuid"], "name": r["mc_name"], "displayName": r["shown"], "role": r["role"],
+            "owner": r["uuid"] == group.owner, "joined": r["joined"], "hasAccount": bool(r["has_account"]),
+            "perms": override, "effective": Standing(group, r["uuid"], r["role"], override).perms,
+        }
+
+    def members_api(group: GroupRow, st: Standing) -> dict[str, Any]:
+        """The member list; for the group's admins and moderators also the join requests and bans."""
+        out: dict[str, Any] = {"members": [member_api(group, r) for r in store.group_members(group.id)]}
+        if st.manager:
+            out["requests"] = [{"uuid": r["uuid"], "name": r["mc_name"], "displayName": r["shown"], "message": r["message"],
+                                "created": r["created"]} for r in store.group_requests(group.id)]
+            out["bans"] = [{"uuid": r["uuid"], "name": r["mc_name"], "displayName": r["shown"], "created": r["created"]}
+                           for r in store.group_bans(group.id)]
+        return out
+
+    def clean_choice(value: Any, choices: Any, what: str) -> str:
+        if value not in choices:
+            raise ApiError(400, f"{what} must be one of " + ", ".join(choices))
+        return value
+
+    def clean_perms(value: Any, what: str) -> dict[str, bool]:
+        """{"post" | "invite" | "download": true | false}, any of them."""
+        if not isinstance(value, dict) or any(k not in MEMBER_PERMS or not isinstance(v, bool) for k, v in value.items()):
+            raise ApiError(400, f"{what} must be an object of " + ", ".join(MEMBER_PERMS) + " set to true or false")
+        return {k: value[k] for k in MEMBER_PERMS if k in value}
+
+    def clean_group_settings(user: User, body: GroupIn, given: set[str]) -> dict[str, Any]:
+        """The groups columns for the fields given (name and description are filtered)."""
+        values: dict[str, Any] = {}
+        if "name" in given:
+            name = clean_short(body.name, "name", MAX_GROUP_NAME_LEN)
+            if name is None:
+                raise ApiError(400, "name is required")
+            values["name"] = filtered(user, " ".join(name.split()), "name")
+        if "description" in given:
+            values["description"] = filtered(user, clean_long(body.description, "description", MAX_GROUP_DESCRIPTION_LEN,
+                                                              required=False), "description")
+        for key, column, choices in (("visibility", "visibility", GROUP_VISIBILITIES), ("joinPolicy", "join_policy", JOIN_POLICIES),
+                                     ("postPolicy", "post_policy", POST_POLICIES),
+                                     ("postVisibility", "post_visibility", POST_VISIBILITY_RULES)):
+            if key in given:
+                values[column] = clean_choice(getattr(body, key), choices, key)
+        if "memberPerms" in given:
+            values["member_perms"] = clean_perms(body.memberPerms, "memberPerms")
+        return values
+
+    def group_player(group: GroupRow, text: Any) -> tuple[str, str]:
+        """(uuid, Minecraft name) of a player named by uuid (an account here, or someone the group knows) or by name,
+        looked up through Mojang unless the group already knows them (members, requests, bans)."""
+        if not isinstance(text, str) or not text.strip():
+            raise ApiError(400, "give a Minecraft name")
+        known = [(r["uuid"], r["mc_name"]) for rows in (store.group_members(group.id), store.group_requests(group.id),
+                                                        store.group_bans(group.id)) for r in rows]
+        uuid = parse_uuid(text)
+        if uuid is not None:
+            account = store.get_user(uuid)
+            name = account.name if account else next((n for u, n in known if u == uuid), None)
+            if name is None:
+                raise ApiError(404, "no account with that uuid has logged in here")
+            return uuid, name
+        return resolve_names([text], known)[0]
+
+    def group_rate(user: User, kind: str, limit: int, what: str) -> None:
+        """Count one more action of kind for user (site admins aren't limited): 429 past limit per LOGIN_WINDOW."""
+        if user.is_admin:
+            return
+        key = f"group-{kind}:{user.uuid}"
+        with store.lock:
+            rate_limited(key, limit, what)
+            store.add_failure(key)
+
+    @app.get("/api/groups")
+    def groups_list(request: Request) -> dict[str, Any]:
+        """Public groups (most members first), then the caller's other groups; role is the caller's in each."""
+        user = optional_user(request)
+        mine = {g.id: g for g in store.groups_of(user.uuid)} if user else {}
+        out = [group_api(g, role=mine[g.id].role if g.id in mine else None) for g in store.public_groups()]
+        out += [group_api(g, role=g.role) for g in mine.values() if g.visibility != "public"]
+        return {"groups": out}
+
+    @app.post("/api/groups")
+    def group_create(request: Request, body: GroupIn) -> JSONResponse:
+        user = member_auth(request, mutating=True)
+        given = body.model_fields_set - {"slug"}
+        if "name" not in given:
+            raise ApiError(400, "name is required")
+        values = {"description": "", "visibility": "public", "join_policy": "open", "post_policy": "members",
+                  "post_visibility": "any", "member_perms": {}, **clean_group_settings(user, body, given)}
+        if not user.is_admin and store.owned_groups(user.uuid) >= GROUPS_PER_USER:
+            raise ApiError(409, f"you already own {GROUPS_PER_USER} groups, which is the limit")
+        group_rate(user, "create", GROUP_CREATE_LIMIT, "new groups")
+        now = int(time.time() * 1000)
+        with store.lock:
+            group_id = store.new_group_id()
+            store.insert_group({
+                "id": group_id, "slug": store.free_slug(values["name"]), "owner": user.uuid, "created": now, "updated": now,
+                **values, "member_perms": json.dumps(values["member_perms"]),
+            }, user.name)
+        group = store.get_group(group_id)
+        assert group is not None
+        log.info("%s made the group %s (%s)", user.name, group.id, group.name)
+        return JSONResponse(group_api(group, standing(group, user)), status_code=201)
+
+    @app.get("/api/groups/{group_id}")
+    def group_get(group_id: str, request: Request) -> dict[str, Any]:
+        user = optional_user(request)
+        group, st = find_group(group_id, user)
+        return group_api(group, st)
+
+    @app.patch("/api/groups/{group_id}")
+    def group_patch(group_id: str, request: Request, body: GroupIn) -> dict[str, Any]:
+        """Settings, for the group's admins. memberPerms changes only the permissions given."""
+        group, st, user = acting_on_group(request, group_id)
+        require_group_admin(st)
+        given = body.model_fields_set
+        values = clean_group_settings(user, body, given)
+        if "member_perms" in values:
+            values["member_perms"] = json.dumps({**group.member_perms, **values["member_perms"]})
+        if "slug" in given and body.slug != group.slug:
+            slug = body.slug.strip().lower() if isinstance(body.slug, str) else ""
+            if not SLUG_RE.match(slug):
+                raise ApiError(400, f"slug must be 1 to {MAX_SLUG_LEN} lowercase letters, digits and dashes,"
+                                    " starting and ending with a letter or digit")
+            values["slug"] = filtered(user, slug, "slug")
+        with store.lock:
+            if "slug" in values and store.group_by_slug(values["slug"]) is not None:
+                raise ApiError(409, "another group already has that address")
+            if values:
+                store.update_group(group.id, values)
+        group = store.get_group(group.id)  # type: ignore[assignment]
+        return group_api(group, standing(group, user))
+
+    @app.delete("/api/groups/{group_id}")
+    def group_delete(group_id: str, request: Request) -> Response:
+        """Delete the group (its admins). Its posts stay, outside any group; those that were members only stay private."""
+        group, st, user = acting_on_group(request, group_id)
+        require_group_admin(st)
+        released = store.delete_group(group.id)
+        log.info("%s deleted the group %s (%s); %d posts left it", user.name, group.id, group.name, released)
+        return Response(status_code=204)
+
+    @app.post("/api/groups/{group_id}/transfer")
+    def group_transfer(group_id: str, request: Request, body: PlayerIn) -> dict[str, Any]:
+        """Hand the group to another member (an account here), who becomes an admin and the owner. The owner or a site
+        admin only; the old owner stays an admin."""
+        group, st, user = acting_on_group(request, group_id)
+        if not (st.owner or st.site_admin):
+            raise ApiError(403, "only the owner can hand the group over")
+        text = body.player.strip() if isinstance(body.player, str) else ""
+        uuid = parse_uuid(text)
+        target = next((r for r in store.group_members(group.id)
+                       if r["uuid"] == uuid or (uuid is None and r["mc_name"].lower() == text.lower())), None)
+        if target is None:
+            raise ApiError(404, "hand the group to one of its members")
+        if target["uuid"] == group.owner:
+            raise ApiError(409, "they already own it")
+        if not target["has_account"]:
+            raise ApiError(409, f"{target['mc_name']} has to log in here once first")
+        store.transfer_group(group.id, target["uuid"])
+        log.info("%s handed the group %s to %s", user.name, group.id, target["mc_name"])
+        group = store.get_group(group.id)  # type: ignore[assignment]
+        return group_api(group, standing(group, user))
+
+    @app.get("/api/groups/{group_id}/posts")
+    def group_posts(group_id: str, request: Request) -> dict[str, Any]:
+        """The group's builds the caller may see: the same items, sorts, filters and paging as GET /api/board."""
+        _, sort, query, page = board_query(request.query_params, strict=True)
+        filters = board_filters(request.query_params, strict=True)
+        size = board_limit(request.query_params)
+        user = optional_user(request)
+        group, st = find_group(group_id, user)
+        posts, total = store.list_posts("group", user.uuid if user else None, sort, query, page, size, group=st, **filters)
+        favs = store.favorite_ids(user.uuid, [p.id for p in posts]) if user else None
+        return {
+            "posts": [post_api(p, user, favs=favs) for p in posts], "group": group.id,
+            "sort": sort, "q": query, **filters, "page": page, "pageSize": size, "total": total,
+            "pages": max(1, -(-total // size)),
+        }
+
+    @app.post("/api/groups/{group_id}/posts")
+    def group_add_post(group_id: str, request: Request, body: GroupPostIn) -> dict[str, Any]:
+        """Put one of the caller's posts in the group (out of the one it was in)."""
+        group, _, user = acting_on_group(request, group_id)
+        if not isinstance(body.post, str):
+            raise ApiError(400, "post is required")
+        post = find_post(body.post, user)
+        if post.uuid != user.uuid:
+            raise ApiError(403, "only the author can put a post in a group")
+        if post.group_id != group.id:
+            store.update_post(post.id, group_values(posting_group(user, group.id)))
+        return post_api(store.get_post(post.id), user, detail=True)  # type: ignore[arg-type]
+
+    def group_post(group: GroupRow, post_id: str) -> PostRow:
+        post = store.get_post(post_id) if POST_ID_RE.match(post_id) else None
+        if post is None or post.group_id != group.id:
+            raise ApiError(404, "no such post in this group")
+        return post
+
+    @app.delete("/api/groups/{group_id}/posts/{post_id}")
+    def group_remove_post(group_id: str, post_id: str, request: Request) -> Response:
+        """Take a post out of the group (its author, or the group's admins and moderators). The post itself stays."""
+        group, st, user = acting_on_group(request, group_id)
+        post = group_post(group, post_id)
+        if post.uuid != user.uuid:
+            require_manager(st)
+        store.update_post(post.id, group_values(None))
+        return Response(status_code=204)
+
+    @app.post("/api/groups/{group_id}/posts/{post_id}/hide")
+    def group_hide_post(group_id: str, post_id: str, request: Request, body: HideIn) -> dict[str, Any]:
+        """Hide a post in the group, or show it again (the group's admins and moderators): a hidden one isn't listed
+        there, and members who only saw it through the group no longer do."""
+        group, st, user = acting_on_group(request, group_id)
+        require_manager(st)
+        post = group_post(group, post_id)
+        if not isinstance(body.hidden, bool):
+            raise ApiError(400, "hidden must be true or false")
+        store.update_post(post.id, {"group_hidden": int(time.time() * 1000) if body.hidden else None})
+        log.info("%s %s post %s in the group %s", user.name, "hid" if body.hidden else "unhid", post.id, group.id)
+        return {"id": post.id, "hidden": body.hidden}
+
+    @app.post("/api/groups/{group_id}/join")
+    def group_join(group_id: str, request: Request) -> dict[str, Any]:
+        group, st, user = acting_on_group(request, group_id)
+        if st.member:
+            raise ApiError(409, "you are already a member")
+        if st.banned:
+            raise ApiError(403, "you can't join this group", code="banned")
+        if group.join_policy == "request":
+            raise ApiError(409, "this group takes requests to join; ask instead", code="request_required")
+        if group.join_policy == "invite":
+            raise ApiError(403, "this group is invite only", code="invite_only")
+        store.add_member(group.id, user.uuid, user.name)
+        group = store.get_group(group.id)  # type: ignore[assignment]
+        return group_api(group, standing(group, user))
+
+    @app.post("/api/groups/{group_id}/leave")
+    def group_leave(group_id: str, request: Request) -> Response:
+        group, st, user = acting_on_group(request, group_id)
+        if not st.member:
+            raise ApiError(409, "you are not a member")
+        if st.owner:
+            raise ApiError(409, "the owner can't leave; transfer ownership or delete the group", code="owner")
+        store.remove_member(group.id, user.uuid)
+        return Response(status_code=204)
+
+    @app.post("/api/groups/{group_id}/requests")
+    def group_request(group_id: str, request: Request, body: JoinRequestIn) -> JSONResponse:
+        """Ask to join a group whose join policy is request."""
+        group, st, user = acting_on_group(request, group_id)
+        if st.member:
+            raise ApiError(409, "you are already a member")
+        if st.banned:
+            raise ApiError(403, "you can't join this group", code="banned")
+        if group.join_policy == "open":
+            raise ApiError(409, "anyone can join this group; just join", code="open")
+        if group.join_policy == "invite":
+            raise ApiError(403, "this group is invite only", code="invite_only")
+        if st.requested:
+            raise ApiError(409, "you already asked; the group's admins and moderators will look at it")
+        message = filtered(user, clean_long(body.message, "message", MAX_JOIN_MESSAGE_LEN, required=False), "message") or ""
+        group_rate(user, "request", GROUP_REQUEST_LIMIT, "requests to join groups")
+        store.add_group_request(group.id, user.uuid, message)
+        return JSONResponse(group_api(group, standing(group, user)), status_code=201)
+
+    @app.delete("/api/groups/{group_id}/requests")
+    def group_request_withdraw(group_id: str, request: Request) -> Response:
+        group, _, user = acting_on_group(request, group_id)
+        if not store.delete_group_request(group.id, user.uuid):
+            raise ApiError(404, "you haven't asked to join")
+        return Response(status_code=204)
+
+    @app.get("/api/groups/{group_id}/requests")
+    def group_requests(group_id: str, request: Request) -> dict[str, Any]:
+        group, st = find_group(group_id, authenticate(request, mutating=False))
+        require_manager(st)
+        return {"requests": members_api(group, st)["requests"]}
+
+    def decide_request(group_id: str, uuid: str, request: Request, approve: bool) -> dict[str, Any]:
+        group, st, user = acting_on_group(request, group_id)
+        require_manager(st)
+        asker = parse_uuid(uuid)
+        row = next((r for r in store.group_requests(group.id) if r["uuid"] == asker), None)
+        if row is None:
+            raise ApiError(404, "no such request")
+        if approve:
+            store.add_member(group.id, row["uuid"], row["mc_name"])
+        else:
+            store.delete_group_request(group.id, row["uuid"])
+        log.info("%s %s the request of %s to join the group %s", user.name, "approved" if approve else "denied",
+                 row["mc_name"], group.id)
+        return members_api(group, st)
+
+    @app.post("/api/groups/{group_id}/requests/{uuid}/approve")
+    def group_request_approve(group_id: str, uuid: str, request: Request) -> dict[str, Any]:
+        return decide_request(group_id, uuid, request, approve=True)
+
+    @app.post("/api/groups/{group_id}/requests/{uuid}/deny")
+    def group_request_deny(group_id: str, uuid: str, request: Request) -> dict[str, Any]:
+        return decide_request(group_id, uuid, request, approve=False)
+
+    @app.get("/api/groups/{group_id}/members")
+    def group_members(group_id: str, request: Request) -> dict[str, Any]:
+        group, st = find_group(group_id, optional_user(request))
+        return members_api(group, st)
+
+    @app.post("/api/groups/{group_id}/members")
+    def group_member_add(group_id: str, request: Request, body: PlayerIn) -> JSONResponse:
+        """Add a player by Minecraft name (or uuid): the group's admins and moderators, or members allowed to invite.
+        They become a plain member straight away."""
+        group, st, user = acting_on_group(request, group_id)
+        if not st.may("invite"):
+            raise ApiError(403, "you can't add people to this group")
+        group_rate(user, "add", GROUP_ADD_LIMIT, "players added")
+        uuid, name = group_player(group, body.player)
+        if store.group_ban(group.id, uuid) is not None:
+            raise ApiError(409, f"{name} is banned from this group; lift the ban first", code="banned")
+        if not store.add_member(group.id, uuid, name):
+            raise ApiError(409, f"{name} is already a member")
+        log.info("%s added %s to the group %s", user.name, name, group.id)
+        return JSONResponse(members_api(group, st), status_code=201)
+
+    def group_member_row(group: GroupRow, uuid: str) -> sqlite3.Row:
+        dashed = parse_uuid(uuid)
+        row = store.group_member(group.id, dashed) if dashed else None
+        if row is None:
+            raise ApiError(404, "no such member")
+        return row
+
+    @app.patch("/api/groups/{group_id}/members/{uuid}")
+    def group_member_patch(group_id: str, uuid: str, request: Request, body: MemberPatchIn) -> dict[str, Any]:
+        """role (the group's admins), and perms: a plain member's own permissions over the group's defaults (admins
+        and moderators; null for none)."""
+        group, st, user = acting_on_group(request, group_id)
+        row = group_member_row(group, uuid)
+        given = body.model_fields_set
+        values: dict[str, Any] = {}
+        role = row["role"]
+        if "role" in given:
+            if not st.admin:
+                raise ApiError(403, "only the group's admins can change roles")
+            role = clean_choice(body.role, GROUP_ROLES, "role")
+            if row["uuid"] == group.owner and role != "admin":
+                raise ApiError(403, "the owner is always an admin; transfer ownership first", code="owner")
+            values["role"] = role
+        if "perms" in given:
+            require_manager(st)
+            if role != "member":
+                raise ApiError(409, "admins and moderators may do everything; permissions are for plain members")
+            perms = clean_perms(body.perms, "perms") if body.perms is not None else {}
+            values["perms"] = json.dumps(perms) if perms else None
+        if not values:
+            raise ApiError(400, "give role or perms")
+        store.set_member(group.id, row["uuid"], values)
+        return members_api(group, st)
+
+    @app.delete("/api/groups/{group_id}/members/{uuid}")
+    def group_member_remove(group_id: str, uuid: str, request: Request) -> dict[str, Any]:
+        group, st, user = acting_on_group(request, group_id)
+        row = group_member_row(group, uuid)
+        if row["uuid"] == user.uuid:
+            raise ApiError(400, "to leave the group, use leave")
+        check_over(group, st, row["uuid"], row["role"], "removed")
+        store.remove_member(group.id, row["uuid"])
+        log.info("%s removed %s from the group %s", user.name, row["name"], group.id)
+        return members_api(group, st)
+
+    @app.post("/api/groups/{group_id}/bans")
+    def group_ban(group_id: str, request: Request, body: PlayerIn) -> JSONResponse:
+        """Ban a player (member or not) by name or uuid: out of the group, their request gone, and no joining again."""
+        group, st, user = acting_on_group(request, group_id)
+        require_manager(st)
+        group_rate(user, "add", GROUP_ADD_LIMIT, "players added")
+        uuid, name = group_player(group, body.player)
+        if uuid == user.uuid:
+            raise ApiError(400, "you can't ban yourself")
+        row = store.group_member(group.id, uuid)
+        check_over(group, st, uuid, row["role"] if row else None, "banned")
+        store.ban_from_group(group.id, uuid, name, user.uuid)
+        log.info("%s banned %s from the group %s", user.name, name, group.id)
+        return JSONResponse(members_api(group, st), status_code=201)
+
+    @app.delete("/api/groups/{group_id}/bans/{uuid}")
+    def group_unban(group_id: str, uuid: str, request: Request) -> dict[str, Any]:
+        group, st, _ = acting_on_group(request, group_id)
+        require_manager(st)
+        dashed = parse_uuid(uuid)
+        if dashed is None or not store.unban_from_group(group.id, dashed):
+            raise ApiError(404, "no such ban")
+        return members_api(group, st)
 
     # ---- settings profiles: named sets of the mod's settings, per account
 
@@ -4805,7 +5770,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         post = store.get_post(source[6:]) if POST_ID_RE.match(source[6:]) else None
         if post is None:
             return "board:gone"
-        if post.hidden is not None or post.visibility == "private":
+        if post.hidden is not None or post.visibility == "private" or post.group_only:
             return "board:private"
         return "board:unlisted" if post.visibility == "unlisted" else source
 
@@ -4903,7 +5868,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         top_posts = []
         for pid, installs in sorted(posts.items(), key=lambda kv: (-len(kv[1]), kv[0])):
             post = store.get_post(pid)
-            if post is not None and post.visibility == "public" and post.hidden is None:  # still public now
+            if post is not None and post.visibility == "public" and post.hidden is None and not post.group_only:  # still public now
                 top_posts.append({"id": pid, "title": post.title, "installs": len(installs)})
             if len(top_posts) == 10:
                 break
@@ -6072,7 +7037,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             favorites=favorites,
             fav_count=len(favorites),
             folders=folders,
-            **post_form_ctx(),
+            **post_form_ctx(user),
             used=used,
             quota=quota,
             pct=f"{pct:.2f}",
@@ -6100,14 +7065,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             params.append(("page", page))
         return f"{base}/board" + ("?" + urllib.parse.urlencode(params) if params else "")
 
-    def post_form_ctx() -> dict[str, Any]:
+    def post_form_ctx(user: User | None) -> dict[str, Any]:
         """What the post form (_post_form.html) needs, on the files page and a post's page."""
         newest = store.list_releases()
         return {
             "visibilities": VISIBILITIES, "max_title": MAX_TITLE_LEN, "max_description": MAX_DESCRIPTION_LEN,
             "all_tags": TAGS, "max_coauthors": MAX_COAUTHORS, "max_author_name": MAX_AUTHOR_NAME_LEN,
             "max_links": MAX_LINKS, "max_link": MAX_LINK_LEN, "max_version_label": MAX_VERSION_LABEL_LEN,
+            "max_credit": MAX_CREDIT_LEN,
             "default_mc": newest[0].mc if newest else "",  # the newest release's Minecraft version
+            # the Group choice: groups user may post in
+            "post_groups": [g for g in store.groups_of(user.uuid) if standing(g, user).can_post] if user else [],
         }
 
     LISTING_COLUMNS = (
@@ -6242,6 +7210,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allowed = store.get_allowed(post.id) if user and (own or user.is_admin) else []
         ext = "." + ver.format if ver.format else ""
         versions = [VersionRow.of_post(post), *store.list_versions(post.id)]
+        form = post_form_ctx(user if own else None)
+        group = store.get_group(post.group_id) if post.group_id else None
+        group_st = standing(group, user) if group is not None else None
+        if own and group is not None and all(g.id != group.id for g in form["post_groups"]):
+            form["post_groups"].append(group)  # where it is now stays a choice, even if they can't post there any more
+        try:
+            require_download(post, user)
+            can_download = True
+        except ApiError:
+            can_download = False
         return render(
             "post.html",
             user=user,
@@ -6264,8 +7242,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             max_report=MAX_REPORT_LEN,
             og=og_tags(post),
             share_url=f"{settings.site_url}/b/{post.id}",
+            group=group if group_st is not None and group_st.can_see else None,
+            group_manage=group_st is not None and group_st.manager and not own and is_member(user),  # type: ignore[arg-type]
+            can_download=can_download,
             **fav_context(user, [post]),
-            **post_form_ctx(),
+            **form,
         )
 
     @app.get("/u/{uuid}", response_class=HTMLResponse)
@@ -6295,6 +7276,100 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             board_url=board_url,
             **fav_context(viewer, posts),
         )
+
+    def group_form_ctx() -> dict[str, Any]:
+        """What the group settings form (_group_form.html) needs, on /groups and a group's settings page."""
+        return {
+            "group_visibilities": GROUP_VISIBILITIES, "join_policies": JOIN_POLICIES, "post_policies": POST_POLICIES,
+            "post_rules": POST_VISIBILITY_RULES, "perm_labels": MEMBER_PERMS, "default_perms": DEFAULT_MEMBER_PERMS,
+            "max_group_name": MAX_GROUP_NAME_LEN, "max_group_description": MAX_GROUP_DESCRIPTION_LEN,
+            "max_slug": MAX_SLUG_LEN,
+        }
+
+    @app.get("/groups", response_class=HTMLResponse)
+    def groups_page(request: Request) -> HTMLResponse:
+        """The directory of public groups, the viewer's own groups, and the form for a new one."""
+        user = session_user(request)
+        return render(
+            "groups.html",
+            user=user,
+            nav="groups",
+            directory=store.public_groups(),
+            mine=store.groups_of(user.uuid) if user else [],
+            **group_form_ctx(),
+        )
+
+    def group_for_page(slug: str, request: Request) -> tuple[GroupRow, Standing, User | None] | None:
+        """The group at /g/<slug> and the viewer's standing there, or None if it isn't there for them."""
+        user = session_user(request)
+        group = store.group_by_slug(slug) if SLUG_RE.match(slug) else None
+        st = standing(group, user) if group is not None else None
+        if group is None or st is None or not st.can_see:
+            return None
+        return group, st, user
+
+    @app.get("/g/{slug}", response_class=HTMLResponse)
+    def group_page(slug: str, request: Request) -> HTMLResponse:
+        found = group_for_page(slug, request)
+        if found is None:
+            return not_found_page(request)
+        group, st, user = found
+        _, sort, query, page = board_query(request.query_params, strict=False)
+        size = settings.board_page_size
+        posts, total = store.list_posts("group", user.uuid if user else None, sort, query, page, size, group=st)
+
+        def link(**change: Any) -> str:
+            """This group page with sort, q or page changed (page resets to 1)."""
+            state = {"sort": sort, "q": query, "page": 1, **change}
+            params = [(k, v) for k, v in (("sort", state["sort"] if state["sort"] != "top" else ""), ("q", state["q"]),
+                                          ("page", state["page"] if state["page"] > 1 else "")) if v]
+            return f"{base}/g/{group.slug}" + ("?" + urllib.parse.urlencode(params) if params else "")
+
+        return render(
+            "group.html",
+            user=user,
+            nav="groups",
+            group=group,
+            st=st,
+            posts=posts,
+            total=total,
+            sort=sort,
+            q=query,
+            page=page,
+            pages=max(1, -(-total // size)),
+            sorts=BOARD_SORTS,
+            link=link,
+            all_tags=TAGS,
+            size_classes=SIZE_LABELS,
+            max_join_message=MAX_JOIN_MESSAGE_LEN,
+            **group_form_ctx(),
+            **fav_context(user, posts),
+        )
+
+    @app.get("/g/{slug}/members", response_class=HTMLResponse)
+    def group_members_page(slug: str, request: Request) -> HTMLResponse:
+        found = group_for_page(slug, request)
+        if found is None:
+            return not_found_page(request)
+        group, st, user = found
+        return render(
+            "group_members.html",
+            user=user,
+            nav="groups",
+            group=group,
+            st=st,
+            roles=GROUP_ROLES,
+            perm_labels=MEMBER_PERMS,
+            **members_api(group, st),
+        )
+
+    @app.get("/g/{slug}/settings", response_class=HTMLResponse)
+    def group_settings_page(slug: str, request: Request) -> HTMLResponse:
+        found = group_for_page(slug, request)
+        if found is None or not found[1].admin:
+            return not_found_page(request)  # like the admin pages: there is nothing here for anyone else
+        group, st, user = found
+        return render("group_settings.html", user=user, nav="groups", group=group, st=st, **group_form_ctx())
 
     DISCORD_MESSAGES = {
         "linked": ("Your Discord account is linked.", False),

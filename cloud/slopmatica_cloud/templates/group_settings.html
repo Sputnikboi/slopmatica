@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% from "_group_form.html" import group_fields with context %}
+{% block title %}Settings of {{ group.name }} &middot; Slopmatica Cloud{% endblock %}
+{% block main %}
+<div class="board-head">
+  <h1 class="page-title"><a href="{{ base }}/g/{{ group.slug }}">{{ group.name }}</a> &middot; settings</h1>
+</div>
+<section class="panel" data-group-id="{{ group.id }}" data-group-slug="{{ group.slug }}">
+  <form class="post-form" data-group-form="settings" novalidate>
+    {{ group_fields(group) }}
+    <p class="muted small">Making the group&rsquo;s builds members only also makes them private, so they stay hidden if you open them up again or delete the group; their uploaders can change that.</p>
+    <p class="form-msg" role="status"></p>
+    <div class="form-actions start"><button type="submit" class="btn">Save settings</button></div>
+  </form>
+</section>
+<section class="panel owner">
+  <h2>Delete the group</h2>
+  <p class="small">Members, requests and bans go with it. Its builds stay, outside any group.</p>
+  <div class="owner-actions"><button type="button" class="btn ghost danger" data-group-act="delete">Delete group</button></div>
+  <p class="form-msg small" data-group-msg role="status"></p>
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ base }}/static/groups.js?v={{ v }}"></script>
+{% endblock %}

@@ -1,4 +1,5 @@
-{% macro post_fields(visibilities, max_title, max_description, title="", description="", visibility="public", allowed_text="", all_tags={}, tags=(), limits={}, players_text="", names_text="", links=(), version_label="", mc="") %}
+{# Title, description and tags: what a group's admins and moderators may also change (post.html). #}
+{% macro listing_fields(max_title, max_description, title="", description="", all_tags={}, tags=()) %}
 <label class="field">
   <span class="label">Title</span>
   <input type="text" name="title" value="{{ title }}" maxlength="{{ max_title }}" required autocomplete="off">
@@ -15,8 +16,25 @@
     {% endfor %}
   </div>
 </fieldset>
-<details class="edit more-fields"{% if players_text or names_text or links or version_label %} open{% endif %}>
-  <summary>Co-authors, links and version</summary>
+{% endmacro %}
+{% macro post_fields(visibilities, max_title, max_description, title="", description="", visibility="public", allowed_text="", all_tags={}, tags=(), limits={}, players_text="", names_text="", links=(), version_label="", mc="", groups=(), group_id=None, credit="") %}
+{{ listing_fields(max_title, max_description, title, description, all_tags, tags) }}
+{% if groups %}
+<label class="field">
+  <span class="label">Group <span class="muted">(optional)</span></span>
+  <select name="group" data-group-select>
+    <option value="">No group</option>
+    {% for g in groups %}<option value="{{ g.id }}"{% if g.id == group_id %} selected{% endif %}{% if g.post_visibility == "group" %} data-members-only{% endif %}>{{ g.name }}</option>{% endfor %}
+  </select>
+  <span class="muted small" data-group-note hidden>Builds in this group are for its members only, whatever the visibility below says.</span>
+</label>
+{% endif %}
+<details class="edit more-fields"{% if players_text or names_text or links or version_label or credit %} open{% endif %}>
+  <summary>Credit, co-authors, links and version</summary>
+  <label class="field">
+    <span class="label">Credit <span class="muted">(optional: who made it, if not you, e.g. Mojang for a vanilla structure)</span></span>
+    <input type="text" name="credit" value="{{ credit }}" maxlength="{{ limits.max_credit }}" autocomplete="off">
+  </label>
   <label class="field">
     <span class="label">Co-authors with an account here <span class="muted">(Minecraft names)</span></span>
     <input type="text" name="players" value="{{ players_text }}" placeholder="e.g. Steve, Alex" spellcheck="false" autocomplete="off">

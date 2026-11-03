@@ -111,7 +111,7 @@ def test_migrates_a_v5_database(make_client, data_dir):
     users, posts = columns(db, "users"), columns(db, "posts")
     assert users[-8:] == ["display_name", "display_key", "display_tag", "display_custom", "avatar", "avatar_version",
                           "discord_id", "discord_name"]
-    assert posts[-6:] == ["version", "version_label", "mc_version", "distinct_count", "links", "downloads"]
+    assert posts[posts.index("version"):][:6] == ["version", "version_label", "mc_version", "distinct_count", "links", "downloads"]
     for table in ("post_versions", "post_authors", "post_downloads", "profiles", "telemetry", "meta"):
         assert columns(db, table), table
     # display names start as the Minecraft names; of two accounts with one name, the older stays untagged

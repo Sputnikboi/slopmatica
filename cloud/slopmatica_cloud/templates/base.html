@@ -16,6 +16,7 @@
     {% if user and member %}<a class="btn small ghost nav-files{{ ' on' if nav == 'files' else '' }}" href="{{ base }}/"{% if nav == "files" %} aria-current="page"{% endif %}>My files</a>
     {% elif user %}<a class="btn small ghost nav-files{{ ' on' if nav == 'apply' else '' }}" href="{{ base }}/apply"{% if nav == "apply" %} aria-current="page"{% endif %}>Get access</a>{% endif %}
     <a class="btn small nav-board{{ ' on' if nav == 'board' else '' }}" href="{{ base }}/board"{% if nav == "board" %} aria-current="page"{% endif %}><span class="long">Schematics board</span><span class="short">Board</span></a>
+    <a class="btn small ghost nav-groups{{ ' on' if nav == 'groups' else '' }}" href="{{ base }}/groups"{% if nav == "groups" %} aria-current="page"{% endif %}>Groups</a>
     <a class="btn small ghost nav-releases{{ ' on' if nav == 'releases' else '' }}" href="{{ base }}/releases"{% if nav == "releases" %} aria-current="page"{% endif %}>Releases</a>
   </nav>
   {% if user %}

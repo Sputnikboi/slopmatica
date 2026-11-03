@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_post_form.html" import post_fields %}
+{% from "_post_form.html" import post_fields, listing_fields %}
 {% from "_badges.html" import user_badges %}
 {% from "_post_card.html" import fav_button %}
 {% block title %}{{ post.title }} &middot; Slopmatica Cloud{% endblock %}
@@ -47,7 +47,9 @@
   <div class="post-info">
     <h1 class="post-title">{{ post.title }}</h1>
     {% if post.hidden %}<p class="notice warn small"><strong>Hidden by an admin.</strong> Only {{ "you" if own else "the author" }} and admins can see this post{% if post.hidden_reason %}: {{ post.hidden_reason }}{% else %}.{% endif %}</p>{% endif %}
-    {% if post.visibility != "public" %}<span class="badge vis-{{ post.visibility }}">{{ post.visibility|capitalize }}</span>{% endif %}
+    {% if post.group_only %}<span class="badge vis-group" title="Only the group's members can see it">Group members only</span>
+    {% elif post.visibility != "public" %}<span class="badge vis-{{ post.visibility }}">{{ post.visibility|capitalize }}</span>{% endif %}
+    {% if group %}<p class="small group-line"><span class="muted">In the group</span> <a href="{{ base }}/g/{{ group.slug }}">{{ group.name }}</a>{% if post.group_hidden %} <span class="badge mod-hidden" title="Hidden in the group by its admins or moderators">Hidden in the group</span>{% endif %}</p>{% endif %}
     {% if post.tags or ver.size_class or ver.complexity or ver.mc %}
     <div class="chips">
       {% for t in post.tags %}<a class="chip tag-chip" href="{{ board_url(tags=[t]) }}">{{ all_tags[t] }}</a>{% endfor %}
@@ -57,6 +59,7 @@
     </div>
     {% endif %}
     <div class="author">
+      {% if post.credit %}<span class="credit">by <strong>{{ post.credit }}</strong></span> <span class="muted">&middot; uploaded by</span>{% endif %}
       <img class="head" src="{{ avatar_url(post.uuid, post.author_avatar_v) }}" alt="" width="24" height="24">
       <a class="author-link" href="{{ base }}/u/{{ post.uuid }}" data-user="{{ post.uuid }}"><strong>{{ post.author_shown }}</strong></a>{{ user_badges(post.author_badges) }}
       <span class="muted">&middot; <time datetime="{{ post.created|iso_utc }}">{{ post.created|pretty_utc }}</time></span>
@@ -97,6 +100,7 @@
       {% if ver.mc %}<div><dt>Minecraft</dt><dd>{{ ver.mc }}</dd></div>{% endif %}
     </dl>
 
+    {% if can_download %}
     <div class="post-actions">
       <a class="btn" href="{{ base }}/api/board/{{ post.id }}/file{{ version_q }}" download="{{ ver.filename }}">Download</a>
       {% if exports %}
@@ -107,6 +111,9 @@
       {% endif %}
       {% if user and member %}<button type="button" class="btn ghost" data-post-act="save">Add to my cloud</button>{% endif %}
     </div>
+    {% else %}
+    <p class="muted small">Members of {{ group.name if group else "this group" }} can look at its builds here but not download them.</p>
+    {% endif %}
     <p class="form-msg small" data-save-msg role="status"></p>
     {% if not user %}<p class="muted small">Log in from the game to add this to your cloud files.</p>{% endif %}
     {% if post.visibility != "private" %}
@@ -138,7 +145,9 @@
 {% elif own %}
 <section class="panel owner" id="manage">
   <h2>Manage your post</h2>
-  {% if post.visibility == "private" %}
+  {% if post.group_only %}
+  <p class="small">Visible to the members of {% if group %}<strong>{{ group.name }}</strong>{% else %}its group{% endif %} only.</p>
+  {% elif post.visibility == "private" %}
   <p class="small">Visible to you{% if allowed %} and {% for _, name in allowed %}<strong>{{ name }}</strong>{{ ", " if not loop.last else "" }}{% endfor %}{% else %} only{% endif %}.</p>
   {% elif post.visibility == "unlisted" %}
   <p class="small">Anyone with the link can see this post. It is not listed on the board.</p>
@@ -185,9 +194,9 @@
     <summary>Edit title, description, tags, co-authors, links and visibility</summary>
     <form class="post-form" data-post-form="edit" novalidate>
       {{ post_fields(visibilities, max_title, max_description, post.title, post.description, post.visibility, allowed|map(attribute=1)|join(", "), all_tags, post.tags,
-         {"max_author_name": max_author_name, "max_links": max_links, "max_version_label": max_version_label},
+         {"max_author_name": max_author_name, "max_links": max_links, "max_version_label": max_version_label, "max_credit": max_credit},
          post.coauthors|selectattr("uuid")|map(attribute="name")|join(", "), post.coauthors|rejectattr("uuid")|map(attribute="name")|join("\n"),
-         post.links, post.version_label, post.mc or "") }}
+         post.links, post.version_label, post.mc or "", groups=post_groups, group_id=post.group_id, credit=post.credit or "") }}
       <p class="form-msg" role="status"></p>
       <div class="form-actions"><button type="submit" class="btn">Save changes</button></div>
     </form>
@@ -208,6 +217,29 @@
   </div>
   <p class="muted small">Hiding keeps the post for the author but takes it off the board and its link for everyone else.</p>
   <p class="form-msg small" data-owner-msg role="status"></p>
+</section>
+{% endif %}
+{% if group_manage %}
+<section class="panel owner" id="group-manage" data-group-post="{{ post.id }}" data-group-id="{{ group.id }}">
+  <h2>Group moderation</h2>
+  <p class="small">You look after <a href="{{ base }}/g/{{ group.slug }}">{{ group.name }}</a>, so you can change how this build is listed there, hide it in the group or take it out. The uploader&rsquo;s file and post stay theirs.</p>
+  <div class="owner-actions">
+    <button type="button" class="btn ghost" data-group-post-act="hide" data-hidden="{{ 'false' if post.group_hidden else 'true' }}">{{ "Show in the group" if post.group_hidden else "Hide in the group" }}</button>
+    <button type="button" class="btn ghost danger" data-group-post-act="remove">Take out of the group</button>
+  </div>
+  <p class="form-msg small" data-group-msg role="status"></p>
+  <details class="edit">
+    <summary>Edit title, description, tags and credit</summary>
+    <form class="post-form" data-group-edit novalidate>
+      {{ listing_fields(max_title, max_description, post.title, post.description, all_tags, post.tags) }}
+      <label class="field">
+        <span class="label">Credit <span class="muted">(optional: who made it, e.g. Mojang)</span></span>
+        <input type="text" name="credit" value="{{ post.credit or '' }}" maxlength="{{ max_credit }}" autocomplete="off">
+      </label>
+      <p class="form-msg" role="status"></p>
+      <div class="form-actions"><button type="submit" class="btn">Save changes</button></div>
+    </form>
+  </details>
 </section>
 {% endif %}
 {% if user and member and not own %}
@@ -241,4 +273,5 @@
 {% block scripts %}
 <script src="{{ base }}/static/board.js?v={{ v }}"></script>
 <script src="{{ base }}/static/moderation.js?v={{ v }}"></script>
+{% if group_manage %}<script src="{{ base }}/static/groups.js?v={{ v }}"></script>{% endif %}
 {% endblock %}

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% from "_group_form.html" import group_card %}
+{% from "_group_form.html" import group_fields with context %}
+{% block title %}Groups &middot; Slopmatica Cloud{% endblock %}
+{% block main %}
+<div class="board-head">
+  <h1 class="page-title">Groups</h1>
+</div>
+<p class="muted small">Groups share builds among their members: a server&rsquo;s builders, a project, friends. A group can keep its builds to itself or put them on the board too.</p>
+
+{% if user %}
+<section>
+  <h2 class="section-title">Your groups</h2>
+  {% if mine %}
+  <div class="group-grid">
+    {% for g in mine %}{{ group_card(g, base) }}{% endfor %}
+  </div>
+  {% else %}
+  <p class="muted small">You aren&rsquo;t in any group yet. Join one below{% if member %} or start your own{% endif %}.</p>
+  {% endif %}
+</section>
+{% if member %}
+<section class="panel">
+  <details class="edit">
+    <summary>New group</summary>
+    <form class="post-form" data-group-form="create" novalidate>
+      {{ group_fields() }}
+      <p class="form-msg" role="status"></p>
+      <div class="form-actions start"><button type="submit" class="btn">Create group</button></div>
+    </form>
+  </details>
+</section>
+{% endif %}
+{% endif %}
+
+<section>
+  <h2 class="section-title">Directory</h2>
+  {% if directory %}
+  <div class="group-grid">
+    {% for g in directory %}{{ group_card(g, base) }}{% endfor %}
+  </div>
+  {% else %}
+  <p class="empty muted">No public groups yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script src="{{ base }}/static/groups.js?v={{ v }}"></script>
+{% endblock %}
