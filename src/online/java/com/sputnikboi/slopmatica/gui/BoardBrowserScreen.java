@@ -41,7 +41,11 @@ public class BoardBrowserScreen extends Screen {
     private final @Nullable Screen parent;
     private String query = "";
     private String sort = "top";
-    private boolean favoritesOnly;
+    /** What is browsed: the board ("" ), your favourites ("*"), or a group (its id). */
+    private String source = "";
+    /** Groups to offer, fetched once; the source button lists them after the first two. */
+    private List<BoardClient.Group> groups = List.of();
+    private boolean groupsAsked;
     private int page = 1, pages = 1, scroll;
     private List<BoardClient.Post> posts = List.of();
     private BoardClient.@Nullable Post selected;
@@ -68,12 +72,31 @@ public class BoardBrowserScreen extends Screen {
                 page = 1;
                 load();
             }));
-        addRenderableWidget(CycleButton.booleanBuilder(Component.translatable("slopmatica.board.favorites"), Component.translatable("slopmatica.board.everything"), favoritesOnly)
-            .displayOnlyValue().create(left + 308, 26, 80, 20, Component.empty(), (b, v) -> {
-                favoritesOnly = v;
+        List<String> sources = new ArrayList<>(List.of("", "*"));
+        groups.forEach(g -> sources.add(g.id()));
+        if (!sources.contains(source)) {
+            source = "";
+        }
+        addRenderableWidget(CycleButton.<String>builder(this::sourceName, source).withValues(sources).displayOnlyValue()
+            .withTooltip(v -> Tooltip.create(Component.translatable("slopmatica.board.source.tooltip")))
+            .create(left + 308, 26, 80, 20, Component.empty(), (b, v) -> {
+                source = v;
                 page = 1;
                 load();
             }));
+        if (!groupsAsked && CloudSync.INSTANCE.loggedIn()) {
+            groupsAsked = true;
+            CompletableFuture.supplyAsync(() -> {
+                try {
+                    return BoardClient.INSTANCE.groups();
+                } catch (Exception e) {
+                    return List.<BoardClient.Group>of();
+                }
+            }, Util.ioPool()).thenAcceptAsync(found -> {
+                groups = found;
+                rebuildWidgets();
+            }, minecraft);
+        }
         addRenderableWidget(Button.builder(Component.translatable("slopmatica.board.go"), b -> {
             page = 1;
             load();
@@ -115,12 +138,12 @@ public class BoardBrowserScreen extends Screen {
 
     private void load() {
         status = Component.translatable("slopmatica.board.loading").getString();
-        String q = query, s = sort;
-        boolean fav = favoritesOnly;
+        String q = query, s = sort, from = source;
         int p = page;
         CompletableFuture.supplyAsync(() -> {
             try {
-                return fav ? BoardClient.INSTANCE.favorites() : BoardClient.INSTANCE.browse(q, s, p);
+                return from.equals("*") ? BoardClient.INSTANCE.favorites()
+                    : from.isEmpty() ? BoardClient.INSTANCE.browse(q, s, p) : BoardClient.INSTANCE.browseGroup(from, q, s, p);
             } catch (Exception e) {
                 throw new RuntimeException(e.getMessage(), e);
             }
@@ -305,5 +328,16 @@ public class BoardBrowserScreen extends Screen {
     @Override
     public void onClose() {
         minecraft.gui.setScreen(parent);
+    }
+
+    private Component sourceName(String id) {
+        if (id.isEmpty()) {
+            return Component.translatable("slopmatica.board.everything");
+        }
+        if (id.equals("*")) {
+            return Component.translatable("slopmatica.board.favorites");
+        }
+        return groups.stream().filter(g -> g.id().equals(id)).findFirst()
+            .map(g -> (Component) Component.literal(g.name())).orElse(Component.literal("?"));
     }
 }

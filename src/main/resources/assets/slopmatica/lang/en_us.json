@@ -254,6 +254,7 @@
   "slopmatica.browser.tab.vanilla": "Vanilla",
   "slopmatica.browser.tab.vanilla.tooltip": "Every structure piece Minecraft generates worlds from (villages, bastions, end cities...), read from your own copy of the game, sorted by dimension.",
   "slopmatica.browser.vanilla_by": "by Mojang  ·  from your game",
+  "slopmatica.board.source.tooltip": "What to browse: the whole board, your favourites, or one of your groups (and public groups).",
   "slopmatica.import.title": "Import from Litematica",
   "slopmatica.import.sources": "Found",
   "slopmatica.import.none_found": "No Litematica settings found",

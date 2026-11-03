@@ -144,6 +144,16 @@ public final class DevHarness {
                     screen.mouseDragged(new net.minecraft.client.input.MouseButtonEvent(x, y, info), (x2 - x1) / 10, (y2 - y1) / 10);
                 }
                 screen.mouseReleased(new net.minecraft.client.input.MouseButtonEvent(x2, y2, info));
+            } else if (step.startsWith("thumbs ")) {
+                // thumbs <schematic dir> <png dir>: the preview icon of every schematic in a folder.
+                String[] parts = step.split(" ");
+                java.nio.file.Path src = java.nio.file.Path.of(parts[1]), out = java.nio.file.Path.of(parts[2]);
+                Thread thread = new Thread(() -> renderThumbs(mc, src, out), "Slopmatica thumbs");
+                thread.setDaemon(true);
+                thread.start();
+            } else if (step.startsWith("exportstructures ")) {
+                String[] parts = step.split(" ");
+                StructureExport.start(mc, java.nio.file.Path.of(parts[1]), parts.length > 2 ? java.util.Set.of(parts[2].split(",")) : java.util.Set.of());
             } else if (step.equals("tour")) {
                 com.sputnikboi.slopmatica.tour.FeatureTour.INSTANCE.start(mc);
             } else if (step.equals("supply")) {
@@ -200,5 +210,38 @@ public final class DevHarness {
             }
             return;
         }
+    }
+
+    private static void renderThumbs(Minecraft mc, java.nio.file.Path src, java.nio.file.Path out) {
+        var thumbs = com.sputnikboi.slopmatica.render.SchematicThumbnails.INSTANCE;
+        int done = 0, failed = 0;
+        try (var walk = java.nio.file.Files.walk(src)) {
+            for (java.nio.file.Path file : walk.filter(com.sputnikboi.slopmatica.schematic.SchematicFormats::isSchematic).sorted().toList()) {
+                mc.execute(() -> thumbs.get(file, com.sputnikboi.slopmatica.render.SchematicThumbnails.PREVIEW_SIZE));
+                java.util.Optional<java.nio.file.Path> png = java.util.Optional.empty();
+                // The PNG appears before it is fully written: wait for content that stops growing.
+                long last = -1;
+                for (int i = 0; i < 1200; i++) {
+                    Thread.sleep(50);
+                    png = thumbs.cachedPng(file);
+                    long size = png.isPresent() ? java.nio.file.Files.size(png.get()) : -1;
+                    if (size > 0 && size == last) {
+                        break;
+                    }
+                    last = size;
+                }
+                if (png.isEmpty()) {
+                    failed++;
+                    continue;
+                }
+                java.nio.file.Path target = out.resolve(src.relativize(file).toString() + ".png");
+                java.nio.file.Files.createDirectories(target.getParent());
+                java.nio.file.Files.copy(png.get(), target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                done++;
+            }
+        } catch (java.io.IOException | InterruptedException e) {
+            LOGGER.warn("thumbs failed", e);
+        }
+        LOGGER.info("thumbs done: {} rendered, {} failed", done, failed);
     }
 }

@@ -35,13 +35,19 @@ public final class BoardClient {
             if (p.has("tags") && p.get("tags").isJsonArray()) {
                 p.getAsJsonArray("tags").forEach(t -> tags.add(t.getAsString()));
             }
+            // A credited author (e.g. Mojang for vanilla structures) is shown instead of the uploader.
+            String credit = str(p, "credit");
             return new Post(str(p, "id"), str(p, "title"),
-                author == null ? "?" : str(author, author.has("displayName") ? "displayName" : "name"),
+                !credit.isEmpty() ? credit : author == null ? "?" : str(author, author.has("displayName") ? "displayName" : "name"),
                 str(p, "sizeClass"), str(p, "complexity"), p.has("blockCount") ? p.get("blockCount").getAsLong() : 0,
                 p.has("downloads") ? p.get("downloads").getAsInt() : 0, p.has("favorites") ? p.get("favorites").getAsInt() : 0,
                 p.has("favorited") && !p.get("favorited").isJsonNull() && p.get("favorited").getAsBoolean(), tags,
                 p.has("hasThumbnail") && p.get("hasThumbnail").getAsBoolean(), str(p, "shareUrl"));
         }
+    }
+
+    /** A group you can browse: public ones and those you're in ({@code role} null if not a member). */
+    public record Group(String id, String name, @Nullable String role) {
     }
 
     /** A page of results. */
@@ -63,6 +69,28 @@ public final class BoardClient {
     /** Public builds: search text, sort (top, new, downloads), page from 1. */
     public Page browse(String query, String sort, int page) throws Exception {
         String path = "/api/board?limit=20&page=" + page + "&sort=" + enc(sort) + (query.isBlank() ? "" : "&q=" + enc(query.trim()));
+        JsonObject json = CloudSync.INSTANCE.getJson(path);
+        List<Post> posts = new ArrayList<>();
+        for (JsonElement e : json.getAsJsonArray("posts")) {
+            posts.add(Post.of(e.getAsJsonObject()));
+        }
+        return new Page(posts, json.has("page") ? json.get("page").getAsInt() : page, json.has("pages") ? json.get("pages").getAsInt() : 1);
+    }
+
+    /** Groups to browse: the public ones and your own. */
+    public List<Group> groups() throws Exception {
+        JsonObject json = CloudSync.INSTANCE.getJson("/api/groups");
+        List<Group> out = new ArrayList<>();
+        for (JsonElement e : json.getAsJsonArray("groups")) {
+            JsonObject g = e.getAsJsonObject();
+            out.add(new Group(str(g, "id"), str(g, "name"), g.has("role") && !g.get("role").isJsonNull() ? g.get("role").getAsString() : null));
+        }
+        return out;
+    }
+
+    /** A group's builds, like {@link #browse}. */
+    public Page browseGroup(String group, String query, String sort, int page) throws Exception {
+        String path = "/api/groups/" + enc(group) + "/posts?limit=20&page=" + page + "&sort=" + enc(sort) + (query.isBlank() ? "" : "&q=" + enc(query.trim()));
         JsonObject json = CloudSync.INSTANCE.getJson(path);
         List<Post> posts = new ArrayList<>();
         for (JsonElement e : json.getAsJsonArray("posts")) {
