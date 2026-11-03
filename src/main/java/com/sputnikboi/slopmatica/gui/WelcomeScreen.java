@@ -37,6 +37,8 @@ public class WelcomeScreen extends Screen {
     private final List<KeyButton> keyButtons = new ArrayList<>();
     private @Nullable KeyButton listening;
     private boolean telemetry = SlopmaticaConfig.get().telemetry;
+    /** Settings were taken from another instance here: the Litematica import leaves them all alone. */
+    private boolean pulledShared;
     private @Nullable Button loginButton, websiteButton;
     private int top;
 
@@ -71,7 +73,7 @@ public class WelcomeScreen extends Screen {
         y += 44;
         boolean found = LitematicaImport.local() != null;
         addRenderableWidget(Button.builder(Component.translatable(found ? "slopmatica.welcome.import.found" : "slopmatica.welcome.import"),
-                b -> minecraft.gui.setScreen(new LitematicaImportScreen(this)))
+                b -> minecraft.gui.setScreen(new LitematicaImportScreen(this, changedHere())))
             .bounds(left, y, WIDTH, 20)
             .tooltip(Tooltip.create(Component.translatable(found ? "slopmatica.welcome.import.found.tooltip" : "slopmatica.welcome.import.tooltip"))).build());
 
@@ -83,6 +85,7 @@ public class WelcomeScreen extends Screen {
                     config.shareSettings = true;
                     config.shareSchematics = true;
                     SharedFolder.pull(config);
+                    pulledShared = true;
                     config.save();
                     b.active = false;
                     b.setMessage(Component.translatable("slopmatica.welcome.shared.done"));
@@ -199,6 +202,20 @@ public class WelcomeScreen extends Screen {
     }
 
     /** Click, then press a key (or click a mouse button); Escape cancels. */
+    /** What was set on this screen, for the Litematica import to leave alone. */
+    private java.util.Set<String> changedHere() {
+        java.util.Set<String> keep = new java.util.HashSet<>();
+        for (KeyButton button : keyButtons) {
+            if (button.pending != null) {
+                keep.add(button.mapping.getName());
+            }
+        }
+        if (pulledShared) {
+            keep.add(LitematicaImportScreen.ALL_SETTINGS);
+        }
+        return keep;
+    }
+
     private class KeyButton extends Button.Plain {
         final KeyMapping mapping;
         /** A short name; the full key names don't fit half a row. */

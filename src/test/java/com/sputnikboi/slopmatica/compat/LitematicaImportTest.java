@@ -30,10 +30,13 @@ class LitematicaImportTest {
     }
 
     @Test
-    void defaultsImportNothing() {
+    void defaultsAreListedButNotShownUnlessAskedFor() {
         LitematicaImport.Plan plan = LitematicaImport.read(json(DEFAULTS));
-        assertTrue(plan.isEmpty(), plan.toString());
-        assertTrue(plan.skipped().isEmpty(), plan.skipped().toString());
+        assertTrue(plan.shown(false).isEmpty(), plan.shown(false).toString());
+        assertTrue(plan.skipped().size() == 1, plan.skipped().toString()); // the M,R combination
+        assertTrue(plan.items().stream().allMatch(i -> i.atDefault));
+        assertTrue(plan.shown(true).stream().anyMatch(i -> i.target.equals("ghostOpacity") && i.value.equals(50)
+            && i.source.equals("Visuals › ghostBlockAlpha") && i.raw.equals("0.5")));
     }
 
     @Test
@@ -51,7 +54,8 @@ class LitematicaImportTest {
         LitematicaImport.Plan plan = LitematicaImport.read(root);
         SlopmaticaConfig config = new SlopmaticaConfig();
         config.solidGhosts = true;
-        plan.changes().forEach(c -> c.apply().accept(config));
+        java.util.List<LitematicaImport.Item> changed = plan.shown(false);
+        changed.stream().filter(i -> i.kind != LitematicaImport.Kind.KEY).forEach(i -> i.applyTo(config));
 
         assertTrue(config.easyPlace);
         assertEquals(PlacementBuilder.Replace.WITH_NON_AIR, config.pasteReplace);
@@ -59,7 +63,10 @@ class LitematicaImportTest {
         assertEquals(0.3F, config.ghostOpacity, 1e-6);
         assertFalse(config.outlineMissing);
         assertEquals(0xFFD55E00, config.colorFor(BlockStatus.WRONG));
-        assertEquals(Map.of("key.slopmatica.open_menu", "key.keyboard.keypad.5", "key.slopmatica.toggle_easy_place", "key.keyboard.left.alt"), plan.keys());
+        Map<String, Object> keys = new java.util.HashMap<>();
+        changed.stream().filter(i -> i.kind == LitematicaImport.Kind.KEY).forEach(i -> keys.put(i.target, i.value));
+        assertEquals(Map.of("key.slopmatica.open_menu", "key.keyboard.keypad.5", "key.slopmatica.toggle_easy_place", "key.keyboard.left.alt"), keys);
+        assertTrue(changed.stream().noneMatch(i -> i.atDefault));
     }
 
     @Test
@@ -67,15 +74,14 @@ class LitematicaImportTest {
         JsonObject root = json(DEFAULTS);
         root.getAsJsonObject("Hotkeys").add("toggleSchematicBlockRendering", json("{\"keys\": \"LEFT_CONTROL,G\"}"));
         LitematicaImport.Plan plan = LitematicaImport.read(root);
-        assertTrue(plan.keys().isEmpty());
-        assertEquals(1, plan.skipped().size());
-        assertTrue(plan.skipped().get(0).contains("LEFT_CONTROL + G"), plan.skipped().get(0));
+        assertTrue(plan.items().stream().noneMatch(i -> i.target.equals("key.slopmatica.toggle_ghosts")));
+        assertTrue(plan.skipped().stream().anyMatch(n -> n.contains("LEFT_CONTROL + G")), plan.skipped().toString());
     }
 
     @Test
     void missingSectionsAreFine() {
-        assertTrue(LitematicaImport.read(json("{}")).isEmpty());
-        assertTrue(LitematicaImport.read(json("{\"Visuals\": 3, \"Generic\": {\"easyPlaceMode\": \"yes\"}}")).isEmpty());
+        assertTrue(LitematicaImport.read(json("{}")).items().isEmpty());
+        assertTrue(LitematicaImport.read(json("{\"Visuals\": 3, \"Generic\": {\"easyPlaceMode\": \"yes\"}}")).items().isEmpty());
     }
 
     @Test

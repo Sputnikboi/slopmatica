@@ -12,37 +12,97 @@ import java.io.Reader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.function.Consumer;
 import java.util.stream.Stream;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Reads Litematica's {@code config/litematica.json} and carries over what has an equivalent here.
- * Only settings the player actually changed are imported: a value still at Litematica's default
- * says nothing about what they want, and copying it would only override this mod's own defaults.
+ * Reads Litematica's {@code config/litematica.json} and turns every setting that has an equivalent
+ * here into an {@link Item}: where it came from, the value it gives, and whether that is just
+ * Litematica's default. The import screen shows them all; the player picks and adjusts, and only
+ * settings changed in Litematica are ticked unless defaults are asked for too (a value still at
+ * Litematica's default says nothing about what they want).
  * Names and defaults are from Litematica for 26.3 (sakura-ryoko's fork, which writes malilib JSON:
  * {@code {"Generic": {...}, "Visuals": {...}, "Colors": {...}, "Hotkeys": {...}}}).
  */
 public final class LitematicaImport {
     public static final String FILE = "litematica.json";
 
-    /** One setting to change: the option's translation key, the new value as shown, and how to apply it. */
-    public record Change(String option, String value, Consumer<SlopmaticaConfig> apply) {
+    /** What kind of value an item holds, which decides how it is shown and edited. */
+    public enum Kind {
+        /** Boolean. */
+        ON_OFF,
+        /** Integer percent. */
+        PERCENT,
+        /** One of {@link Item#choices}. */
+        CHOICE,
+        /** Integer 0xRRGGBB. */
+        COLOR,
+        /** A vanilla key name (key.keyboard.x). */
+        KEY
     }
 
     /**
-     * @param keys     our key mapping name (key.slopmatica.x) to a vanilla key name (key.keyboard.y)
-     * @param skipped  readable notes on what could not be carried over
+     * One Slopmatica setting (or key) a Litematica setting maps to.
+     *
+     * @param option    what to call it: our option's translation key, or the key mapping's name
+     * @param target    our config field name, or the key mapping name for keys
+     * @param source    the Litematica setting, "Section › name"
+     * @param raw       its value as written in the file
+     * @param atDefault the file still has Litematica's default there
      */
-    public record Plan(List<Change> changes, Map<String, String> keys, List<String> skipped) {
-        public boolean isEmpty() {
-            return changes.isEmpty() && keys.isEmpty();
+    public static final class Item {
+        public final String option, target, source, raw;
+        public final boolean atDefault;
+        public final Kind kind;
+        public final List<Object> choices;
+        private final java.util.function.BiConsumer<SlopmaticaConfig, Object> setter;
+        /** Editable before applying. */
+        public Object value;
+
+        Item(String option, String target, String source, String raw, boolean atDefault, Kind kind, Object value, List<Object> choices,
+             java.util.function.BiConsumer<SlopmaticaConfig, Object> setter) {
+            this.option = option;
+            this.target = target;
+            this.source = source;
+            this.raw = raw;
+            this.atDefault = atDefault;
+            this.kind = kind;
+            this.value = value;
+            this.choices = choices;
+            this.setter = setter;
+        }
+
+        /** Sets this on a config (keys are set on their key mappings by {@link #apply}). */
+        public void applyTo(SlopmaticaConfig config) {
+            setter.accept(config, value);
+        }
+
+        public String display() {
+            return switch (kind) {
+                case ON_OFF -> (Boolean) value ? "ON" : "OFF";
+                case PERCENT -> value + "%";
+                case CHOICE -> String.valueOf(value);
+                case COLOR -> String.format("#%06X", (Integer) value & 0xFFFFFF);
+                case KEY -> {
+                    try {
+                        yield InputConstants.getKey((String) value).getDisplayName().getString();
+                    } catch (IllegalArgumentException e) {
+                        yield String.valueOf(value);
+                    }
+                }
+            };
+        }
+    }
+
+    /** @param skipped readable notes on what could not be carried over */
+    public record Plan(List<Item> items, List<String> skipped) {
+        /** Items changed in Litematica (or all of them, with defaults). */
+        public List<Item> shown(boolean defaults) {
+            return items.stream().filter(i -> defaults || !i.atDefault).toList();
         }
     }
 
@@ -133,89 +193,80 @@ public final class LitematicaImport {
     }
 
     public static Plan read(JsonObject root) {
-        List<Change> changes = new ArrayList<>();
-        Map<String, String> keys = new LinkedHashMap<>();
+        List<Item> items = new ArrayList<>();
         List<String> skipped = new ArrayList<>();
         JsonObject generic = section(root, "Generic"), visuals = section(root, "Visuals"), colors = section(root, "Colors"), hotkeys = section(root, "Hotkeys");
 
-        Boolean easyPlace = bool(generic, "easyPlaceMode", false);
-        if (easyPlace != null) {
-            changes.add(new Change("slopmatica.options.easy_place_on", onOff(easyPlace), c -> c.easyPlace = easyPlace));
-        }
-        Boolean restrict = bool(generic, "placementRestriction", false);
-        if (restrict != null) {
-            changes.add(new Change("slopmatica.options.easy_place_restrict", onOff(restrict), c -> c.easyPlaceRestrict = restrict));
-        }
-        String replace = string(generic, "pasteReplaceBehavior", "NONE");
-        if (replace != null) {
+        onOff(items, generic, "Generic", "easyPlaceMode", false, "slopmatica.options.easy_place_on", "easyPlace", v -> v, (c, v) -> c.easyPlace = v);
+        onOff(items, generic, "Generic", "placementRestriction", false, "slopmatica.options.easy_place_restrict", "easyPlaceRestrict", v -> v, (c, v) -> c.easyPlaceRestrict = v);
+        JsonElement replace = generic.get("pasteReplaceBehavior");
+        if (replace != null && replace.isJsonPrimitive()) {
+            String text = replace.getAsString();
             try {
-                PlacementBuilder.Replace value = PlacementBuilder.Replace.valueOf(replace.toUpperCase(Locale.ROOT));
-                changes.add(new Change("slopmatica.options.paste_replace", value.name(), c -> c.pasteReplace = value));
+                PlacementBuilder.Replace value = PlacementBuilder.Replace.valueOf(text.toUpperCase(Locale.ROOT));
+                items.add(new Item("slopmatica.options.paste_replace", "pasteReplace", "Generic › pasteReplaceBehavior", text,
+                    text.equalsIgnoreCase("NONE"), Kind.CHOICE, value, List.of((Object[]) PlacementBuilder.Replace.values()),
+                    (c, v) -> c.pasteReplace = (PlacementBuilder.Replace) v));
             } catch (IllegalArgumentException e) {
-                skipped.add("pasteReplaceBehavior " + replace);
+                skipped.add("pasteReplaceBehavior " + text);
             }
         }
 
-        Boolean blocks = bool(visuals, "enableSchematicBlocksRendering", true);
-        if (blocks != null) {
-            changes.add(new Change("slopmatica.options.show_ghosts", onOff(blocks), c -> c.showGhosts = blocks));
+        onOff(items, visuals, "Visuals", "enableSchematicBlocksRendering", true, "slopmatica.options.show_ghosts", "showGhosts", v -> v, (c, v) -> c.showGhosts = v);
+        // Litematica draws ghosts solid unless this is on; that is our Solid View.
+        onOff(items, visuals, "Visuals", "renderBlocksAsTranslucent", false, "slopmatica.options.solid_ghosts", "solidGhosts", v -> !v, (c, v) -> c.solidGhosts = v);
+        percent(items, visuals, "Visuals", "ghostBlockAlpha", 0.5, 5, 100, "slopmatica.options.ghost_opacity", "ghostOpacity", (c, v) -> c.ghostOpacity = v / 100F);
+        // Either switch off in Litematica turns outlines off.
+        Boolean overlay = flag(visuals, "enableSchematicOverlay"), outlines = flag(visuals, "schematicOverlayEnableOutlines");
+        if (overlay != null || outlines != null) {
+            boolean on = !Boolean.FALSE.equals(overlay) && !Boolean.FALSE.equals(outlines);
+            String which = Boolean.FALSE.equals(overlay) || outlines == null ? "enableSchematicOverlay" : "schematicOverlayEnableOutlines";
+            items.add(new Item("slopmatica.options.show_outlines", "showOutlines", "Visuals › " + which, String.valueOf(on), on, Kind.ON_OFF, on, List.of(),
+                (c, v) -> c.showOutlines = (Boolean) v));
         }
-        Boolean translucent = bool(visuals, "renderBlocksAsTranslucent", false);
-        if (translucent != null) {
-            // Litematica draws ghosts solid unless this is on; that is our Solid View.
-            changes.add(new Change("slopmatica.options.solid_ghosts", onOff(!translucent), c -> c.solidGhosts = !translucent));
-        }
-        Double alpha = number(visuals, "ghostBlockAlpha", 0.5);
-        if (alpha != null) {
-            float opacity = (float) Math.clamp(alpha, 0.05, 1.0);
-            changes.add(new Change("slopmatica.options.ghost_opacity", Math.round(opacity * 100) + "%", c -> c.ghostOpacity = opacity));
-        }
-        Boolean overlay = bool(visuals, "enableSchematicOverlay", true), outlines = bool(visuals, "schematicOverlayEnableOutlines", true);
-        if (Boolean.FALSE.equals(overlay) || Boolean.FALSE.equals(outlines)) {
-            changes.add(new Change("slopmatica.options.show_outlines", onOff(false), c -> c.showOutlines = false));
-        }
-        Double width = number(visuals, "schematicOverlayOutlineWidth", 1.0);
-        if (width != null) {
-            // Litematica's 1.0 is a normal line, like our 100%.
-            float scale = (float) Math.clamp(width, 0.01, 4.0);
-            changes.add(new Change("slopmatica.options.outline_width", Math.round(scale * 100) + "%", c -> c.outlineWidth = scale));
-        }
-        outlineType(changes, visuals, "schematicOverlayTypeMissing", "slopmatica.options.outline_missing", (c, v) -> c.outlineMissing = v);
-        outlineType(changes, visuals, "schematicOverlayTypeWrongBlock", "slopmatica.options.outline_wrong", (c, v) -> c.outlineWrong = v);
-        outlineType(changes, visuals, "schematicOverlayTypeWrongState", "slopmatica.options.outline_variant", (c, v) -> c.outlineVariant = v);
+        // Litematica's line width 1.0 is a normal line, like our 100%.
+        percent(items, visuals, "Visuals", "schematicOverlayOutlineWidth", 1.0, 1, 400, "slopmatica.options.outline_width", "outlineWidth", (c, v) -> c.outlineWidth = v / 100F);
+        onOff(items, visuals, "Visuals", "schematicOverlayTypeMissing", true, "slopmatica.import.outline.missing", "outlineMissing", v -> v, (c, v) -> c.outlineMissing = v);
+        onOff(items, visuals, "Visuals", "schematicOverlayTypeWrongBlock", true, "slopmatica.import.outline.wrong", "outlineWrong", v -> v, (c, v) -> c.outlineWrong = v);
+        onOff(items, visuals, "Visuals", "schematicOverlayTypeWrongState", true, "slopmatica.import.outline.variant", "outlineVariant", v -> v, (c, v) -> c.outlineVariant = v);
 
-        color(changes, skipped, colors, "schematicOverlayColorMissing", "#2C33B3E6", BlockStatus.MISSING);
-        color(changes, skipped, colors, "schematicOverlayColorWrongBlock", "#4CFF3333", BlockStatus.WRONG);
-        color(changes, skipped, colors, "schematicOverlayColorWrongState", "#4CFF9010", BlockStatus.VARIANT);
+        color(items, skipped, colors, "schematicOverlayColorMissing", "#2C33B3E6", BlockStatus.MISSING);
+        color(items, skipped, colors, "schematicOverlayColorWrongBlock", "#4CFF3333", BlockStatus.WRONG);
+        color(items, skipped, colors, "schematicOverlayColorWrongState", "#4CFF9010", BlockStatus.VARIANT);
 
-        hotkey(keys, skipped, hotkeys, "openGuiMainMenu", "M", "open_menu");
-        hotkey(keys, skipped, hotkeys, "openGuiLoadSchematics", "", "load_schematic");
-        hotkey(keys, skipped, hotkeys, "toggleAllRendering", "M,R", "toggle_hologram");
-        hotkey(keys, skipped, hotkeys, "toggleSchematicBlockRendering", "", "toggle_ghosts");
-        hotkey(keys, skipped, hotkeys, "toggleOverlayRendering", "", "toggle_outlines");
-        hotkey(keys, skipped, hotkeys, "easyPlaceToggle", "", "toggle_easy_place");
-        return new Plan(changes, keys, skipped);
+        hotkey(items, skipped, hotkeys, "openGuiMainMenu", "M", "open_menu");
+        hotkey(items, skipped, hotkeys, "openGuiLoadSchematics", "", "load_schematic");
+        hotkey(items, skipped, hotkeys, "toggleAllRendering", "M,R", "toggle_hologram");
+        hotkey(items, skipped, hotkeys, "toggleSchematicBlockRendering", "", "toggle_ghosts");
+        hotkey(items, skipped, hotkeys, "toggleOverlayRendering", "", "toggle_outlines");
+        hotkey(items, skipped, hotkeys, "easyPlaceToggle", "", "toggle_easy_place");
+        return new Plan(items, skipped);
     }
 
     // ---- applying ------------------------------------------------------------------------
 
-    /** Applies the plan and saves; returns the notes for keys that turned out not to exist here. */
-    public static List<String> apply(Plan plan) {
+    /** Applies the given items and saves; returns the notes for keys that turned out not to exist here. */
+    public static List<String> apply(List<Item> items) {
         SlopmaticaConfig config = SlopmaticaConfig.get();
-        plan.changes().forEach(change -> change.apply().accept(config));
-        config.save();
         List<String> problems = new ArrayList<>();
-        plan.keys().forEach((mapping, key) -> {
-            KeyMapping target = KeyMapping.get(mapping);
+        boolean keys = false;
+        for (Item item : items) {
+            if (item.kind != Kind.KEY) {
+                item.applyTo(config);
+                continue;
+            }
+            KeyMapping target = KeyMapping.get(item.target);
             try {
                 if (target != null) {
-                    target.setKey(InputConstants.getKey(key));
+                    target.setKey(InputConstants.getKey((String) item.value));
+                    keys = true;
                 }
             } catch (IllegalArgumentException e) {
-                problems.add(mapping + ": " + key);
+                problems.add(item.target + ": " + item.value);
             }
-        });
-        if (!plan.keys().isEmpty()) {
+        }
+        config.save();
+        if (keys) {
             KeyMapping.resetMapping();
             Minecraft.getInstance().options.save();
         }
@@ -228,62 +279,56 @@ public final class LitematicaImport {
         return root.has(name) && root.get(name).isJsonObject() ? root.getAsJsonObject(name) : new JsonObject();
     }
 
-    /** A boolean option, or a hotkeyed one ({"enabled": .., "hotkey": {..}}); null if missing or at the default. */
-    private static @Nullable Boolean bool(JsonObject section, String name, boolean litematicaDefault) {
+    /** A boolean option, or a hotkeyed one ({"enabled": .., "hotkey": {..}}); null if missing. */
+    private static @Nullable Boolean flag(JsonObject section, String name) {
         JsonElement e = section.get(name);
         if (e != null && e.isJsonObject()) {
             e = e.getAsJsonObject().get("enabled");
         }
-        if (e == null || !e.isJsonPrimitive() || !e.getAsJsonPrimitive().isBoolean()) {
-            return null;
-        }
-        boolean value = e.getAsBoolean();
-        return value == litematicaDefault ? null : value;
+        return e != null && e.isJsonPrimitive() && e.getAsJsonPrimitive().isBoolean() ? e.getAsBoolean() : null;
     }
 
-    private static @Nullable Double number(JsonObject section, String name, double litematicaDefault) {
+    /** @param map from Litematica's value to ours (some mean the opposite) */
+    private static void onOff(List<Item> items, JsonObject section, String sectionName, String name, boolean litematicaDefault, String option, String target,
+                              java.util.function.UnaryOperator<Boolean> map, java.util.function.BiConsumer<SlopmaticaConfig, Boolean> setter) {
+        Boolean value = flag(section, name);
+        if (value != null) {
+            items.add(new Item(option, target, sectionName + " › " + name, String.valueOf(value), value == litematicaDefault, Kind.ON_OFF,
+                map.apply(value), List.of(), (c, v) -> setter.accept(c, (Boolean) v)));
+        }
+    }
+
+    private static void percent(List<Item> items, JsonObject section, String sectionName, String name, double litematicaDefault, int min, int max,
+                                String option, String target, java.util.function.BiConsumer<SlopmaticaConfig, Integer> setter) {
         JsonElement e = section.get(name);
         if (e == null || !e.isJsonPrimitive() || !e.getAsJsonPrimitive().isNumber()) {
-            return null;
+            return;
         }
         double value = e.getAsDouble();
-        return Math.abs(value - litematicaDefault) < 1e-6 ? null : value;
-    }
-
-    private static @Nullable String string(JsonObject section, String name, String litematicaDefault) {
-        JsonElement e = section.get(name);
-        if (e == null || !e.isJsonPrimitive()) {
-            return null;
-        }
-        String value = e.getAsString();
-        return value.equalsIgnoreCase(litematicaDefault) ? null : value;
-    }
-
-    private static void outlineType(List<Change> changes, JsonObject visuals, String name, String option, java.util.function.BiConsumer<SlopmaticaConfig, Boolean> setter) {
-        Boolean value = bool(visuals, name, true);
-        if (value != null) {
-            changes.add(new Change(option, onOff(value), c -> setter.accept(c, value)));
-        }
+        int pct = Math.clamp(Math.round(value * 100), min, max);
+        items.add(new Item(option, target, sectionName + " › " + name, e.getAsString(), Math.abs(value - litematicaDefault) < 1e-6, Kind.PERCENT,
+            pct, List.of(min, max), (c, v) -> setter.accept(c, Math.clamp((Integer) v, min, max))));
     }
 
     /** malilib writes colours as #AARRGGBB; alpha is ours to decide, so only RGB carries over. */
-    private static void color(List<Change> changes, List<String> skipped, JsonObject colors, String name, String litematicaDefault, BlockStatus status) {
-        String value = string(colors, name, litematicaDefault);
-        if (value == null) {
+    private static void color(List<Item> items, List<String> skipped, JsonObject colors, String name, String litematicaDefault, BlockStatus status) {
+        JsonElement e = colors.get(name);
+        if (e == null || !e.isJsonPrimitive()) {
             return;
         }
+        String value = e.getAsString();
         String hex = value.startsWith("#") ? value.substring(1) : value.startsWith("0x") ? value.substring(2) : value;
         try {
             int rgb = (int) (Long.parseLong(hex, 16) & 0xFFFFFF);
-            changes.add(new Change("slopmatica.options.outline_" + status.name().toLowerCase(Locale.ROOT), String.format("#%06X", rgb),
-                c -> c.setColor(status, 0xFF000000 | rgb)));
-        } catch (NumberFormatException e) {
+            items.add(new Item("slopmatica.import.color." + status.name().toLowerCase(Locale.ROOT), "color" + status.name(), "Colors › " + name, value,
+                value.equalsIgnoreCase(litematicaDefault), Kind.COLOR, rgb, List.of(), (c, v) -> c.setColor(status, 0xFF000000 | (Integer) v)));
+        } catch (NumberFormatException ex) {
             skipped.add(name + " " + value);
         }
     }
 
     /** Hotkeys are {"keys": "M", ...} (or a bare string in old files); combinations like "M,R" have no vanilla equivalent. */
-    private static void hotkey(Map<String, String> keys, List<String> skipped, JsonObject hotkeys, String name, String litematicaDefault, String ours) {
+    private static void hotkey(List<Item> items, List<String> skipped, JsonObject hotkeys, String name, String litematicaDefault, String ours) {
         JsonElement e = hotkeys.get(name);
         if (e != null && e.isJsonObject()) {
             e = e.getAsJsonObject().get("keys");
@@ -292,14 +337,16 @@ public final class LitematicaImport {
             return;
         }
         String value = e.getAsString().trim();
-        if (value.equalsIgnoreCase(litematicaDefault) || value.isEmpty()) {
-            return; // Unchanged, or unbound: keep ours.
+        if (value.isEmpty()) {
+            return; // Unbound: keep ours.
         }
         if (value.contains(",")) {
             skipped.add(name + " = " + value.replace(",", " + ") + " (key combinations can't be imported)");
             return;
         }
-        keys.put("key.slopmatica." + ours, vanillaKeyName(value));
+        String mapping = "key.slopmatica." + ours;
+        items.add(new Item(mapping, mapping, "Hotkeys › " + name, value, value.equalsIgnoreCase(litematicaDefault), Kind.KEY,
+            vanillaKeyName(value), List.of(), (c, v) -> { }));
     }
 
     /** malilib key names (SDL scancode names: M, LEFT_ALT, PAGE_UP, KP_1, MOUSE_RIGHT) to vanilla's. */
@@ -326,9 +373,5 @@ public final class LitematicaImport {
                 ? "key.keyboard.keypad." + n.substring(3).toLowerCase(Locale.ROOT).replace('_', '.')
                 : "key.keyboard." + n.toLowerCase(Locale.ROOT).replace('_', '.');
         };
-    }
-
-    private static String onOff(boolean value) {
-        return value ? "ON" : "OFF";
     }
 }
