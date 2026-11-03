@@ -210,6 +210,18 @@
   {{ table(t["keys"], (("name", "Key"), ("uses", "Uses"), ("installs", "Installs"))) }}
 </section>
 <section class="panel">
+  <h2>Quick Menu</h2>
+  <p class="muted small">Per install, from its latest report. Layouts are only sent once changed from the default (the wheel&rsquo;s also when it is in use).</p>
+  <h3>Style</h3>
+  {{ table(t.quickStyles, (("name", "Opens"), ("count", "Installs"))) }}
+  <h3>Actions on custom hotbars</h3>
+  {{ table(t.hotbarActions, (("name", "Action"), ("count", "Installs"))) }}
+  <h3>Actions on wheels</h3>
+  {{ table(t.wheelActions, (("name", "Action"), ("count", "Installs"))) }}
+  <h3>Wheel pages</h3>
+  {{ table(t.wheelPages, (("name", "Pages"), ("count", "Installs"))) }}
+</section>
+<section class="panel">
   <h2>Where loaded builds came from</h2>
   <p class="muted small">Reports that loaded at least one build from each source.</p>
   {{ table(t.sources, (("name", "Source"), ("count", "Reports"))) }}

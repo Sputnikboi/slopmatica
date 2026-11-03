@@ -56,7 +56,7 @@ def used(c, h) -> int:
 
 
 def test_version_bumped():
-    assert tuple(map(int, __version__.split("."))) >= (0, 10, 0) and SCHEMA_VERSION == 7
+    assert tuple(map(int, __version__.split("."))) >= (0, 10, 0) and SCHEMA_VERSION >= 7
 
 
 def test_settings_from_env():
@@ -104,7 +104,7 @@ def test_migrates_a_v6_database(make_client, data_dir):
     body, other = v6_data_dir(data_dir)
     c = make_client()
     db = c.app.state.store.db
-    assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 7
+    assert db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION >= 7
     assert columns(db, "files")[-1] == "listing_post"
     assert columns(db, "favorites") == ["post_id", "uuid", "created"]
     assert columns(db, "post_saves") == ["post_id", "uuid", "at"]
@@ -127,7 +127,7 @@ def test_migrates_a_v6_database(make_client, data_dir):
     # the new tables take data, and a restart migrates nothing twice
     assert c.post("/api/board/HousePost1/favorite", headers=bob).json() == {"favorites": 1, "favorited": True}
     c2 = make_client()
-    assert c2.app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == 7
+    assert c2.app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     assert c2.get("/api/board/HousePost1", headers=bob).json()["favorited"] is True
     assert files_of(c2, player)["house.litematic"]["listing"] == house
 
@@ -143,7 +143,7 @@ def test_migration_7_is_one_transaction(make_client, data_dir, monkeypatch):
     assert db.execute("SELECT COUNT(*) FROM sqlite_master WHERE name IN ('favorites', 'post_saves', 'feedback_files')").fetchone()[0] == 0
     db.close()
     monkeypatch.undo()
-    assert make_client().app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == 7
+    assert make_client().app.state.store.db.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
 
 # ------------------------------------------------------------------ My files: what is on the board

@@ -198,6 +198,8 @@ TELEMETRY_INSTALL_LIMIT = 30  # reports per install per window
 TELEMETRY_KEEP_DAYS = 180  # older reports are deleted at startup
 SOURCE_RE = re.compile(r"^(?:local|cloud|shared|board:[A-Za-z0-9_-]{1,32})$")
 SETTING_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
+# A Quick Menu action: a built-in id, or a setting toggle "toggle:<setting>:<value>|<value>...".
+QUICK_ACTION_RE = re.compile(r"^(?:[a-z][a-z0-9_]{0,39}|toggle:[A-Za-z][A-Za-z0-9_]{0,63}:[A-Za-z0-9_.|-]{0,200})$")
 
 # ---- identity: display names, avatars, Discord
 MIN_DISPLAY_NAME_LEN = 3
@@ -1067,6 +1069,10 @@ CREATE TABLE IF NOT EXISTS feedback_files (      -- a report's attachments, in f
     created INTEGER NOT NULL,      -- unix ms
     PRIMARY KEY (feedback_id, kind)
 );
+""",
+    # 0.11.0: the Quick Menu and action wheel layouts from usage reports (dropped before).
+    8: """
+ALTER TABLE telemetry ADD COLUMN quick TEXT NOT NULL DEFAULT '{}';
 """,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
@@ -4761,6 +4767,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ApiError(400, f"{key} must be an object")
         return v
 
+    def tele_quick(d: dict[str, Any]) -> dict[str, Any]:
+        """The Quick Menu and wheel part of a report, keeping only well-formed values."""
+        def slots(v: Any, n: int) -> list[str] | None:
+            if not isinstance(v, list) or len(v) != n:
+                return None
+            return [a if isinstance(a, str) and (a == "" or QUICK_ACTION_RE.match(a)) else "" for a in v]
+
+        out: dict[str, Any] = {}
+        for key, choices in (("quickStyle", ("HOTBAR", "WHEEL")), ("quickMode", ("CLICK", "RELEASE"))):
+            if d.get(key) in choices:
+                out[key] = d[key]
+        for key in ("quickCloseAfterUse", "wheelCloseAfterUse", "wheelResetPage"):
+            if isinstance(d.get(key), bool):
+                out[key] = d[key]
+        if (hotbar := slots(d.get("quickMenu"), 9)) is not None:
+            out["quickMenu"] = hotbar
+        pages = d.get("wheelPages")
+        if isinstance(pages, list) and 0 < len(pages) <= 9:
+            checked = [slots(p, 8) for p in pages]
+            if all(p is not None for p in checked):
+                out["wheelPages"] = checked
+        return out
+
     def tele_list(d: dict[str, Any], key: str) -> list[Any]:
         v = d.get(key)
         if v is None:
@@ -4820,7 +4849,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if SETTING_NAME_RE.match(k) and type(n) is int and 0 <= n <= 10**9:
                 keys[k] = n
         values.update(received=now_s(), schematics=json.dumps(sources), settings_changed=json.dumps(changed),
-                      keys=json.dumps(keys))
+                      keys=json.dumps(keys), quick=json.dumps(tele_quick(data)))
         ip_key = hmac.new(store.ip_salt, client_ip(request).encode(), hashlib.sha256).hexdigest()[:24]
         if not telemetry_allowed([("ip:" + ip_key, TELEMETRY_IP_LIMIT), ("install:" + values["install"], TELEMETRY_INSTALL_LIMIT)]):
             raise ApiError(429, "too many reports for now, try again later")
@@ -4878,6 +4907,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 top_posts.append({"id": pid, "title": post.title, "installs": len(installs)})
             if len(top_posts) == 10:
                 break
+        styles: dict[str, int] = {}
+        hotbar_actions: dict[str, int] = {}
+        wheel_actions: dict[str, int] = {}
+        wheel_pages: dict[str, int] = {}
+        for r in latest.values():
+            quick = json.loads(r["quick"]) if r["quick"] else {}
+            if "quickStyle" in quick:
+                styles[quick["quickStyle"].title()] = styles.get(quick["quickStyle"].title(), 0) + 1
+            for action in set(quick.get("quickMenu", [])) - {""}:
+                hotbar_actions[action] = hotbar_actions.get(action, 0) + 1
+            if "wheelPages" in quick:
+                n = str(len(quick["wheelPages"]))
+                wheel_pages[n] = wheel_pages.get(n, 0) + 1
+                for action in {a for p in quick["wheelPages"] for a in p} - {""}:
+                    wheel_actions[action] = wheel_actions.get(action, 0) + 1
         oses: dict[str, int] = {}
         memory: dict[str, int] = {}
         for r in latest.values():
@@ -4895,6 +4939,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "settings": ranked(settings_count),
             "keys": [{"name": k, "uses": v[0], "installs": v[1]} for k, v in sorted(keys.items(), key=lambda kv: (-kv[1][0], kv[0]))],
             "sources": ranked(sources), "topPosts": top_posts,
+            "quickStyles": ranked(styles), "hotbarActions": ranked(hotbar_actions), "wheelActions": ranked(wheel_actions),
+            "wheelPages": ranked(wheel_pages),
             "os": ranked(oses), "memory": [{"name": b, "count": memory.get(b, 0)} for b in MEMORY_BUCKETS if memory.get(b)],
         }
 
