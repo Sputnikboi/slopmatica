@@ -3,7 +3,7 @@
   "id": "slopmatica",
   "version": "${version}",
   "name": "Slopmatica",
-  "description": "Schematic holograms for building: shows what is missing, correct, or wrong. Reads its own .slopmatic files, vanilla .nbt structures and Litematica .litematic files.",
+  "description": "Schematic holograms for building: shows what is missing, correct, or wrong. Reads its own .slopmatic files, vanilla .nbt structures, Litematica .litematic and WorldEdit .schem files. NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.",
   "authors": [
     "Sputnikboi"
   ],

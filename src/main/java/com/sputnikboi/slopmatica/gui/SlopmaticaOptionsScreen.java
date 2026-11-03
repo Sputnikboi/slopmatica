@@ -115,8 +115,13 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
             Button.builder(Component.translatable("slopmatica.options.controls_keys"), b -> minecraft.gui.setScreen(new ControlsKeysScreen(this)))
                 .tooltip(Tooltip.create(Component.translatable("slopmatica.options.controls_keys.tooltip"))).width(WIDE).build()
         );
+        Button tour = Button.builder(Component.translatable("slopmatica.options.tour"), b -> {
+            minecraft.gui.setScreen(null);
+            com.sputnikboi.slopmatica.tour.FeatureTour.INSTANCE.start(minecraft);
+        }).tooltip(Tooltip.create(Component.translatable("slopmatica.options.tour.tooltip"))).width(WIDE).build();
+        tour.active = minecraft.level != null;
         list.addSmall(Button.builder(Component.translatable("slopmatica.options.quick_actions"), b -> minecraft.gui.setScreen(new QuickMenuEditScreen(this)))
-            .tooltip(Tooltip.create(Component.translatable("slopmatica.options.quick_actions.tooltip"))).width(WIDE).build(), null);
+            .tooltip(Tooltip.create(Component.translatable("slopmatica.options.quick_actions.tooltip"))).width(WIDE).build(), tour);
 
         list.addHeader(Component.translatable("slopmatica.options.other"));
         Button importButton = Button.builder(Component.translatable("slopmatica.options.import_litematica"), b -> minecraft.gui.setScreen(new LitematicaImportScreen(this)))

@@ -143,6 +143,8 @@ public final class DevHarness {
                     screen.mouseDragged(new net.minecraft.client.input.MouseButtonEvent(x, y, info), (x2 - x1) / 10, (y2 - y1) / 10);
                 }
                 screen.mouseReleased(new net.minecraft.client.input.MouseButtonEvent(x2, y2, info));
+            } else if (step.equals("tour")) {
+                com.sputnikboi.slopmatica.tour.FeatureTour.INSTANCE.start(mc);
             } else if (step.equals("supply")) {
                 com.sputnikboi.slopmatica.plan.SupplyChests.place(mc);
             } else if (step.startsWith("wheel ")) {

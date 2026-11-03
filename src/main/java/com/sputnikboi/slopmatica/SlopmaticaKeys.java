@@ -44,6 +44,9 @@ public final class SlopmaticaKeys {
     public static final KeyMapping PLACEMENT_VIEW = register(MAIN, "placement_view", InputConstants.KEY_K);
     /** J is unused in vanilla. */
     public static final KeyMapping QUICK_MENU = register(MAIN, "quick_menu", InputConstants.KEY_J);
+    /** Only act while the feature tour runs. */
+    public static final KeyMapping TOUR_NEXT = register(MAIN, "tour_next", InputConstants.KEY_RBRACKET);
+    public static final KeyMapping TOUR_BACK = register(MAIN, "tour_back", InputConstants.KEY_LBRACKET);
     private static final KeyMapping LOAD_SCHEMATIC = register(MAIN, "load_schematic");
     private static final KeyMapping TOGGLE_HOLOGRAM = register(MAIN, "toggle_hologram");
     private static final KeyMapping TOGGLE_OUTLINES = register(MAIN, "toggle_outlines");
@@ -199,6 +202,12 @@ public final class SlopmaticaKeys {
         }
         while (pressed(PLAN_INVENTORY)) {
             com.sputnikboi.slopmatica.plan.InventoryPlanner.INSTANCE.calculate(mc);
+        }
+        while (pressed(TOUR_NEXT)) {
+            com.sputnikboi.slopmatica.tour.FeatureTour.INSTANCE.next();
+        }
+        while (pressed(TOUR_BACK)) {
+            com.sputnikboi.slopmatica.tour.FeatureTour.INSTANCE.back();
         }
         while (pressed(QUICK_MENU)) {
             com.sputnikboi.slopmatica.quick.QuickMenu.INSTANCE.toggle(mc);

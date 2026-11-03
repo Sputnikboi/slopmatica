@@ -77,7 +77,7 @@ public final class Clipboard {
 
     /**
      * Saves the selection as a schematic: named {@code name} (or "copy <time>") in {@code dir}.
-     * The copy key and the build view's Ctrl+S save screen both come here.
+     * The copy key and the build view's save screen (V) both come here.
      */
     public void save(Minecraft mc, @Nullable String chosenName, SchematicFormats format, Path dir) {
         ClientLevel level = mc.level;
@@ -229,7 +229,9 @@ public final class Clipboard {
             return;
         }
         BlockPos at;
-        if (mc.hitResult instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK) {
+        if (com.sputnikboi.slopmatica.view.PlacementView.INSTANCE.freecam()) {
+            at = com.sputnikboi.slopmatica.view.PlacementView.INSTANCE.cameraTarget(mc); // Where the free camera looks.
+        } else if (mc.hitResult instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK) {
             at = hit.getBlockPos().relative(hit.getDirection());
         } else {
             at = mc.player.blockPosition();

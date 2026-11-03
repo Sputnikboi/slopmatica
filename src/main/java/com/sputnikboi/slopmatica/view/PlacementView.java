@@ -60,6 +60,7 @@ public final class PlacementView {
     private static final double CAMERA_RADIUS = 0.25;
 
     /** The view is open; it may be on a build ({@link #placement}) or, without one, just for selecting. */
+    private boolean undoWasDown;
     private boolean open;
     private @Nullable Placement placement;
     private double x, y, z, xo, yo, zo;
@@ -347,10 +348,14 @@ public final class PlacementView {
         while (SlopmaticaKeys.pressed(SlopmaticaKeys.VIEW_ROTATE)) {
             rotate(mc, Rotation.CLOCKWISE_90);
         }
+        // Ctrl+Z undoes whatever the mirror key is bound to (Ctrl and the letters also fly, so the raw keys are watched).
+        boolean undoDown = mc.hasControlDown() && InputConstants.isKeyDown(InputConstants.KEY_Z);
+        if (undoDown && !undoWasDown && active() && mc.gui.screen() == null) {
+            undo(mc);
+        }
+        undoWasDown = undoDown;
         while (SlopmaticaKeys.pressed(SlopmaticaKeys.VIEW_MIRROR)) {
-            if (mc.hasControlDown()) {
-                undo(mc); // Ctrl+Z
-            } else {
+            if (!mc.hasControlDown()) {
                 mirror(mc);
             }
         }
@@ -521,6 +526,16 @@ public final class PlacementView {
         BoundingBox b = p.schematic().bounds();
         Placement.Transform t = p.transform();
         return BoundingBox.fromCorners(t.toWorld(b.minX(), b.minY(), b.minZ()), t.toWorld(b.maxX(), b.maxY(), b.maxZ()));
+    }
+
+    /** The block (real or ghost) the free camera looks at, for keys that act on what you look at. */
+    public @Nullable BlockPos cameraPointed(Minecraft mc) {
+        return pointedBlock(mc, new Vec3(x, y, z), look());
+    }
+
+    /** Where something placed from the free camera goes: in front of the face it looks at. */
+    public BlockPos cameraTarget(Minecraft mc) {
+        return target(mc);
     }
 
     /** The block in front of the face under the crosshair, or a point at carrying distance in the air. */

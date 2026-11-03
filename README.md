@@ -18,8 +18,11 @@ actual model:
 
 - **M** opens the menu: load schematics (with search across subfolders), manage placements,
   options.
-- Every keybind lives in vanilla Options > Controls > Key Binds > Slopmatica. Only the menu is
-  bound by default.
+- **J** opens the Quick Menu (a hotbar or a wheel of actions), **K** the build view (free camera,
+  move/select/crop tools; **V** saves the selection there), **B** sets a selection corner.
+- Every keybind lives in vanilla Options > Controls > Key Binds > Slopmatica (or the menu's
+  Options > Key Binds...).
+- The local-only edition (`slopmatica-local-<version>.jar`) has no online features at all.
 - `/slopmatica` has commands for load, move, nudge, rotate, mirror, show/hide and opacity.
 
 Requires Fabric Loader 0.19.5+ and Fabric API.

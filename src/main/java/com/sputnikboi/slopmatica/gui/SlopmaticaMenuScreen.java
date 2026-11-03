@@ -75,7 +75,7 @@ public class SlopmaticaMenuScreen extends Screen {
         materials.active = active != null;
         Button plan = materialRow.addChild(Button.builder(Component.translatable("slopmatica.menu.plan"), b -> minecraft.gui.setScreen(new InventoryPlanScreen(this)))
             .width((BUTTON_WIDTH - 4) / 2).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.plan.tooltip"))).build());
-        plan.active = active != null;
+        plan.active = loaded > 0; // The planner uses every shown build, not just the selected one.
         LinearLayout copyRow = column.addChild(LinearLayout.horizontal().spacing(4));
         copyRow.addChild(Button.builder(Component.translatable("slopmatica.menu.copy"), b -> {
             onClose();

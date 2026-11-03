@@ -30,6 +30,7 @@ public final class SlopmaticaClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         HologramRenderer renderer = HologramRenderer.INSTANCE;
+        renderer.restoreHidden();
         PlacementManager.INSTANCE.addListener(renderer::onPlacementsChanged);
         PlacementManager.INSTANCE.addListener(PlacementStore.INSTANCE::markDirty);
         ClientPlayConnectionEvents.JOIN.register((handler, sender, mc) -> PlacementStore.INSTANCE.onJoin(mc));
@@ -70,6 +71,8 @@ public final class SlopmaticaClient implements ClientModInitializer {
         // The Quick Menu reads clicks and E before vanilla does, and takes the hotbar's place while open.
         ClientTickEvents.START_CLIENT_TICK.register(com.sputnikboi.slopmatica.quick.QuickMenu.INSTANCE::tick);
         ClientTickEvents.START_CLIENT_TICK.register(com.sputnikboi.slopmatica.quick.ActionWheel.INSTANCE::tick);
+        HudElementRegistry.addLast(net.minecraft.resources.Identifier.fromNamespaceAndPath("slopmatica", "tour"),
+            (graphics, delta) -> com.sputnikboi.slopmatica.tour.FeatureTour.INSTANCE.extract(graphics, Minecraft.getInstance()));
         HudElementRegistry.addLast(net.minecraft.resources.Identifier.fromNamespaceAndPath("slopmatica", "action_wheel"), (graphics, delta) -> {
             if (com.sputnikboi.slopmatica.quick.ActionWheel.INSTANCE.isOpen()) {
                 com.sputnikboi.slopmatica.quick.ActionWheel.INSTANCE.extract(graphics, Minecraft.getInstance());

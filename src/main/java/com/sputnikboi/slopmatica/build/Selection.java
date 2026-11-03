@@ -37,6 +37,17 @@ public final class Selection {
             return;
         }
         BlockPos pos;
+        var view = com.sputnikboi.slopmatica.view.PlacementView.INSTANCE;
+        if (view.freecam()) {
+            // In the build view your body is elsewhere: the corner is what the camera looks at.
+            pos = view.cameraPointed(mc);
+            if (pos == null) {
+                SlopmaticaActions.actionBar(Component.translatable("slopmatica.selection.look_at_block").withColor(SlopmaticaActions.ERROR));
+                return;
+            }
+            setCorner(pos, mc.level.dimension().identifier().toString());
+            return;
+        }
         boolean looking = mc.hitResult instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK;
         switch (com.sputnikboi.slopmatica.config.SlopmaticaConfig.get().cornerMode) {
             case FEET -> pos = mc.player.blockPosition();
@@ -89,6 +100,16 @@ public final class Selection {
      * Shrinks the selection to the blocks in it: all-air layers at any side are trimmed off.
      * Returns false if there is no selection or nothing but air in it.
      */
+    private static boolean ghostAt(java.util.List<com.sputnikboi.slopmatica.placement.Placement.Transform> ghosts, int x, int y, int z) {
+        for (var t : ghosts) {
+            net.minecraft.world.level.block.state.BlockState state = t.stateAt(x, y, z);
+            if (state != null && !state.isAir()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public boolean fitToBlocks(net.minecraft.world.level.Level level) {
         BoundingBox box = box();
         if (box == null) {
@@ -96,10 +117,13 @@ public final class Selection {
         }
         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        // Unbuilt parts of a shown build count too, so a selection fits a build before it exists.
+        java.util.List<com.sputnikboi.slopmatica.placement.Placement.Transform> ghosts = level instanceof net.minecraft.client.multiplayer.ClientLevel client
+            ? com.sputnikboi.slopmatica.verify.SchematicRaycast.visibleTransforms(client) : java.util.List.of();
         for (int y = box.minY(); y <= box.maxY(); y++) {
             for (int z = box.minZ(); z <= box.maxZ(); z++) {
                 for (int x = box.minX(); x <= box.maxX(); x++) {
-                    if (!level.getBlockState(pos.set(x, y, z)).isAir()) {
+                    if (!level.getBlockState(pos.set(x, y, z)).isAir() || ghostAt(ghosts, x, y, z)) {
                         minX = Math.min(minX, x);
                         minY = Math.min(minY, y);
                         minZ = Math.min(minZ, z);

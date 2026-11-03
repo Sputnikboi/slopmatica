@@ -112,9 +112,19 @@ public final class HologramRenderer {
         return hidden;
     }
 
-    /** Hides every placement without unloading anything. */
+    /** Hides every placement without unloading anything; remembered across restarts. */
     public void setHidden(boolean hidden) {
         this.hidden = hidden;
+        com.sputnikboi.slopmatica.config.SlopmaticaConfig config = com.sputnikboi.slopmatica.config.SlopmaticaConfig.get();
+        if (config.hologramHidden != hidden) {
+            config.hologramHidden = hidden;
+            config.save();
+        }
+    }
+
+    /** At startup: as it was left. */
+    public void restoreHidden() {
+        this.hidden = com.sputnikboi.slopmatica.config.SlopmaticaConfig.get().hologramHidden;
     }
 
     /** An option that is baked into the meshes (outline width or which statuses get outlines) changed. */

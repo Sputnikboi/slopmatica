@@ -26,6 +26,8 @@ public final class SlopmaticaConfig {
 
     public float ghostOpacity = 0.65F;
     public boolean showGhosts = true;
+    /** The whole hologram hidden (menu or key), as it was left. */
+    public boolean hologramHidden = false;
     /** Ghost blocks drawn fully solid instead of see-through. */
     public boolean solidGhosts = false;
     /** Show the technical options (thickness, fading, formats, cloud address...). */
@@ -322,7 +324,7 @@ public final class SlopmaticaConfig {
             planIgnored = new java.util.LinkedHashSet<>();
         }
         planSlots = Math.clamp(planSlots, 1, 36);
-        planShulkers = Math.clamp(planShulkers, 0, planUnlimitedShulkers ? 999 : 53);
+        planShulkers = Math.clamp(planShulkers, 0, planUnlimitedShulkers ? 200 : 53);
         return this;
     }
 
