@@ -51,6 +51,14 @@ public final class SlopmaticaConfig {
     public com.sputnikboi.slopmatica.quick.QuickMenu.Mode quickMode = com.sputnikboi.slopmatica.quick.QuickMenu.Mode.CLICK;
     /** Close the Quick Menu after running an action (otherwise it stays open until its key is pressed again). */
     public boolean quickCloseAfterUse = false;
+    /** What the Quick Menu key opens: the hotbar of actions or the action wheel. */
+    public com.sputnikboi.slopmatica.quick.QuickMenu.Style quickStyle = com.sputnikboi.slopmatica.quick.QuickMenu.Style.HOTBAR;
+    /** The action wheel's pages, each {@link com.sputnikboi.slopmatica.quick.QuickLayout#WHEEL_SLOTS} action ids ("" for empty). */
+    public java.util.List<java.util.List<String>> wheelPages = wheelDefault();
+    /** Close the wheel after running an action. Actions that open a screen close it anyway. */
+    public boolean wheelCloseAfterUse = true;
+    /** Open the wheel on its first page each time (otherwise where you left it). */
+    public boolean wheelResetPage = true;
     /** Setting toggles the player made, offered in the Quick Menu editor (ids, see SettingToggle). */
     public java.util.List<String> quickToggles = new java.util.ArrayList<>();
     /** Keys bound straight to actions: action id -> key name (key.keyboard.x). */
@@ -130,6 +138,12 @@ public final class SlopmaticaConfig {
     public boolean planShowInInventory = true;
 
     /** Settings that belong to one instance: never copied by shared folders or cloud profiles. */
+    public static java.util.List<java.util.List<String>> wheelDefault() {
+        java.util.List<java.util.List<String>> pages = new java.util.ArrayList<>();
+        com.sputnikboi.slopmatica.quick.QuickLayout.WHEEL_DEFAULT.forEach(page -> pages.add(new java.util.ArrayList<>(page)));
+        return pages;
+    }
+
     public static final java.util.Set<String> INSTANCE_ONLY = java.util.Set.of("shareSchematics", "shareSettings", "sharedFolder", "welcomeShown",
         "cloudProfile", "cloudProfileSync", "profilePromptShown", "cloudProfilePulled");
 
@@ -276,6 +290,12 @@ public final class SlopmaticaConfig {
         }
         if (quickMenu == null || quickMenu.size() != 9) {
             quickMenu = new java.util.ArrayList<>(com.sputnikboi.slopmatica.quick.QuickLayout.DEFAULT);
+        }
+        if (quickStyle == null) {
+            quickStyle = com.sputnikboi.slopmatica.quick.QuickMenu.Style.HOTBAR;
+        }
+        if (wheelPages == null || wheelPages.isEmpty() || wheelPages.stream().anyMatch(page -> page == null || page.size() != com.sputnikboi.slopmatica.quick.QuickLayout.WHEEL_SLOTS)) {
+            wheelPages = wheelDefault();
         }
         if (quickMode == null) {
             quickMode = com.sputnikboi.slopmatica.quick.QuickMenu.Mode.CLICK;

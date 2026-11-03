@@ -69,6 +69,12 @@ public final class SlopmaticaClient implements ClientModInitializer {
         com.sputnikboi.slopmatica.plan.InventoryOverlay.register();
         // The Quick Menu reads clicks and E before vanilla does, and takes the hotbar's place while open.
         ClientTickEvents.START_CLIENT_TICK.register(com.sputnikboi.slopmatica.quick.QuickMenu.INSTANCE::tick);
+        ClientTickEvents.START_CLIENT_TICK.register(com.sputnikboi.slopmatica.quick.ActionWheel.INSTANCE::tick);
+        HudElementRegistry.addLast(net.minecraft.resources.Identifier.fromNamespaceAndPath("slopmatica", "action_wheel"), (graphics, delta) -> {
+            if (com.sputnikboi.slopmatica.quick.ActionWheel.INSTANCE.isOpen()) {
+                com.sputnikboi.slopmatica.quick.ActionWheel.INSTANCE.extract(graphics, Minecraft.getInstance());
+            }
+        });
         HudElementRegistry.replaceElement(net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements.HOTBAR, hotbar -> (graphics, delta) -> {
             Minecraft mc = Minecraft.getInstance();
             if (com.sputnikboi.slopmatica.quick.QuickMenu.INSTANCE.isOpen() && mc.player != null) {

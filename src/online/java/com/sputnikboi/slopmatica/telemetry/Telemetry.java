@@ -218,6 +218,20 @@ public final class Telemetry {
             r.addProperty("quickMode", SlopmaticaConfig.get().quickMode.name());
             r.addProperty("quickCloseAfterUse", SlopmaticaConfig.get().quickCloseAfterUse);
         }
+        // The wheel: which style people pick, and its pages when changed from the default.
+        SlopmaticaConfig c = SlopmaticaConfig.get();
+        r.addProperty("quickStyle", c.quickStyle.name());
+        if (c.quickStyle == com.sputnikboi.slopmatica.quick.QuickMenu.Style.WHEEL || !c.wheelPages.equals(com.sputnikboi.slopmatica.quick.QuickLayout.WHEEL_DEFAULT)) {
+            JsonArray pages = new JsonArray();
+            for (java.util.List<String> page : c.wheelPages) {
+                JsonArray slots = new JsonArray();
+                page.forEach(slots::add);
+                pages.add(slots);
+            }
+            r.add("wheelPages", pages);
+            r.addProperty("wheelCloseAfterUse", c.wheelCloseAfterUse);
+            r.addProperty("wheelResetPage", c.wheelResetPage);
+        }
         return r;
     }
 

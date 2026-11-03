@@ -29,6 +29,12 @@ public final class QuickMenu {
     private static final Identifier HOTBAR = Identifier.withDefaultNamespace("hud/hotbar");
     private static final Identifier SELECTION = Identifier.withDefaultNamespace("hud/hotbar_selection");
 
+    /** What the Quick Menu key opens. */
+    public enum Style {
+        HOTBAR,
+        WHEEL
+    }
+
     public enum Mode {
         /** Pick a slot, then left or right click. */
         CLICK,
@@ -48,6 +54,11 @@ public final class QuickMenu {
         return open;
     }
 
+    /** Whether clicks, scrolling and the inventory key belong to the Quick Menu or the wheel right now. */
+    public static boolean capturing() {
+        return INSTANCE.open || ActionWheel.INSTANCE.isOpen();
+    }
+
     public int selected() {
         return selected;
     }
@@ -65,6 +76,8 @@ public final class QuickMenu {
     public void toggle(Minecraft mc) {
         if (open) {
             close(mc);
+        } else if (ActionWheel.INSTANCE.isOpen() || SlopmaticaConfig.get().quickStyle == Style.WHEEL) {
+            ActionWheel.INSTANCE.toggle(mc);
         } else if (mc.player != null && mc.gui.screen() == null) {
             open = true;
             selected = mc.player.getInventory().getSelectedSlot();
@@ -100,7 +113,7 @@ public final class QuickMenu {
             }
         }
         while (mc.options.keyInventory.consumeClick()) {
-            mc.gui.setScreen(new QuickMenuEditScreen(null));
+            mc.gui.setScreen(new QuickMenuEditScreen(null, false));
             return;
         }
         Mode mode = SlopmaticaConfig.get().quickMode;

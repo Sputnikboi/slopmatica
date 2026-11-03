@@ -9,6 +9,13 @@ import java.util.List;
 public final class QuickLayout {
     public static final List<String> DEFAULT = List.of("build_view", "easy_place", "plan", "undo", "menu", "materials", "", "", "");
 
+    /** Slots on each page of the action wheel, clockwise from the top. */
+    public static final int WHEEL_SLOTS = 8;
+
+    public static final List<List<String>> WHEEL_DEFAULT = List.of(
+        List.of("build_view", "easy_place", "plan", "undo", "menu", "materials", "hologram", "spawn_check"),
+        List.of("layer_mode", "layer_up", "layer_down", "corner", "fit_selection", "copy", "paste", "save_selection"));
+
     private QuickLayout() {
     }
 }

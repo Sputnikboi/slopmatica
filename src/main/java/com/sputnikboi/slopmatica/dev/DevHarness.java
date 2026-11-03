@@ -166,7 +166,9 @@ public final class DevHarness {
                 String[] parts = step.split(" ");
                 double dx = Double.parseDouble(parts[1]), dy = Double.parseDouble(parts[2]);
                 // What the mouse mixin does with real mouse movement.
-                if (PlacementView.INSTANCE.active()) {
+                if (com.sputnikboi.slopmatica.quick.ActionWheel.INSTANCE.isOpen()) {
+                    com.sputnikboi.slopmatica.quick.ActionWheel.INSTANCE.move(dx, dy);
+                } else if (PlacementView.INSTANCE.active()) {
                     PlacementView.INSTANCE.turn(dx, dy);
                 } else {
                     mc.player.turn(dx, dy);
