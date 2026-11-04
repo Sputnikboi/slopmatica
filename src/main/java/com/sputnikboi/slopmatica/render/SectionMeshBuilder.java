@@ -106,6 +106,8 @@ final class SectionMeshBuilder {
 
     private final Input in;
     private final BlockState[] expected = new BlockState[S * S * S];
+    /** As {@link #expected}, but with the schematic's air too: what ghost fluids flow against. */
+    private final BlockState[] shown = new BlockState[S * S * S];
     private final BlockStatus[] status = new BlockStatus[S * S * S];
     private final Map<BlockState, Boolean> fullCubes = new IdentityHashMap<>();
 
@@ -124,10 +126,11 @@ final class SectionMeshBuilder {
             for (int z = 0; z < S; z++) {
                 for (int x = 0; x < S; x++) {
                     BlockState want = expectedAt(world.baseX + x, world.baseY + y, world.baseZ + z);
+                    int i = WorldSnapshot.index(x, y, z);
+                    shown[i] = want;
                     if (want == null || want.isAir()) {
                         continue;
                     }
-                    int i = WorldSnapshot.index(x, y, z);
                     expected[i] = want;
                     status[i] = BlockMatcher.compare(want, world.get(i));
                     any = true;
@@ -145,7 +148,8 @@ final class SectionMeshBuilder {
         BufferBuilder ghosts = new BufferBuilder(ghostBuffer, PrimitiveTopology.QUADS, DefaultVertexFormat.BLOCK);
         BufferBuilder lines = new BufferBuilder(lineBuffer, PrimitiveTopology.LINES, DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH);
         BufferBuilder alerts = new BufferBuilder(alertBuffer, PrimitiveTopology.LINES, DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH);
-        GhostBlockView view = new GhostBlockView(in.level(), world, expected);
+        GhostBlockView view = new GhostBlockView(in.level(), world, expected, false);
+        GhostBlockView fluidView = new GhostBlockView(in.level(), world, shown, true);
         // No ambient occlusion: ghosts are lit flat, which keeps the vanilla look without dark seams.
         ModelBlockRenderer blockRenderer = new ModelBlockRenderer(false, true, in.blockColors());
         FluidRenderer fluidRenderer = new FluidRenderer(in.fluidModels());
@@ -166,7 +170,7 @@ final class SectionMeshBuilder {
                     if (st == BlockStatus.MISSING) {
                         FluidState fluid = want.getFluidState();
                         if (!fluid.isEmpty()) {
-                            fluidRenderer.tesselate(view, pos, layer -> ghosts, want, fluid);
+                            fluidRenderer.tesselate(fluidView, pos, layer -> ghosts, want, fluid);
                         }
                         if (want.getRenderShape() == RenderShape.MODEL) {
                             blockRenderer.tesselateBlock(quadOutput, x - 1, y - 1, z - 1, view, pos, want, in.blockModels().get(want), want.getSeed(pos));

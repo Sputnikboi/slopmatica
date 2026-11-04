@@ -66,6 +66,8 @@ public final class SlopmaticaConfig {
     public boolean wheelCloseAfterUse = true;
     /** Open the wheel on its first page each time (otherwise where you left it). */
     public boolean wheelResetPage = true;
+    /** The wheel's size, percent (50-200). */
+    public int wheelSize = 100;
     /** Setting toggles the player made, offered in the Quick Menu editor (ids, see SettingToggle). */
     public java.util.List<String> quickToggles = new java.util.ArrayList<>();
     /** Keys bound straight to actions: action id -> key name (key.keyboard.x). */
@@ -105,6 +107,10 @@ public final class SlopmaticaConfig {
     public boolean easyPlaceAngel = false;
     /** With Easy Place on, refuse normal placements that disagree with the schematic. */
     public boolean easyPlaceRestrict = true;
+    /** With Easy Place on, refuse normal placements outside every schematic's area. */
+    public boolean easyPlaceInsideOnly = true;
+    /** In a single-layer or up-to-layer view, move up a layer once every block in it is right. */
+    public boolean autoLayer = true;
     /** Copy block entity data (chest contents, sign text) and entities (frames, armor stands), and paste them. */
     public boolean includeNbt = true;
     /** The file format copies are saved in. */

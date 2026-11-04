@@ -14,24 +14,25 @@ import net.minecraft.resources.Identifier;
 
 /**
  * The action wheel, the Quick Menu's other style: the same actions in a ring around the
- * crosshair, on as many pages as you like. While it is open the mouse moves a pointer instead of
- * the camera; left click runs the action it points at, right click (or scrolling) turns the page.
- * It closes on the Quick Menu key, after use (by option), and whenever a screen opens, so an
- * action that opens a menu always closes it.
+ * crosshair, on as many pages as you like. The actions on a page share the ring evenly, however
+ * many there are. While it is open the mouse moves a pointer instead of the camera; left click
+ * runs the action it points at (in the empty middle: back a page), right click turns the page.
+ * It closes on the Quick Menu key (or letting go of it, when held to use), after use (by option),
+ * and whenever a screen opens, so an action that opens a menu always closes it.
  */
 public final class ActionWheel {
     public static final ActionWheel INSTANCE = new ActionWheel();
 
     /** How far the pointer goes from the centre (mouse units); it reaches the middle of the ring. */
     private static final double REACH = 40;
-    /** The wheel in GUI pixels: outer edge, the empty middle (no action), and where icons sit. */
+    /** The wheel in GUI pixels at 100% size: outer edge, the empty middle (no action), and where icons sit. */
     private static final int OUTER = 80, HOLE = 17, ICONS = (OUTER + HOLE) / 2 + 2;
     /** Mouse units inside which the pointer is in the empty middle. */
     private static final double DEADZONE = REACH * HOLE / ICONS;
     /** The wheel's textures are drawn this big and scaled down, so edges stay smooth at any GUI scale. */
     private static final int TEXTURE = 512;
 
-    /** Ring, middle and highlighted wedges, made for one slot count. */
+    /** Ring, middle and highlighted wedges, made for one action count. */
     private int texturesFor = -1;
 
     private boolean open;
@@ -55,7 +56,10 @@ public final class ActionWheel {
 
     public void toggle(Minecraft mc) {
         if (open) {
-            close();
+            // Held to use, letting go closes it; key repeat while held must not.
+            if (SlopmaticaConfig.get().quickMode != QuickMenu.Mode.RELEASE) {
+                close();
+            }
         } else if (mc.player != null && mc.gui.screen() == null) {
             open = true;
             px = py = 0;
@@ -87,14 +91,32 @@ public final class ActionWheel {
         page = Math.floorMod(page() + by, pages().size());
     }
 
-    /** The slot the pointer is on, clockwise from the top; -1 in the middle. */
-    public int hovered() {
-        if (px * px + py * py < DEADZONE * DEADZONE) {
+    /** The page's slots that hold an action, in order: these share the ring, empty slots take no room. */
+    private List<Integer> active() {
+        List<String> slots = pages().get(page());
+        List<Integer> active = new java.util.ArrayList<>();
+        for (int i = 0; i < slots.size(); i++) {
+            if (QuickAction.get(slots.get(i)) != null) {
+                active.add(i);
+            }
+        }
+        return active;
+    }
+
+    /** The wedge the pointer is on (an index into {@link #active}), clockwise from the top; -1 in the middle. */
+    private int hoveredWedge(int wedges) {
+        if (wedges == 0 || px * px + py * py < DEADZONE * DEADZONE) {
             return -1;
         }
         double angle = Math.atan2(px, -py); // 0 at the top, clockwise
-        double sector = 2 * Math.PI / QuickLayout.WHEEL_SLOTS;
-        return Math.floorMod((int) Math.round(angle / sector), QuickLayout.WHEEL_SLOTS);
+        return Math.floorMod((int) Math.round(angle / (2 * Math.PI / wedges)), wedges);
+    }
+
+    /** The page slot the pointer is on; -1 in the middle. */
+    public int hovered() {
+        List<Integer> active = active();
+        int wedge = hoveredWedge(active.size());
+        return wedge < 0 ? -1 : active.get(wedge);
     }
 
     /** Start of the client tick, before vanilla handles clicks and the inventory key. */
@@ -133,6 +155,8 @@ public final class ActionWheel {
             int slot = hovered();
             if (slot >= 0) {
                 trigger(mc, pages().get(page()).get(slot));
+            } else {
+                turnPage(-1); // The empty middle: back a page.
             }
         }
     }
@@ -155,38 +179,40 @@ public final class ActionWheel {
     /** Drawn over the HUD while open. */
     public void extract(GuiGraphicsExtractor g, Minecraft mc) {
         int cx = g.guiWidth() / 2, cy = g.guiHeight() / 2;
+        double scale = scale();
         List<String> slots = pages().get(page());
-        int hovered = hovered();
-        makeTextures(mc, slots.size());
+        List<Integer> active = active();
+        int wedge = hoveredWedge(active.size());
+        int hovered = wedge < 0 ? -1 : active.get(wedge);
+        makeTextures(mc, active.size());
         // The ring (one wedge per action), then the hovered wedge, or the middle lit when no action is picked.
-        blitWheel(g, cx, cy, "ring");
-        blitWheel(g, cx, cy, hovered < 0 ? "middle" : "wedge_" + hovered);
-        for (int i = 0; i < slots.size(); i++) {
-            double angle = 2 * Math.PI * i / slots.size();
-            int x = cx + (int) Math.round(Math.sin(angle) * ICONS) - 8;
-            int y = cy - (int) Math.round(Math.cos(angle) * ICONS) - 8;
-            QuickAction action = QuickAction.get(slots.get(i));
-            if (action != null) {
-                g.item(action.icon().get(), x, y);
-                if (!action.availableNow(mc)) {
-                    g.fill(x, y, x + 16, y + 16, 0xB0303030);
-                }
-                if (action.state() != null) {
-                    g.fill(x + 13, y - 1, x + 17, y + 3, action.state().get() ? 0xFF50E050 : 0xFFE05050);
-                }
+        int outer = (int) Math.round(OUTER * scale);
+        blitWheel(g, cx, cy, outer, "ring");
+        blitWheel(g, cx, cy, outer, wedge < 0 ? "middle" : "wedge_" + wedge);
+        for (int i = 0; i < active.size(); i++) {
+            double angle = 2 * Math.PI * i / active.size();
+            int x = cx + (int) Math.round(Math.sin(angle) * ICONS * scale) - 8;
+            int y = cy - (int) Math.round(Math.cos(angle) * ICONS * scale) - 8;
+            QuickAction action = QuickAction.get(slots.get(active.get(i)));
+            action.drawIcon(g, x, y);
+            if (!action.availableNow(mc)) {
+                g.fill(x, y, x + 16, y + 16, 0xB0303030);
+            }
+            if (action.state() != null) {
+                g.fill(x + 13, y - 1, x + 17, y + 3, action.state().get() ? 0xFF50E050 : 0xFFE05050);
             }
         }
         // The pointer, then the hovered action's name and the page under the wheel.
-        int dx = cx + (int) Math.round(px / REACH * ICONS), dy = cy + (int) Math.round(py / REACH * ICONS);
+        int dx = cx + (int) Math.round(px / REACH * ICONS * scale), dy = cy + (int) Math.round(py / REACH * ICONS * scale);
         g.fill(dx - 1, dy - 1, dx + 2, dy + 2, 0xFFFFFFFF);
         QuickAction current = hovered < 0 ? null : QuickAction.get(slots.get(hovered));
-        Component name = current == null ? Component.translatable(hovered < 0 ? "slopmatica.wheel.point" : "slopmatica.quick.empty")
+        Component name = current == null ? Component.translatable(active.isEmpty() ? "slopmatica.wheel.empty_page" : "slopmatica.wheel.point")
             : current.label().get().copy().withColor(current.availableNow(mc) ? 0xFFFFFFFF : 0xFFA0A0A0);
         Component hint = SlopmaticaConfig.get().quickMode == QuickMenu.Mode.RELEASE
             ? Component.translatable("slopmatica.wheel.hint.release", com.sputnikboi.slopmatica.SlopmaticaKeys.QUICK_MENU.getTranslatedKeyMessage(), page() + 1, pages().size(),
                 mc.options.keyInventory.getTranslatedKeyMessage())
             : Component.translatable("slopmatica.wheel.hint", page() + 1, pages().size(), mc.options.keyInventory.getTranslatedKeyMessage());
-        int ly = cy + OUTER + 6;
+        int ly = cy + outer + 6;
         for (Component line : List.of(name, hint.copy().withColor(0xFFA0A0A0))) {
             int w = mc.font.width(line);
             g.fill(cx - w / 2 - 3, ly - 2, cx + w / 2 + 3, ly + 10, 0x90000000);
@@ -199,11 +225,16 @@ public final class ActionWheel {
         return Identifier.fromNamespaceAndPath("slopmatica", "wheel/" + name);
     }
 
-    private static void blitWheel(GuiGraphicsExtractor g, int cx, int cy, String name) {
-        g.blit(RenderPipelines.GUI_TEXTURED, texture(name), cx - OUTER, cy - OUTER, 0, 0, OUTER * 2, OUTER * 2, TEXTURE, TEXTURE, TEXTURE, TEXTURE);
+    /** The wheel size option as a factor. */
+    private static double scale() {
+        return Math.clamp(SlopmaticaConfig.get().wheelSize, 50, 200) / 100.0;
     }
 
-    /** Paints the ring, the middle and one lit wedge per slot (once per slot count). */
+    private static void blitWheel(GuiGraphicsExtractor g, int cx, int cy, int outer, String name) {
+        g.blit(RenderPipelines.GUI_TEXTURED, texture(name), cx - outer, cy - outer, 0, 0, outer * 2, outer * 2, TEXTURE, TEXTURE, TEXTURE, TEXTURE);
+    }
+
+    /** Paints the ring, the middle and one lit wedge per action (once per action count). */
     private void makeTextures(Minecraft mc, int slots) {
         if (texturesFor == slots) {
             return;
@@ -221,13 +252,14 @@ public final class ActionWheel {
     }
 
     /**
-     * One layer of the wheel, 3x3 supersampled for smooth edges. {@code which}: -2 the ring with its
+     * One layer of the wheel, 3x3 supersampled for smooth edges, in GUI pixels at 100% size (it is
+     * scaled when drawn). {@code which}: -2 the ring with its
      * dividers and the outline of the empty middle; -1 the middle lit; otherwise that slot's wedge lit.
      */
     private static NativeImage paint(int slots, int which) {
         NativeImage image = new NativeImage(TEXTURE, TEXTURE, true);
         double scale = (double) TEXTURE / (OUTER * 2); // texture pixels per GUI pixel
-        double sector = 2 * Math.PI / slots;
+        double sector = 2 * Math.PI / Math.max(1, slots);
         for (int y = 0; y < TEXTURE; y++) {
             for (int x = 0; x < TEXTURE; x++) {
                 float a = 0, r = 0, gr = 0, b = 0;
@@ -258,7 +290,7 @@ public final class ActionWheel {
             return 0;
         }
         if (which == -1) {
-            return d < HOLE - 1.5 ? 0x50FFFFFF : 0; // the middle lit: a click does nothing
+            return d < HOLE - 1.5 ? 0x50FFFFFF : 0; // the middle lit: no action (a click goes back a page)
         }
         if (d < HOLE) {
             return which == -2 && d > HOLE - 1.2 ? 0xC0FFFFFF : 0; // the empty middle's outline
@@ -268,7 +300,8 @@ public final class ActionWheel {
         angle = (angle % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
         int slot = (int) (angle / sector);
         // Distance to the nearest divider, in GUI pixels along the arc.
-        double edge = Math.min(angle - slot * sector, (slot + 1) * sector - angle) * d;
+        // With one action (or none) the ring is a single wedge: no dividers.
+        double edge = sector >= 2 * Math.PI ? OUTER : Math.min(angle - slot * sector, (slot + 1) * sector - angle) * d;
         if (which == -2) {
             if (d > OUTER - 1.2 || d < HOLE + 1.2) {
                 return 0xB0FFFFFF; // outer rim and inner edge

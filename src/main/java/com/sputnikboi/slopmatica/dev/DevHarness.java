@@ -17,6 +17,7 @@ import java.util.List;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
 import net.minecraft.client.Screenshot;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.options.controls.KeyBindsScreen;
@@ -202,6 +203,20 @@ public final class DevHarness {
                     field.setBoolean(com.sputnikboi.slopmatica.config.SlopmaticaConfig.get(), Boolean.parseBoolean(parts[2]));
                 } catch (ReflectiveOperationException e) {
                     LOGGER.warn("No boolean option {}", parts[1]);
+                }
+            } else if (step.startsWith("block ") && mc.level != null) {
+                // block <x> <y> <z>: log the real block there and the layer view.
+                String[] parts = step.split(" ");
+                BlockPos at = new BlockPos(Integer.parseInt(parts[1]), Integer.parseInt(parts[2]), Integer.parseInt(parts[3]));
+                LOGGER.info("dev block {} = {} (layers {} {})", at.toShortString(), mc.level.getBlockState(at),
+                    com.sputnikboi.slopmatica.placement.Layers.INSTANCE.mode(), com.sputnikboi.slopmatica.placement.Layers.INSTANCE.layer());
+            } else if (step.startsWith("int ")) {
+                // int <config field> <value>
+                String[] parts = step.split(" ");
+                try {
+                    com.sputnikboi.slopmatica.config.SlopmaticaConfig.class.getField(parts[1]).setInt(com.sputnikboi.slopmatica.config.SlopmaticaConfig.get(), Integer.parseInt(parts[2]));
+                } catch (ReflectiveOperationException e) {
+                    LOGGER.warn("No int option {}", parts[1]);
                 }
             } else if (step.equals("quit")) {
                 mc.stop();

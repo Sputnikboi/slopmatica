@@ -50,11 +50,15 @@ import org.jspecify.annotations.Nullable;
  * Place off it never turns the player: only the current facing is tried, and when that can't give
  * the right state it says which way to look instead of placing the block wrong.
  *
- * <p>Angel placement (an option) also allows clicking the empty spot itself, so blocks can be placed
- * floating in mid-air; vanilla servers accept it, which is why servers that allow Litematica do.
+ * <p>Angel placement (an option, always on in creative) also allows clicking the empty spot
+ * itself, so blocks can be placed floating in mid-air; vanilla servers accept it, which is why
+ * servers that allow Litematica do.
+ *
+ * <p>Blocks that are built up in steps (double slabs, more candles, sea pickles or snow layers)
+ * are added to: a single slab where the schematic wants a double one gets its second half.
  *
  * <p>With Easy Place on, normal placements that would put a block where the schematic wants a
- * different one (or air) are refused, unless that option is off.
+ * different one (or air), or outside every schematic, are refused, unless those options are off.
  */
 public final class EasyPlace {
     public static final EasyPlace INSTANCE = new EasyPlace();
@@ -103,7 +107,7 @@ public final class EasyPlace {
         }
         List<SchematicRaycast.Hit> line = new java.util.ArrayList<>();
         for (SchematicRaycast.Hit hit : SchematicRaycast.traceAll(level, transforms, player.getEyePosition(), player.getViewVector(1.0F), player.blockInteractionRange())) {
-            if (hit.status() == BlockStatus.MISSING && hit.actual().canBeReplaced()) {
+            if (hit.status() == BlockStatus.MISSING && hit.actual().canBeReplaced() || buildsUpTo(hit.actual(), hit.want())) {
                 line.add(hit);
             }
         }
@@ -127,7 +131,9 @@ public final class EasyPlace {
                 firstProblem = problem;
             }
         }
-        if (firstProblem != null) {
+        if (firstProblem != null && !holding) {
+            // Only for a fresh click: while right click is held, sweeping over ghosts that can't be
+            // placed yet (nothing under them so far) is normal, not worth a warning each time.
             fail(firstProblem);
         }
         if (holding) {
@@ -135,7 +141,7 @@ public final class EasyPlace {
             // must not fall through to vanilla and drop the held block wherever the crosshair is.
             return true;
         }
-        return SlopmaticaConfig.get().easyPlaceRestrict && refuseWrongPlacement(mc, player, level, transforms);
+        return refuseWrongPlacement(mc, player, level, transforms);
     }
 
     private static final boolean DEBUG = Boolean.getBoolean("slopmatica.debug.easyplace");
@@ -164,8 +170,10 @@ public final class EasyPlace {
             pos = pos.below();
             want = want.setValue(BlockStateProperties.DOUBLE_BLOCK_HALF, DoubleBlockHalf.LOWER);
         }
-        if (!level.getBlockState(pos).canBeReplaced()) {
-            return Component.translatable("slopmatica.easy_place.no_support", want.getBlock().getName());
+        BlockState here = level.getBlockState(pos);
+        boolean addTo = buildsUpTo(here, want);
+        if (!addTo && !here.canBeReplaced()) {
+            return Component.translatable("slopmatica.easy_place.occupied", want.getBlock().getName(), here.getBlock().getName());
         }
         if (!(want.getBlock().asItem() instanceof BlockItem item)) {
             return NOT_AN_ITEM; // Fluids, fire and the like: nothing to hold.
@@ -178,14 +186,17 @@ public final class EasyPlace {
         // Without turning, only the way the player already faces counts.
         float[] yaws = mayTurn ? YAWS : new float[] {player.getYRot()};
         float[] pitches = mayTurn ? PITCHES : new float[] {player.getXRot()};
-        Candidate best = bestCandidate(player, level, pos, want, stack, yaws, pitches);
-        if (best == null || !player.isWithinBlockInteractionRange(best.hit().getBlockPos(), 1.0)) {
-            return Component.translatable("slopmatica.easy_place.no_support", want.getBlock().getName());
+        Search search = bestCandidate(player, level, pos, want, addTo ? here : null, stack, yaws, pitches);
+        Candidate best = search.best;
+        if (best == null) {
+            // Say what actually stopped it: you standing there, reach, or nothing to click.
+            String why = search.obstructed ? "slopmatica.easy_place.in_the_way" : search.tooFar ? "slopmatica.easy_place.too_far" : "slopmatica.easy_place.no_support";
+            return Component.translatable(why, want.getBlock().getName());
         }
         if (!mayTurn && best.result() != want) {
             // Say which way would work rather than placing it wrong. "Better", not "exact": some
             // properties (a stair's corner shape) only come from neighbours and never match yet.
-            Candidate needed = bestCandidate(player, level, pos, want, stack, YAWS, PITCHES);
+            Candidate needed = bestCandidate(player, level, pos, want, addTo ? here : null, stack, YAWS, PITCHES).best;
             if (needed != null && needed.score() > best.score()) {
                 String look = Direction.fromYRot(needed.yaw()).getName() + (needed.pitch() > 45 ? ", looking down" : needed.pitch() < -45 ? ", looking up" : "");
                 return Component.translatable("slopmatica.easy_place.face", look);
@@ -228,15 +239,46 @@ public final class EasyPlace {
         mc.getConnection().send(new ServerboundMovePlayerPacket.Rot(yaw, pitch, player.onGround(), player.horizontalCollision));
     }
 
+    /** Properties that count up as more is placed into the same block (a slab's second half is its own case). */
+    private static final List<net.minecraft.world.level.block.state.properties.IntegerProperty> COUNTS = List.of(
+        BlockStateProperties.CANDLES, BlockStateProperties.PICKLES, BlockStateProperties.LAYERS, BlockStateProperties.EGGS,
+        BlockStateProperties.FLOWER_AMOUNT, BlockStateProperties.SEGMENT_AMOUNT);
+
+    /**
+     * Whether {@code have} becomes {@code want} by placing more of the same into it: a single slab
+     * where a double one goes, fewer candles, pickles, layers, eggs or petals than wanted.
+     */
+    static boolean buildsUpTo(BlockState have, BlockState want) {
+        if (have.getBlock() != want.getBlock() || have == want) {
+            return false;
+        }
+        boolean more = false;
+        for (Property<?> property : want.getProperties()) {
+            Comparable<?> a = have.getValue(property), b = want.getValue(property);
+            if (a.equals(b)) {
+                continue;
+            }
+            if (property == BlockStateProperties.SLAB_TYPE && b == net.minecraft.world.level.block.state.properties.SlabType.DOUBLE) {
+                more = true;
+            } else if (COUNTS.contains(property) && (Integer) a < (Integer) b) {
+                more = true;
+            } else if (property != BlockStateProperties.WATERLOGGED) {
+                return false; // Something else differs too (facing, half...): adding won't fix it.
+            }
+        }
+        return more;
+    }
+
     /**
      * Tries every way to place {@code item} at {@code pos}: each solid neighbour to click, the
      * lower and upper part of its face (slabs, stairs, trapdoors), each way to face (stairs,
      * furnaces, pistons...). Exactly the wanted state wins; otherwise the closest match.
+     * {@code addTo}, when set, is the block already there to place more into (see {@link #buildsUpTo}).
      */
-    private static @Nullable Candidate bestCandidate(LocalPlayer player, ClientLevel level, BlockPos pos, BlockState want, ItemStack stack,
-                                                     float[] yaws, float[] pitches) {
+    private static Search bestCandidate(LocalPlayer player, ClientLevel level, BlockPos pos, BlockState want, @Nullable BlockState addTo,
+                                        ItemStack stack, float[] yaws, float[] pitches) {
         float savedYaw = player.getYRot(), savedPitch = player.getXRot();
-        Search search = new Search(player, level, pos, want, stack, yaws, pitches);
+        Search search = new Search(player, level, pos, want, addTo, stack, yaws, pitches);
         try {
             // A normal click on a neighbouring block's face, as a player would.
             for (Direction toNeighbour : Direction.values()) {
@@ -246,15 +288,16 @@ public final class EasyPlace {
                     continue; // Clicking a door, lever or chest would use it instead of placing.
                 }
                 if (search.tryFace(neighbour, toNeighbour.getOpposite(), toNeighbour)) {
-                    return search.best;
+                    return search;
                 }
             }
-            // Angel placement: click the empty spot itself, on any of its faces. A replaceable
-            // clicked block is placed into, so the block appears right there, floating if need be.
-            if (SlopmaticaConfig.get().easyPlaceAngel) {
+            // Click the spot itself, on any of its faces: a block being added to (the slab's own
+            // top) or, with angel placement, the empty spot, which is placed into, so the block
+            // appears right there, floating if need be. Creative always allows it.
+            if (addTo != null || SlopmaticaConfig.get().easyPlaceAngel || player.getAbilities().instabuild) {
                 for (Direction face : Direction.values()) {
                     if (search.tryFace(pos, face, face)) {
-                        return search.best;
+                        return search;
                     }
                 }
             }
@@ -262,7 +305,7 @@ public final class EasyPlace {
             player.setYRot(savedYaw);
             player.setXRot(savedPitch);
         }
-        return search.best;
+        return search;
     }
 
     /** The best placement found so far while trying faces, points on them, and facings. */
@@ -271,16 +314,20 @@ public final class EasyPlace {
         final ClientLevel level;
         final BlockPos pos;
         final BlockState want;
+        final @Nullable BlockState addTo;
         final ItemStack stack;
         final float[] yaws, pitches;
         @Nullable Candidate best;
         int bestScore = -1;
+        /** Why nothing was found: the block would go into you (or a mob), or the face to click is out of reach. */
+        boolean obstructed, tooFar;
 
-        Search(LocalPlayer player, ClientLevel level, BlockPos pos, BlockState want, ItemStack stack, float[] yaws, float[] pitches) {
+        Search(LocalPlayer player, ClientLevel level, BlockPos pos, BlockState want, @Nullable BlockState addTo, ItemStack stack, float[] yaws, float[] pitches) {
             this.player = player;
             this.level = level;
             this.pos = pos;
             this.want = want;
+            this.addTo = addTo;
             this.stack = stack;
             this.yaws = yaws;
             this.pitches = pitches;
@@ -292,6 +339,11 @@ public final class EasyPlace {
          * True once the exact wanted state is found.
          */
         boolean tryFace(BlockPos clicked, Direction face, Direction side) {
+            // The server only accepts clicks on blocks within reach (creative reaches further).
+            if (!player.isWithinBlockInteractionRange(clicked, 1.0)) {
+                tooFar = true;
+                return false;
+            }
             for (double half : side.getAxis().isVertical() ? new double[] {0.5} : HALVES) {
                 Vec3 hit = Vec3.atCenterOf(pos).relative(side, 0.5)
                     .with(Direction.Axis.Y, side.getAxis().isVertical() ? pos.getY() + (side == Direction.UP ? 1 : 0) : pos.getY() + half);
@@ -305,8 +357,16 @@ public final class EasyPlace {
                             continue;
                         }
                         BlockState result = ((BlockItemInvoker) stack.getItem()).slopmatica$getPlacementState(context);
+                        if (result == null) {
+                            continue;
+                        }
                         // As BlockItem does: no placing into the player or another entity.
-                        if (result == null || !level.isUnobstructed(result, pos, CollisionContext.placementContext(player))) {
+                        if (!level.isUnobstructed(result, pos, CollisionContext.placementContext(player))) {
+                            obstructed = true;
+                            continue;
+                        }
+                        // Adding to a block must get closer to the wanted one, never undo it.
+                        if (addTo != null && result != want && !buildsUpTo(result, want)) {
                             continue;
                         }
                         int score = score(result, want);
@@ -378,6 +438,13 @@ public final class EasyPlace {
             }
         }
         if (player.hasInfiniteMaterials()) {
+            // Creative: a fresh one, into an empty hotbar slot if there is one, so nothing in hand is lost.
+            for (int slot = 0; slot < Inventory.getSelectionSize(); slot++) {
+                if (inventory.getItem(slot).isEmpty()) {
+                    inventory.setSelectedSlot(slot);
+                    break;
+                }
+            }
             ItemStack stack = new ItemStack(item);
             inventory.setItem(inventory.getSelectedSlot(), stack);
             // Hotbar slots are 36-44 in the inventory menu.
@@ -388,8 +455,9 @@ public final class EasyPlace {
     }
 
     /**
-     * A normal placement that would put a block where the schematic wants another one, or air,
-     * is refused. Clicks on blocks you can use (doors, levers, chests...) still go through.
+     * A normal placement that would put a block where the schematic wants another one, or air
+     * (Block Wrong Placements), or outside every schematic (Only Inside Schematics), is refused.
+     * Clicks on blocks you can use (doors, levers, chests...) still go through.
      */
     private static boolean refuseWrongPlacement(Minecraft mc, LocalPlayer player, ClientLevel level, List<Placement.Transform> transforms) {
         ItemStack held = player.getMainHandItem();
@@ -402,8 +470,18 @@ public final class EasyPlace {
             return false;
         }
         BlockPos at = new BlockPlaceContext(player, InteractionHand.MAIN_HAND, held, hit).getClickedPos();
+        SlopmaticaConfig config = SlopmaticaConfig.get();
         BlockState want = SchematicRaycast.wantedAt(transforms, at.getX(), at.getY(), at.getZ());
-        if (want == null || want.getBlock().asItem() == held.getItem()) {
+        if (want == null) {
+            // Outside what is shown. Inside a schematic's box but hidden by the layer view still
+            // counts as inside: that is scaffolding for another layer, not a stray block.
+            if (!config.easyPlaceInsideOnly || transforms.stream().anyMatch(t -> t.worldBounds().isInside(at))) {
+                return false;
+            }
+            fail(Component.translatable("slopmatica.easy_place.refused_outside"));
+            return true;
+        }
+        if (!config.easyPlaceRestrict || want.getBlock().asItem() == held.getItem()) {
             return false;
         }
         fail(want.isAir()

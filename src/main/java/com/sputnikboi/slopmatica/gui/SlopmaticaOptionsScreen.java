@@ -86,7 +86,9 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
             toggle("slopmatica.options.easy_place_on", c.easyPlace, v -> c.easyPlace = v, false),
             cycle("slopmatica.options.easy_place_order", SlopmaticaConfig.EasyPlaceOrder.values(), c.easyPlaceOrder, v -> c.easyPlaceOrder = v),
             toggle("slopmatica.options.easy_place_restrict", c.easyPlaceRestrict, v -> c.easyPlaceRestrict = v, false),
-            toggle("slopmatica.options.easy_place_angel", c.easyPlaceAngel, v -> c.easyPlaceAngel = v, false)
+            toggle("slopmatica.options.easy_place_angel", c.easyPlaceAngel, v -> c.easyPlaceAngel = v, false),
+            toggle("slopmatica.options.easy_place_inside", c.easyPlaceInsideOnly, v -> c.easyPlaceInsideOnly = v, false),
+            toggle("slopmatica.options.auto_layer", c.autoLayer, v -> c.autoLayer = v, false)
         );
         if (advanced) {
             list.addSmall(toggle("slopmatica.options.easy_place_rotate", c.easyPlaceRotate, v -> c.easyPlaceRotate = v, false));
@@ -120,6 +122,10 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
         list.addSmall(
             toggle("slopmatica.options.wheel_close", c.wheelCloseAfterUse, v -> c.wheelCloseAfterUse = v, false).createButton(minecraft.options),
             toggle("slopmatica.wheel.reset_page", c.wheelResetPage, v -> c.wheelResetPage = v, false).createButton(minecraft.options));
+        list.addSmall(
+            slider("slopmatica.wheel.size", 50, 200, c.wheelSize, "%", v -> c.wheelSize = v, false).createButton(minecraft.options),
+            Button.builder(Component.translatable("slopmatica.quick.action_keys"), b -> minecraft.gui.setScreen(new ControlsKeysScreen(this)))
+                .tooltip(Tooltip.create(Component.translatable("slopmatica.quick.action_keys.tooltip"))).width(WIDE).build());
 
         list.addHeader(Component.translatable("slopmatica.options.controls"));
         list.addSmall(

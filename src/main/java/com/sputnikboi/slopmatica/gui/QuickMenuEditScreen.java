@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Locale;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.components.EditBox;
@@ -132,18 +133,39 @@ public class QuickMenuEditScreen extends Screen {
         }
         if (!addingToggle && wheel) {
             // How the wheel works, above the buttons (the new-toggle form takes this row while open).
+            int wx = width / 2 - 205;
             addRenderableWidget(CycleButton.onOffBuilder(c.wheelCloseAfterUse)
                 .withTooltip(v -> Tooltip.create(Component.translatable("slopmatica.wheel.close_after_use.tooltip")))
-                .create(width / 2 - 152, by - 24, 150, 20, Component.translatable("slopmatica.quick.close_after_use"), (b, v) -> {
+                .create(wx, by - 24, 114, 20, Component.translatable("slopmatica.quick.close_after_use"), (b, v) -> {
                     c.wheelCloseAfterUse = v;
                     c.save();
                 }));
             addRenderableWidget(CycleButton.onOffBuilder(c.wheelResetPage)
                 .withTooltip(v -> Tooltip.create(Component.translatable("slopmatica.wheel.reset_page.tooltip")))
-                .create(width / 2 + 2, by - 24, 150, 20, Component.translatable("slopmatica.wheel.reset_page"), (b, v) -> {
+                .create(wx + 118, by - 24, 106, 20, Component.translatable("slopmatica.wheel.reset_page"), (b, v) -> {
                     c.wheelResetPage = v;
                     c.save();
                 }));
+            AbstractSliderButton size = new AbstractSliderButton(wx + 228, by - 24, 86, 20, Component.empty(), (Math.clamp(c.wheelSize, 50, 200) - 50) / 150.0) {
+                {
+                    updateMessage();
+                }
+
+                @Override
+                protected void updateMessage() {
+                    setMessage(Component.translatable("slopmatica.wheel.size.short", 50 + (int) Math.round(value * 150)));
+                }
+
+                @Override
+                protected void applyValue() {
+                    c.wheelSize = 50 + (int) Math.round(value * 150);
+                    c.save();
+                }
+            };
+            size.setTooltip(Tooltip.create(Component.translatable("slopmatica.wheel.size.tooltip")));
+            addRenderableWidget(size);
+            addRenderableWidget(Button.builder(Component.translatable("slopmatica.quick.action_keys"), b -> minecraft.gui.setScreen(new ControlsKeysScreen(this)))
+                .bounds(wx + 318, by - 24, 92, 20).tooltip(Tooltip.create(Component.translatable("slopmatica.quick.action_keys.tooltip"))).build());
         } else if (!addingToggle) {
             // How the hotbar works.
             addRenderableWidget(CycleButton.<QuickMenu.Mode>builder(m -> Component.translatable("slopmatica.quick.mode." + m.name().toLowerCase(Locale.ROOT)), c.quickMode)
@@ -228,7 +250,7 @@ public class QuickMenuEditScreen extends Screen {
             g.text(font, String.valueOf(i + 1), x + 1, y + 1, 0xFF808080);
             QuickAction action = QuickAction.get(layout.get(i));
             if (action != null) {
-                g.item(action.icon().get(), x + 2, y + 2);
+                action.drawIcon(g, x + 2, y + 2);
                 if (over) {
                     hovered = action.label().get();
                 }
@@ -244,7 +266,7 @@ public class QuickMenuEditScreen extends Screen {
             boolean over = mouseX >= x && mouseX < x + ENTRY_W && mouseY >= y && mouseY < y + ENTRY_H;
             boolean inUse = layout.contains(action.id());
             g.fill(x, y, x + ENTRY_W, y + ENTRY_H, action.id().equals(pending) ? 0xFF3A6FD0 : over ? 0x60FFFFFF : 0x40000000);
-            g.item(action.icon().get(), x + 2, y + 2);
+            action.drawIcon(g, x + 2, y + 2);
             Component label = action.label().get();
             g.text(font, font.plainSubstrByWidth(label.getString(), ENTRY_W - 24), x + 21, y + 6, inUse ? 0xFF80C080 : 0xFFFFFFFF);
             if (over) {

@@ -8,6 +8,7 @@ import net.minecraft.world.level.ColorResolver;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.lighting.LevelLightEngine;
 import net.minecraft.world.level.material.FluidState;
@@ -17,16 +18,23 @@ import org.jspecify.annotations.Nullable;
  * What the block tessellator sees while drawing ghosts: real blocks where something is placed,
  * schematic blocks where nothing is, so ghost faces are culled against both. Light is always full,
  * so a hologram inside a dark cave is still readable; tint comes from the real biome.
+ *
+ * <p>Ghost fluids get a view of their own ({@code fluids}, given the schematic's air too): there
+ * the schematic's blocks win, air included, and real fluids are left out, because a fluid's
+ * surface follows the blocks and fluids around it, and the ghost must look as the schematic has
+ * it, not change shape as real blocks or water are placed nearby.
  */
 final class GhostBlockView implements BlockAndTintGetter {
     private final ClientLevel level;
     private final WorldSnapshot world;
     private final BlockState[] expected;
+    private final boolean fluids;
 
-    GhostBlockView(ClientLevel level, WorldSnapshot world, BlockState[] expected) {
+    GhostBlockView(ClientLevel level, WorldSnapshot world, BlockState[] expected, boolean fluids) {
         this.level = level;
         this.world = world;
         this.expected = expected;
+        this.fluids = fluids;
     }
 
     @Override
@@ -37,10 +45,19 @@ final class GhostBlockView implements BlockAndTintGetter {
         }
         int i = WorldSnapshot.index(x, y, z);
         BlockState real = world.get(i);
+        BlockState ghost = expected[i];
+        if (fluids) {
+            if (ghost != null) {
+                return ghost;
+            }
+            if (real.getFluidState().isEmpty()) {
+                return real;
+            }
+            return real.hasProperty(BlockStateProperties.WATERLOGGED) ? real.setValue(BlockStateProperties.WATERLOGGED, false) : Blocks.AIR.defaultBlockState();
+        }
         if (!real.isAir()) {
             return real;
         }
-        BlockState ghost = expected[i];
         return ghost != null ? ghost : real;
     }
 

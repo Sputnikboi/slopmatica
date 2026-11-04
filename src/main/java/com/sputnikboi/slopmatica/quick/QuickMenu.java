@@ -74,7 +74,10 @@ public final class QuickMenu {
 
     public void toggle(Minecraft mc) {
         if (open) {
-            close(mc);
+            // Held to use, letting go closes it; key repeat while held must not.
+            if (SlopmaticaConfig.get().quickMode != Mode.RELEASE) {
+                close(mc);
+            }
         } else if (ActionWheel.INSTANCE.isOpen() || SlopmaticaConfig.get().quickStyle == Style.WHEEL) {
             ActionWheel.INSTANCE.toggle(mc);
         } else if (mc.player != null && mc.gui.screen() == null) {
@@ -195,7 +198,7 @@ public final class QuickMenu {
                 continue;
             }
             int ix = cx - 88 + i * 20, iy = y + 3;
-            g.item(action.icon().get(), ix, iy);
+            action.drawIcon(g, ix, iy);
             if (!action.availableNow(mc)) {
                 g.fill(ix, iy, ix + 16, iy + 16, 0xB0303030);
             }

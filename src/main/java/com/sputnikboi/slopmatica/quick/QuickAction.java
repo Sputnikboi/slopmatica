@@ -124,4 +124,21 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
     public boolean availableNow(Minecraft mc) {
         return available == null || available.test(mc);
     }
+
+    /** Whether each action has a drawn icon ({@code textures/gui/sprites/quick/<id>.png}), looked up once. */
+    private static final Map<String, Boolean> SPRITES = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Its 16x16 icon: a drawn one if the mod ships it, else the item. */
+    public void drawIcon(net.minecraft.client.gui.GuiGraphicsExtractor g, int x, int y) {
+        // Setting toggles share one icon; their ids aren't resource paths.
+        String name = id.startsWith(SettingToggle.PREFIX) ? "toggle" : id;
+        net.minecraft.resources.Identifier sprite = net.minecraft.resources.Identifier.fromNamespaceAndPath("slopmatica", "quick/" + name);
+        boolean drawn = SPRITES.computeIfAbsent(name, n -> Minecraft.getInstance().getResourceManager()
+            .getResource(net.minecraft.resources.Identifier.fromNamespaceAndPath("slopmatica", "textures/gui/sprites/quick/" + n + ".png")).isPresent());
+        if (drawn) {
+            g.blitSprite(net.minecraft.client.renderer.RenderPipelines.GUI_TEXTURED, sprite, x, y, 16, 16);
+        } else {
+            g.item(icon.get(), x, y);
+        }
+    }
 }
