@@ -2,6 +2,7 @@
 #   ln -s ~/Git/stencil/cloud/slopmatica-cloud.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload && systemctl --user enable --now slopmatica-cloud
 # Optional overrides go in ~/.config/slopmatica-cloud/env (SLOPMATICA_* variables).
+# --no-access-log: an access log would keep every visitor's address.
 [Unit]
 Description=Slopmatica Cloud (schematic sync for the Slopmatica mod)
 After=network-online.target
@@ -11,7 +12,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=%h/Git/stencil/cloud
 EnvironmentFile=-%h/.config/slopmatica-cloud/env
-ExecStart=%h/Git/stencil/cloud/.venv/bin/uvicorn slopmatica_cloud.main:app --host 127.0.0.1 --port 8095 --proxy-headers --forwarded-allow-ips 127.0.0.1
+ExecStart=%h/Git/stencil/cloud/.venv/bin/uvicorn slopmatica_cloud.main:app --host 127.0.0.1 --port 8095 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-access-log
 Restart=on-failure
 RestartSec=3
 

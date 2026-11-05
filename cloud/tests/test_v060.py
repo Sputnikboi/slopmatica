@@ -404,7 +404,8 @@ def test_feedback_page(client, alice):
     assert 'name="modVersion" value="0.6.0"' in html and 'name="mcVersion" value="26.3"' in html
     assert 'value="suggestion" checked' in html and "sent anonymously" in html
     assert 'src="/static/feedback.js' in html
-    assert "Sent as <strong>Alice</strong>" in alice.cookie_client(client.app).get("/feedback").text
+    html = alice.cookie_client(client.app).get("/feedback").text
+    assert "sent as <strong>Alice</strong>" in html and 'name="anonymous"' in html
     # the footer credit links here on every page
     for url in ("/", "/board", "/releases", "/feedback"):
         assert '<a href="/feedback">Made by Sputniknull + Claude</a>' in anon.get(url).text

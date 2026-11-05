@@ -40,8 +40,15 @@
       <label class="field"><span class="label">Schematic <span class="muted">(optional, at most {{ max_schematic_mb }} MB)</span></span>
         <input type="file" name="schematic" accept=".slopmatic,.nbt,.litematic,.schem"></label>
     </div>
-    <p class="muted small">Attachments are only seen by admins and deleted {{ attachment_days }} days after the report is dealt with.</p>
-    <p class="muted small">{% if user %}Sent as <strong>{{ user.name }}</strong>.{% else %}You are not logged in, so this is sent anonymously. Leave a contact if you would like an answer.{% endif %}</p>
+    <p class="muted small">Attachments are only seen by admins and deleted {{ attachment_days }} days after the report is dealt with
+      ({{ attachment_max_days }} days after it arrives at the latest); reports {{ keep_days }} days after. Chat lines and
+      network addresses are taken out of logs.</p>
+    {% if user %}
+    <div class="tag-picks"><label class="tag-pick"><input type="checkbox" name="anonymous"><span>Send without my name</span></label></div>
+    <p class="muted small">Otherwise it is sent as <strong>{{ user.name }}</strong>. Without your name, leave a contact if you would like an answer.</p>
+    {% else %}
+    <p class="muted small">You are not logged in, so this is sent anonymously. Leave a contact if you would like an answer.</p>
+    {% endif %}
     <p class="form-msg" role="status"></p>
     <div class="form-actions start"><button type="submit" class="btn">Send</button></div>
   </form>

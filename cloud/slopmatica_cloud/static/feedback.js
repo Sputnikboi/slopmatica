@@ -28,6 +28,7 @@
         modVersion: el.modVersion.value.trim() || null,
         mcVersion: el.mcVersion.value.trim() || null,
         contact: el.contact.value.trim() || null,
+        anonymous: el.anonymous && el.anonymous.checked ? "true" : null,
       };
       if (!body.message) { say(msg, "Write a message first.", true); el.message.focus(); return; }
       const button = form.querySelector("button[type=submit]");

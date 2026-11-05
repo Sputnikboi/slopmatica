@@ -6,6 +6,7 @@ server does), so there are no passwords. See README.md for the API.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import gzip
 import hashlib
@@ -25,7 +26,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zlib
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -196,7 +197,11 @@ MAX_TELEMETRY_BYTES = 32 * 1024
 TELEMETRY_WINDOW = 15 * 60  # seconds over which reports are counted for the rate limits
 TELEMETRY_IP_LIMIT = 60  # reports per address per window (the mod sends up to 20 queued ones at once)
 TELEMETRY_INSTALL_LIMIT = 30  # reports per install per window
-TELEMETRY_KEEP_DAYS = 180  # older reports are deleted at startup
+TELEMETRY_KEEP_DAYS = 180  # older reports are deleted
+# Reports older than this lose their install id (a random one replaces it), so no install's reports can be followed
+# for longer. The admin summary only looks at the last 30 days, so it is unchanged.
+TELEMETRY_LINK_DAYS = 31
+HOUSEKEEPING_EVERY = DAY  # prune, scrub telemetry, expire feedback: at startup and then this often
 SOURCE_RE = re.compile(r"^(?:local|cloud|shared|board:[A-Za-z0-9_-]{1,32})$")
 SETTING_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
 # A Quick Menu action: a built-in id, or a setting toggle "toggle:<setting>:<value>|<value>...".
@@ -250,7 +255,9 @@ MAX_FEEDBACK_LOG = 5 * 1024 * 1024
 MAX_FEEDBACK_SCHEMATIC = 20 * 1024 * 1024
 MAX_FEEDBACK_JSON = 64 * 1024  # a feedback body without attachments
 MAX_LOG_TEXT = 64 * 1024 * 1024  # a gzipped log may unpack to at most this much (checked while reading it)
-FEEDBACK_ATTACHMENT_DAYS = 30  # attachments of reports resolved longer ago are deleted at startup
+FEEDBACK_ATTACHMENT_DAYS = 30  # attachments of reports resolved longer ago are deleted
+FEEDBACK_ATTACHMENT_MAX_DAYS = 90  # and of any report, open or not, that arrived longer ago
+FEEDBACK_KEEP_DAYS = 365  # reports resolved longer ago are deleted whole
 STORAGE_TOP = 15  # rows in each list of the admin page's Site storage tab
 
 # ---- 0.12.0: groups, and credited authors on posts
@@ -543,6 +550,37 @@ def os_family(os_name: str | None) -> str:
     if low in ("mac", "macos", "darwin"):
         return "macOS"
     return words[0]
+
+
+# What a bug report's log never needs: chat (other players' too), and network addresses. 0.32.0 mods take these
+# out before sending, with the player's name and paths; this also cleans logs from older mods and the website.
+LOG_CHAT_RE = re.compile(rb"^.*\[CHAT\].*(?:\r?\n|$)", re.MULTILINE)
+LOG_IPV4_RE = re.compile(rb"(?<![\d.])(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?![\d.])")
+
+
+def scrub_log(text: bytes) -> bytes:
+    """A game log without chat lines and with IPv4 addresses replaced by <address>."""
+    return LOG_IPV4_RE.sub(b"<address>", LOG_CHAT_RE.sub(b"", text))
+
+
+def coarse_os(os_name: str | None) -> str | None:
+    """What a usage report keeps of the OS: its family ('Windows 11', 'macOS', 'Linux'), not the exact build."""
+    return os_family(os_name) if os_name else None
+
+
+def coarse_gpu(name: str | None) -> str | None:
+    """The GPU model without what drivers append after a slash ('.../PCIe/SSE2', driver versions)."""
+    return (name or "").split("/")[0].strip()[:100] or None
+
+
+def round_to(value: int | None, step: int) -> int | None:
+    """To the nearest multiple of step (at least step): window sizes, so unusual ones don't single anyone out."""
+    return None if value is None else max(step, round(value / step) * step)
+
+
+def floor_to(value: int | None, step: int) -> int | None:
+    """Down to a multiple of step: memory, whose MEMORY_BUCKETS limits are all multiples of 512 MB."""
+    return None if value is None else value - value % step
 
 
 def gpu_vendor(vendor: str | None) -> str:
@@ -1287,6 +1325,11 @@ CREATE INDEX IF NOT EXISTS posts_group ON posts(group_id) WHERE group_id IS NOT 
     10: """
 ALTER TABLE posts ADD COLUMN group_folder TEXT NOT NULL DEFAULT '';
 """,
+    # 0.14.0: usage reports keep how long a session was, not when it started and ended (Store.scrub_telemetry
+    # clears those and coarsens the other fields of older reports).
+    11: """
+ALTER TABLE telemetry ADD COLUMN minutes INTEGER;
+""",
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 # Created by Store.fill_display_names once every account has a display name (migration 6).
@@ -1439,7 +1482,14 @@ class Store:
         self.reconcile_posts()
         self.reconcile_releases()
         self.reconcile_feedback_files()
+        self.scrub_telemetry()
         self.backfill_complexity()
+
+    def housekeeping(self) -> None:
+        """Daily, while running (startup does the same): expired rows, old feedback, telemetry anonymised."""
+        self.prune()
+        self.reconcile_feedback_files()
+        self.scrub_telemetry()
 
     def migrate(self) -> None:
         """Create the 0.3.0 tables if missing, then apply MIGRATIONS past PRAGMA user_version, in place."""
@@ -2478,18 +2528,27 @@ class Store:
         return n
 
     def reconcile_feedback_files(self) -> None:
-        """At startup: delete the attachments of reports resolved more than FEEDBACK_ATTACHMENT_DAYS ago, rows whose
-        file is missing, and folders and files without a row (an interrupted submission)."""
-        cutoff = (now_s() - FEEDBACK_ATTACHMENT_DAYS * DAY) * 1000
+        """Delete reports resolved more than FEEDBACK_KEEP_DAYS ago; the attachments of reports resolved more than
+        FEEDBACK_ATTACHMENT_DAYS ago or sent more than FEEDBACK_ATTACHMENT_MAX_DAYS ago; rows whose file is missing;
+        and folders and files without a row (an interrupted submission)."""
+        t = now_s()
+        cutoff = (t - FEEDBACK_ATTACHMENT_DAYS * DAY) * 1000
         with self.lock:
+            gone = [r[0] for r in self.db.execute(
+                "SELECT id FROM feedback WHERE resolved IS NOT NULL AND resolved < ?", ((t - FEEDBACK_KEEP_DAYS * DAY) * 1000,))]
+            for fid in gone:
+                self.delete_feedback_files(fid)
+                self.db.execute("DELETE FROM feedback WHERE id=?", (fid,))
+            if gone:
+                log.info("deleted %d feedback reports resolved over %d days ago", len(gone), FEEDBACK_KEEP_DAYS)
             old = [r[0] for r in self.db.execute(
                 """SELECT DISTINCT ff.feedback_id FROM feedback_files ff JOIN feedback f ON f.id = ff.feedback_id
-                   WHERE f.resolved IS NOT NULL AND f.resolved < ?""", (cutoff,))]
+                   WHERE (f.resolved IS NOT NULL AND f.resolved < ?) OR f.created < ?""",
+                (cutoff, (t - FEEDBACK_ATTACHMENT_MAX_DAYS * DAY) * 1000))]
             for fid in old:
                 self.delete_feedback_files(fid)
             if old:
-                log.info("deleted the attachments of %d feedback reports resolved over %d days ago", len(old),
-                         FEEDBACK_ATTACHMENT_DAYS)
+                log.info("deleted the attachments of %d old feedback reports", len(old))
             rows = {(r["feedback_id"], r["kind"]) for r in self.db.execute("SELECT feedback_id, kind FROM feedback_files")}
             for fid, kind in rows:
                 if not self.feedback_file(fid, kind).is_file():
@@ -2536,7 +2595,28 @@ class Store:
 
     def telemetry_since(self, t: int) -> list[sqlite3.Row]:
         with self.lock:
-            return self.db.execute("SELECT * FROM telemetry WHERE received >= ? ORDER BY received", (t,)).fetchall()
+            return self.db.execute("SELECT * FROM telemetry WHERE received >= ? ORDER BY received, id", (t,)).fetchall()
+
+    def scrub_telemetry(self) -> None:
+        """Brings stored usage reports down to what new ones keep: a session's length instead of its times, the
+        day it arrived, the OS family, the GPU model, rounded window sizes and memory. Reports older than
+        TELEMETRY_LINK_DAYS get a random install id each, so they no longer link to the install's other reports."""
+        t = now_s()
+        with self.lock, self.transaction():
+            self.db.execute(
+                """UPDATE telemetry SET minutes = COALESCE(minutes, CASE WHEN ended >= started THEN (ended - started) / 60 END),
+                   started = NULL, ended = NULL WHERE started IS NOT NULL OR ended IS NOT NULL""")
+            self.db.execute("UPDATE telemetry SET received = received - received % ? WHERE received % ? != 0", (DAY, DAY))
+            # a report's own id is 64 hex digits (sha256); an unlinked one 32
+            self.db.execute("UPDATE telemetry SET install = lower(hex(randomblob(16))) WHERE received < ? AND length(install) = 64",
+                            (t - TELEMETRY_LINK_DAYS * DAY,))
+            changed = []
+            for r in self.db.execute("SELECT id, os, gpu, width, height, max_memory_mb FROM telemetry"):
+                new = (coarse_os(r["os"]), coarse_gpu(r["gpu"]), round_to(r["width"], 160), round_to(r["height"], 90),
+                       floor_to(r["max_memory_mb"], 512))
+                if new != (r["os"], r["gpu"], r["width"], r["height"], r["max_memory_mb"]):
+                    changed.append((*new, r["id"]))
+            self.db.executemany("UPDATE telemetry SET os=?, gpu=?, width=?, height=?, max_memory_mb=? WHERE id=?", changed)
 
     def _set_tags(self, post_id: str, tags: list[str]) -> None:
         self.db.execute("DELETE FROM post_tags WHERE post_id=?", (post_id,))
@@ -3477,6 +3557,7 @@ class FeedbackIn(BaseModel):
     modVersion: Any = None
     mcVersion: Any = None
     contact: Any = None
+    anonymous: Any = None  # true: not stored with the logged-in sender's account
 
 
 class ResolveIn(BaseModel):
@@ -3686,7 +3767,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     transparent_blocks = frozenset(k for k, v in block_colors.items() if v is None)
 
     from . import __version__
-    app = FastAPI(title="Slopmatica Cloud", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> Any:
+        """Store.housekeeping once a day while the server runs (Store() did it at startup)."""
+        async def daily() -> None:
+            while True:
+                await asyncio.sleep(HOUSEKEEPING_EVERY)
+                try:
+                    await run_in_threadpool(store.housekeeping)
+                except Exception:  # noqa: BLE001 - try again tomorrow
+                    log.exception("housekeeping failed")
+
+        task = asyncio.create_task(daily())
+        try:
+            yield
+        finally:
+            task.cancel()
+
+    app = FastAPI(title="Slopmatica Cloud", version=__version__, docs_url=None, redoc_url=None, openapi_url=None,
+                  lifespan=lifespan)
     app.state.settings = settings
     app.state.store = store
     app.add_middleware(RootPathMiddleware, root_path=base)
@@ -3896,6 +3995,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             host = forwarded.split(",")[-1].strip() or host
         return host
 
+    def ip_key(request: Request) -> str:
+        """The caller's address under a keyed hash: rate limits count by it without the address being stored."""
+        return hmac.new(store.ip_salt, client_ip(request).encode(), hashlib.sha256).hexdigest()[:24]
+
     def set_session_cookie(resp: Response, request: Request, token: str) -> None:
         resp.set_cookie(
             SESSION_COOKIE,
@@ -3945,8 +4048,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if request.headers.get(CSRF_HEADER) != CSRF_VALUE:
             raise ApiError(403, f"missing X-Requested-With: {CSRF_VALUE} header")
         name = body.name.strip()
-        name_key, ip_key = "name:" + name.lower()[:64], "ip:" + client_ip(request)
-        throttled(ip_key, MAX_IP_FAILURES)
+        name_key, ip_failures = "name:" + name.lower()[:64], "ip:" + ip_key(request)
+        throttled(ip_failures, MAX_IP_FAILURES)
         throttled(name_key, MAX_NAME_FAILURES)
         user = None
         if USERNAME_RE.match(name) and 0 < len(body.password) <= MAX_PASSWORD_LEN:
@@ -3958,7 +4061,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     user = candidate
                     break
         if user is None:
-            store.add_failure(name_key, ip_key)
+            store.add_failure(name_key, ip_failures)
             raise ApiError(401, "wrong name or password")
         store.clear_failures(name_key)
         store.touch_login(user.uuid)
@@ -5775,7 +5878,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Response(status_code=204)
 
     # ---- telemetry: anonymous usage reports from the mod. Nothing that identifies a player is stored: not the
-    # address (rate limits are counted in memory, under a keyed hash), and board post ids only of public posts.
+    # address (rate limits are counted in memory, under a keyed hash), board post ids only of public posts, no
+    # times finer than a day, and an install's reports link to each other for TELEMETRY_LINK_DAYS at most.
 
     telemetry_hits: dict[str, list[float]] = {}  # rate-limit key -> times of recent reports (monotonic)
     telemetry_lock = threading.Lock()
@@ -5879,12 +5983,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "install": hashlib.sha256(install.strip().encode()).hexdigest(),
             "mod_version": tele_str(data, "mod", 40), "mc_version": tele_str(data, "mc", 40),
             "loader": tele_str(data, "loader", 20),
-            "started": tele_num(data, "start", far), "ended": tele_num(data, "end", far),
-            "os": tele_str(specs, "os", 100), "cpu_cores": tele_num(specs, "cpuCores", 4096),
-            "max_memory_mb": tele_num(specs, "maxMemoryMb", 1 << 24), "gpu": tele_str(specs, "gpu", 200),
+            "os": coarse_os(tele_str(specs, "os", 100)), "cpu_cores": tele_num(specs, "cpuCores", 4096),
+            "max_memory_mb": floor_to(tele_num(specs, "maxMemoryMb", 1 << 24), 512),
+            "gpu": coarse_gpu(tele_str(specs, "gpu", 200)),
             "gpu_vendor": tele_str(specs, "gpuVendor", 100), "backend": tele_str(specs, "backend", 60),
-            "render_distance": tele_num(specs, "renderDistance", 512), "width": tele_num(specs, "width", 1 << 16),
-            "height": tele_num(specs, "height", 1 << 16),
+            "render_distance": tele_num(specs, "renderDistance", 512),
+            "width": round_to(tele_num(specs, "width", 1 << 16), 160), "height": round_to(tele_num(specs, "height", 1 << 16), 90),
             "frames": tele_num(render_, "frames", 1e12), "avg_ms": tele_num(render_, "avgMs", 1e6, False),
             "p50_ms": tele_num(render_, "p50Ms", 1e6, False), "p99_ms": tele_num(render_, "p99Ms", 1e6, False),
             "over33_ms": tele_num(render_, "over33Ms", 1e12), "max_sections": tele_num(render_, "maxSections", 1e9),
@@ -5900,10 +6004,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for k, n in list(tele_obj(data, "keys").items())[:200]:
             if SETTING_NAME_RE.match(k) and type(n) is int and 0 <= n <= 10**9:
                 keys[k] = n
-        values.update(received=now_s(), schematics=json.dumps(sources), settings_changed=json.dumps(changed),
+        # Only how long the session was (0.32.0 mods send minutes; older ones their start and end, which aren't kept),
+        # and only the day the report arrived.
+        minutes = tele_num(data, "minutes", 1e7)
+        if minutes is None:
+            start, end = tele_num(data, "start", far), tele_num(data, "end", far)
+            minutes = (end - start) // 60 if start is not None and end is not None and end >= start else None
+        t = now_s()
+        values.update(received=t - t % DAY, minutes=minutes, schematics=json.dumps(sources), settings_changed=json.dumps(changed),
                       keys=json.dumps(keys), quick=json.dumps(tele_quick(data)))
-        ip_key = hmac.new(store.ip_salt, client_ip(request).encode(), hashlib.sha256).hexdigest()[:24]
-        if not telemetry_allowed([("ip:" + ip_key, TELEMETRY_IP_LIMIT), ("install:" + values["install"], TELEMETRY_INSTALL_LIMIT)]):
+        if not telemetry_allowed([("ip:" + ip_key(request), TELEMETRY_IP_LIMIT), ("install:" + values["install"], TELEMETRY_INSTALL_LIMIT)]):
             raise ApiError(429, "too many reports for now, try again later")
         store.add_telemetry(values)
         return Response(status_code=204)
@@ -6408,6 +6518,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         name = attachment_name(raw_name, "latest.log")
         if data.startswith(GZIP_MAGIC) and not name.lower().endswith(".gz"):
             name += ".gz"
+        scrubbed = scrub_log(text)
+        if scrubbed != text:
+            data = gzip.compress(scrubbed, mtime=0) if data.startswith(GZIP_MAGIC) else scrubbed
         return name, data
 
     def clean_attached_schematic(raw_name: str, data: bytes) -> tuple[str, bytes]:
@@ -6450,7 +6563,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise ApiError(400, "invalid request body")
             if not isinstance(data, dict):
                 raise ApiError(400, "invalid request body")
-        body = FeedbackIn(**{k: data.get(k) for k in ("type", "message", "modVersion", "mcVersion", "contact")})
+        body = FeedbackIn(**{k: data.get(k) for k in ("type", "message", "modVersion", "mcVersion", "contact", "anonymous")})
         if body.type not in FEEDBACK_KINDS:
             raise ApiError(400, "type must be one of " + ", ".join(FEEDBACK_KINDS))
         if not isinstance(body.message, str) or not body.message.strip():
@@ -6471,7 +6584,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if user is not None:
             key, limit = f"feedback-user:{user.uuid}", FEEDBACK_USER_LIMIT
         else:
-            key, limit = f"feedback-ip:{client_ip(request)}", FEEDBACK_IP_LIMIT
+            key, limit = f"feedback-ip:{ip_key(request)}", FEEDBACK_IP_LIMIT
+        # Sent without a name: the account still counts for the rate limit (for LOGIN_WINDOW), but isn't stored.
+        sender = None if body.anonymous in (True, "true", "1", "on") else user
 
         def save() -> sqlite3.Row:
             with store.lock:
@@ -6482,7 +6597,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 with store.transaction():
                     feedback_id = store.add_feedback({
                         "kind": body.type, "message": message, "mod_version": mod_version, "mc_version": mc_version,
-                        "contact": contact, "uuid": user.uuid if user else None, "name": user.name if user else None,
+                        "contact": contact, "uuid": sender.uuid if sender else None, "name": sender.name if sender else None,
                         "created": t,
                     })
                     written: list[Path] = []
@@ -6503,7 +6618,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         row = await run_in_threadpool(save)
         if attachments:
-            log.info("feedback %d arrived with %s", row["id"], ", ".join(f"{k} {n!r} ({len(c)} bytes)" for k, n, c in attachments))
+            log.info("feedback %d arrived with %s", row["id"], ", ".join(f"{k} ({len(c)} bytes)" for k, _, c in attachments))
         return JSONResponse(feedback_api(row), status_code=201)
 
     @app.get("/api/feedback")
@@ -7581,6 +7696,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             max_log_mb=MAX_FEEDBACK_LOG // (1024 * 1024),
             max_schematic_mb=MAX_FEEDBACK_SCHEMATIC // (1024 * 1024),
             attachment_days=FEEDBACK_ATTACHMENT_DAYS,
+            attachment_max_days=FEEDBACK_ATTACHMENT_MAX_DAYS,
+            keep_days=FEEDBACK_KEEP_DAYS,
             github=GITHUB_URL,
         )
 

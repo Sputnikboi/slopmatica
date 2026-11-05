@@ -1,3 +1,3 @@
 """Slopmatica Cloud: schematic sync backend + website for the Slopmatica mod."""
 
-__version__ = "0.13.2"
+__version__ = "0.14.0"
