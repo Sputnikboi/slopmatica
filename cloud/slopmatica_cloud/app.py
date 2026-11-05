@@ -1365,13 +1365,14 @@ def _fold(value: Any) -> str:
     return value.casefold() if isinstance(value, str) else ""
 
 
-def read_schematic(disk: Path, filename: str, max_volume: int) -> convert.Schematic:
-    """Parse disk as the format filename's extension names. ValueError if it can't be read."""
+def read_schematic(disk: Path, filename: str, max_volume: int, path: str = "") -> convert.Schematic:
+    """Parse disk as the format filename's extension names (path: where it sat, for a vanilla structure file's chest
+    markers). ValueError if it can't be read."""
     fmt = convert.format_of(filename)
     if fmt is None:
         raise convert.ConversionError("not a schematic file name")
     _, root = nbt.load(disk)
-    return convert.read(root, fmt, filename[: -len(fmt) - 1], max_volume)
+    return convert.read(root, fmt, filename[: -len(fmt) - 1], max_volume, "/" + path if path else "")
 
 
 def modded_error(schem: convert.Schematic) -> ApiError | None:
@@ -4376,19 +4377,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if row.has_thumb and thumb.is_file():
                     snap.thumb = tmp.with_suffix(".png")
                     shutil.copyfile(thumb, snap.thumb)
-            read_snapshot(snap, tmp, name)
+            read_snapshot(snap, tmp, name, path)
         except BaseException:
             snap.cleanup()
             raise
         return snap
 
-    def read_snapshot(snap: Snapshot, tmp: Path, name: str) -> None:
+    def read_snapshot(snap: Snapshot, tmp: Path, name: str, path: str = "") -> None:
         """Read the temporary copy tmp of the schematic name into snap: converted to .slopmatic if it is in another
         format, with its size, block count and distinct types. 400 if it can't be read or is modded."""
         src_fmt = convert.format_of(name)
         with conversion_slot():
             try:
-                schem = read_schematic(tmp, name, settings.max_export_volume)
+                schem = read_schematic(tmp, name, settings.max_export_volume, path)
                 modded = modded_error(schem)
                 if modded is not None:
                     raise modded

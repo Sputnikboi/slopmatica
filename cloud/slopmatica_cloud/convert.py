@@ -544,7 +544,80 @@ def read_slopmatic(root: Compound, fallback_name: str, max_volume: int = DEFAULT
     )
 
 
-def read_structure(root: Compound, fallback_name: str, max_volume: int = DEFAULT_MAX_VOLUME) -> Schematic:
+SHIPWRECK_LOOT = {"map_chest": "minecraft:chests/shipwreck_map", "treasure_chest": "minecraft:chests/shipwreck_treasure",
+                  "supply_chest": "minecraft:chests/shipwreck_supply"}
+CHEST_FACING = {"ChestWest": "west", "ChestEast": "east", "ChestSouth": "south"}
+
+
+def resolve_markers(root: Compound, path: str) -> None:
+    """What world generation does to the markers in a vanilla structure file, as the mod does when it loads one:
+    a jigsaw becomes its final_state (air by default); a data structure block becomes air, or for a chest marker
+    the loot chest it stands for (on the chest below it, or a chest in its place); any other structure block a
+    structure void. path (where the file sat, e.g. .../igloo/top.nbt) picks the loot table of chest markers."""
+    palette_tag = root.get("palette")
+    if palette_tag is None:
+        palettes = root.get("palettes")
+        palette_tag = palettes[0] if isinstance(palettes, List) and palettes else None
+    if not isinstance(palette_tag, List):
+        return
+    palette = palette_tag
+    special = {i: state_name(s) for i, s in enumerate(palette) if state_name(s) in ("minecraft:jigsaw", "minecraft:structure_block")}
+    blocks = [b for b in root.get("blocks") or () if isinstance(b, Compound)]
+    if not special or not blocks:
+        return
+    new_keys = any("id" in s for s in palette if isinstance(s, Compound))
+    data_version = NEW_STATE_KEYS if new_keys else 0
+    added: dict[str, int] = {}
+
+    def state(text: str) -> Int:
+        if text not in added:
+            palette.append(parse_state(text, data_version))
+            added[text] = len(palette) - 1
+        return Int(added[text])
+
+    def pos_of(b: Compound) -> tuple[int, ...] | None:
+        p = b.get("pos")
+        return tuple(int(v) for v in p) if isinstance(p, List) and len(p) == 3 else None
+
+    by_pos = {pos_of(b): b for b in blocks}
+    lower = path.replace("\\", "/").lower()
+    for b in blocks:
+        name = special.get(_int(b, "state", -1))
+        if name is None:
+            continue
+        data = b.get("nbt") if isinstance(b.get("nbt"), Compound) else Compound()
+        b.pop("nbt", None)
+        if name == "minecraft:jigsaw":
+            b["state"] = state(_str(data, "final_state", "minecraft:air") or "minecraft:air")
+            continue
+        if _str(data, "mode").lower() != "data":
+            b["state"] = state(VOID_NAME)  # a save or load block left in the file: world generation skips it
+            continue
+        marker = _str(data, "metadata")
+        b["state"] = state("minecraft:air")
+        loot = SHIPWRECK_LOOT.get(marker)
+        if loot is None and marker.lower().startswith("chest"):
+            loot = ("minecraft:chests/igloo_chest" if "/igloo/" in lower
+                    else "minecraft:chests/end_city_treasure" if "/end_city/" in lower
+                    else "minecraft:chests/woodland_mansion" if "/woodland_mansion/" in lower
+                    else ("minecraft:chests/underwater_ruin_big" if "big" in lower else "minecraft:chests/underwater_ruin_small")
+                    if "/underwater_ruin/" in lower else None)
+        if loot is None:
+            continue
+        p = pos_of(b)
+        below = by_pos.get((p[0], p[1] - 1, p[2])) if p else None
+        below_name = state_name(palette[_int(below, "state", -1)]) if below is not None and 0 <= _int(below, "state", -1) < len(palette) else ""
+        if below is not None and below_name.endswith("chest"):
+            chest = below.get("nbt") if isinstance(below.get("nbt"), Compound) else Compound()
+            chest["LootTable"] = String(loot)
+            below["nbt"] = chest
+        else:
+            b["state"] = state(f"minecraft:chest[facing={CHEST_FACING.get(marker, 'north')}]")
+            b["nbt"] = Compound({"LootTable": String(loot)})
+
+
+def read_structure(root: Compound, fallback_name: str, max_volume: int = DEFAULT_MAX_VOLUME, path: str = "") -> Schematic:
+    resolve_markers(root, path or fallback_name)
     size = _vec3i(root.get("size"), "structure size")
     _check_volume(size, 0, max_volume)
     data_version = _int(root, "DataVersion") or 0
@@ -1006,10 +1079,11 @@ def _shift_origin(meta: Compound, by: Vec3) -> Compound:
     return out
 
 
-def read(root: Any, fmt: str, fallback_name: str, max_volume: int = DEFAULT_MAX_VOLUME) -> Schematic:
+def read(root: Any, fmt: str, fallback_name: str, max_volume: int = DEFAULT_MAX_VOLUME, path: str = "") -> Schematic:
+    """path: where the file sat, for vanilla structure files whose markers depend on it (see resolve_markers)."""
     if not isinstance(root, Compound):
         raise ConversionError("the file's root tag is not a compound")
-    s = READERS[fmt](root, fallback_name, max_volume)
+    s = read_structure(root, fallback_name, max_volume, path) if fmt == "nbt" else READERS[fmt](root, fallback_name, max_volume)
     holder = _meta_holder(root, fmt, create=False)
     meta = holder.get(META_KEY) if holder is not None else None
     if isinstance(meta, Compound) and meta:
