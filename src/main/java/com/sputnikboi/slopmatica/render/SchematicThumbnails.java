@@ -167,8 +167,15 @@ public final class SchematicThumbnails {
         return Optional.empty();
     }
 
+    /**
+     * Bumped whenever what an icon shows changes for the same file, so cached PNGs are redrawn
+     * (2: structure blocks in vanilla structure files resolve, as they do when loaded).
+     */
+    private static final int RENDER_VERSION = 2;
+
     private static String key(Path file, int size) throws IOException {
-        String id = file.toAbsolutePath().normalize() + "|" + Files.size(file) + "|" + Files.getLastModifiedTime(file).toMillis() + "|" + size;
+        String id = file.toAbsolutePath().normalize() + "|" + Files.size(file) + "|" + Files.getLastModifiedTime(file).toMillis() + "|" + size
+            + (RENDER_VERSION > 1 ? "|r" + RENDER_VERSION : "");
         try {
             byte[] hash = MessageDigest.getInstance("SHA-1").digest(id.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(hash, 0, 12);

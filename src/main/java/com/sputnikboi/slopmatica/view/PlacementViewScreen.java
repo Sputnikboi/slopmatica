@@ -232,6 +232,20 @@ public class PlacementViewScreen extends Screen {
             go.active = !current && p.visible();
             y += B;
         }
+        // Load another build: it lands where the camera looks, and the view switches to it.
+        if (y + B <= height - 6) {
+            addRenderableWidget(Button.builder(Component.literal("+"), b -> minecraft.gui.setScreen(
+                    new com.sputnikboi.slopmatica.gui.SchematicBrowserScreen(this).onPick(file -> {
+                        minecraft.gui.setScreen(this);
+                        SlopmaticaActions.load(file, view.cameraTarget(minecraft), SlopmaticaActions::actionBar, loaded -> {
+                            view.switchTo(loaded);
+                            if (minecraft.gui.screen() == this) {
+                                rebuildWidgets();
+                            }
+                        });
+                    })))
+                .bounds(x, y + GAP, B, B).tooltip(Tooltip.create(Component.translatable("slopmatica.builds.add"))).build());
+        }
     }
 
     /** Right click during a drag: everything back to how it was when the drag started. */

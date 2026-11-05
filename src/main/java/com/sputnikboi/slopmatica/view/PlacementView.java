@@ -115,7 +115,7 @@ public final class PlacementView {
 
     /** Switches the view to another placement, keeping the camera where it is. */
     public void switchTo(Placement target) {
-        if (placement == null || target == placement) {
+        if (target == placement) {
             return;
         }
         carryOffset = null;

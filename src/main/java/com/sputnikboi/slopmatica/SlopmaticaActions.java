@@ -45,6 +45,11 @@ public final class SlopmaticaActions {
     }
 
     public static void load(Path file, BlockPos origin, Consumer<Component> feedback) {
+        load(file, origin, feedback, p -> { });
+    }
+
+    /** {@code loaded}: told the new placement once it is in the world. */
+    public static void load(Path file, BlockPos origin, Consumer<Component> feedback, Consumer<Placement> loaded) {
         feedback.accept(prefix().append("Loading " + file.getFileName() + "..."));
         CompletableFuture.supplyAsync(() -> {
             try {
@@ -72,6 +77,7 @@ public final class SlopmaticaActions {
             if (schematic.incomplete()) {
                 feedback.accept(missingWarning(schematic));
             }
+            loaded.accept(placement);
         }, Minecraft.getInstance());
     }
 

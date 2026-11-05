@@ -32,8 +32,15 @@ public final class ActionWheel {
     /** The wheel's textures are drawn this big and scaled down, so edges stay smooth at any GUI scale. */
     private static final int TEXTURE = 512;
 
-    /** Ring, middle and highlighted wedges, made for one action count. */
-    private int texturesFor = -1;
+    /**
+     * Textures painted so far: the ring and the lit wedge for each action count (the wedge is
+     * turned into place when drawn), and the lit middle (-1). Painting takes a while, so it runs in
+     * the background, once per count, and the counts your pages use are painted ahead of time.
+     * Render thread only.
+     */
+    private final java.util.Set<Integer> painted = new java.util.HashSet<>();
+    private final java.util.Set<Integer> painting = new java.util.HashSet<>();
+    private int warmTicks;
 
     private boolean open;
     private int page;
@@ -184,11 +191,20 @@ public final class ActionWheel {
         List<Integer> active = active();
         int wedge = hoveredWedge(active.size());
         int hovered = wedge < 0 ? -1 : active.get(wedge);
-        makeTextures(mc, active.size());
         // The ring (one wedge per action), then the hovered wedge, or the middle lit when no action is picked.
+        // Until a new action count's textures are painted (a moment, once), only the icons show.
         int outer = (int) Math.round(OUTER * scale);
-        blitWheel(g, cx, cy, outer, "ring");
-        blitWheel(g, cx, cy, outer, wedge < 0 ? "middle" : "wedge_" + wedge);
+        if (paint(mc, active.size()) && paint(mc, -1)) {
+            blitWheel(g, cx, cy, outer, "ring_" + active.size());
+            if (wedge < 0) {
+                blitWheel(g, cx, cy, outer, "middle");
+            } else {
+                g.pose().pushMatrix();
+                g.pose().rotateAbout((float) (2 * Math.PI * wedge / active.size()), cx, cy);
+                blitWheel(g, cx, cy, outer, "wedge_" + active.size());
+                g.pose().popMatrix();
+            }
+        }
         for (int i = 0; i < active.size(); i++) {
             double angle = 2 * Math.PI * i / active.size();
             int x = cx + (int) Math.round(Math.sin(angle) * ICONS * scale) - 8;
@@ -234,17 +250,43 @@ public final class ActionWheel {
         g.blit(RenderPipelines.GUI_TEXTURED, texture(name), cx - outer, cy - outer, 0, 0, outer * 2, outer * 2, TEXTURE, TEXTURE, TEXTURE, TEXTURE);
     }
 
-    /** Paints the ring, the middle and one lit wedge per action (once per action count). */
-    private void makeTextures(Minecraft mc, int slots) {
-        if (texturesFor == slots) {
-            return;
+    /** Client tick: paints the textures for the action counts the pages use, before the wheel opens. */
+    public void warmUp(Minecraft mc) {
+        if (++warmTicks % 20 != 0 || mc.gui.overlay() != null) {
+            return; // Not while the game is still loading its resources.
         }
-        texturesFor = slots;
-        register(mc, "ring", paint(slots, -2));
-        register(mc, "middle", paint(slots, -1));
-        for (int i = 0; i < slots; i++) {
-            register(mc, "wedge_" + i, paint(slots, i));
+        paint(mc, -1);
+        for (List<String> slots : pages()) {
+            paint(mc, (int) slots.stream().filter(id -> QuickAction.get(id) != null).count());
         }
+    }
+
+    /**
+     * Whether the textures for this many actions (-1: the lit middle) are ready; if not, starts
+     * painting them in the background. Render thread.
+     */
+    private boolean paint(Minecraft mc, int slots) {
+        if (painted.contains(slots)) {
+            return true;
+        }
+        if (painting.add(slots)) {
+            java.util.concurrent.CompletableFuture.supplyAsync(() -> slots < 0 ? List.of(paint(1, -1)) : List.of(paint(slots, -2), paint(slots, 0)),
+                    net.minecraft.util.Util.backgroundExecutor())
+                .whenCompleteAsync((images, error) -> {
+                    if (error != null) {
+                        com.mojang.logging.LogUtils.getLogger().warn("Couldn't paint the action wheel", error);
+                        return; // Stays in painting: not retried every frame.
+                    }
+                    if (slots < 0) {
+                        register(mc, "middle", images.get(0));
+                    } else {
+                        register(mc, "ring_" + slots, images.get(0));
+                        register(mc, "wedge_" + slots, images.get(1));
+                    }
+                    painted.add(slots);
+                }, mc);
+        }
+        return false;
     }
 
     private static void register(Minecraft mc, String name, NativeImage image) {
@@ -255,6 +297,7 @@ public final class ActionWheel {
      * One layer of the wheel, 3x3 supersampled for smooth edges, in GUI pixels at 100% size (it is
      * scaled when drawn). {@code which}: -2 the ring with its
      * dividers and the outline of the empty middle; -1 the middle lit; otherwise that slot's wedge lit.
+     * Slow (millions of samples): off the render thread only.
      */
     private static NativeImage paint(int slots, int which) {
         NativeImage image = new NativeImage(TEXTURE, TEXTURE, true);

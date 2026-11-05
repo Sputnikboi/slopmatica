@@ -88,6 +88,7 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
             toggle("slopmatica.options.easy_place_restrict", c.easyPlaceRestrict, v -> c.easyPlaceRestrict = v, false),
             toggle("slopmatica.options.easy_place_angel", c.easyPlaceAngel, v -> c.easyPlaceAngel = v, false),
             toggle("slopmatica.options.easy_place_inside", c.easyPlaceInsideOnly, v -> c.easyPlaceInsideOnly = v, false),
+            toggle("slopmatica.options.easy_place_tools", c.easyPlaceTools, v -> c.easyPlaceTools = v, false),
             toggle("slopmatica.options.auto_layer", c.autoLayer, v -> c.autoLayer = v, false)
         );
         if (advanced) {

@@ -109,6 +109,8 @@ public final class SlopmaticaConfig {
     public boolean easyPlaceRestrict = true;
     /** With Easy Place on, refuse normal placements outside every schematic's area. */
     public boolean easyPlaceInsideOnly = true;
+    /** Easy Place uses tools on blocks they turn into the schematic's (paths, stripped logs, copper stages and wax). */
+    public boolean easyPlaceTools = true;
     /** In a single-layer or up-to-layer view, move up a layer once every block in it is right. */
     public boolean autoLayer = true;
     /** Copy block entity data (chest contents, sign text) and entities (frames, armor stands), and paste them. */

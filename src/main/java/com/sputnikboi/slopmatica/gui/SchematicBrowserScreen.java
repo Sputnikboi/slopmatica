@@ -88,6 +88,8 @@ public class SchematicBrowserScreen extends Screen {
     private FileList list;
     private StringWidget pathLabel;
     private StringWidget infoLabel;
+    /** What loading a file does instead of placing it at your feet (the build view's +), or null. */
+    private java.util.function.@Nullable Consumer<Path> onPick;
     private Button loadButton;
     private Button uploadButton;
 
@@ -96,6 +98,12 @@ public class SchematicBrowserScreen extends Screen {
         if (lastSharedTab && SlopmaticaConfig.get().shareSchematics) {
             showShared();
         }
+    }
+
+    /** Loading a file calls {@code pick} instead of placing it at your feet and closing. */
+    public SchematicBrowserScreen onPick(java.util.function.Consumer<Path> pick) {
+        this.onPick = pick;
+        return this;
     }
 
     /** Opens on the Vanilla tab. */
@@ -428,6 +436,10 @@ public class SchematicBrowserScreen extends Screen {
                 refresh();
             }
             case FILE -> {
+                if (onPick != null) {
+                    onPick.accept(entry.path);
+                    return;
+                }
                 if (minecraft.player != null) {
                     SlopmaticaActions.load(entry.path, minecraft.player.blockPosition(), SlopmaticaActions::chat);
                 }

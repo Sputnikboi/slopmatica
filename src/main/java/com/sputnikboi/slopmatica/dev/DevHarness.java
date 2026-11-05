@@ -159,6 +159,9 @@ public final class DevHarness {
                 com.sputnikboi.slopmatica.tour.FeatureTour.INSTANCE.start(mc);
             } else if (step.equals("supply")) {
                 com.sputnikboi.slopmatica.plan.SupplyChests.place(mc);
+            } else if (step.startsWith("frames ")) {
+                int n = Integer.parseInt(step.substring(7).trim());
+                LOGGER.info("dev frames: slowest of the last {} = {} ms", n, String.format(java.util.Locale.ROOT, "%.1f", StressTest.INSTANCE.slowestRecentMillis(n)));
             } else if (step.startsWith("wheel ")) {
                 // The mouse wheel in the world, through vanilla's handler (so mixins on it run).
                 mc.mouseHandler.onScroll(mc.getWindow().handle(), 0, Double.parseDouble(step.substring(6).trim()));
@@ -232,6 +235,14 @@ public final class DevHarness {
         int done = 0, failed = 0;
         try (var walk = java.nio.file.Files.walk(src)) {
             for (java.nio.file.Path file : walk.filter(com.sputnikboi.slopmatica.schematic.SchematicFormats::isSchematic).sorted().toList()) {
+                try {
+                    if (com.sputnikboi.slopmatica.schematic.Schematic.load(file).blockCount() == 0) {
+                        continue; // Nothing to draw (a vanilla mob marker, say): no icon will ever come.
+                    }
+                } catch (java.io.IOException | RuntimeException e) {
+                    failed++;
+                    continue;
+                }
                 mc.execute(() -> thumbs.get(file, com.sputnikboi.slopmatica.render.SchematicThumbnails.PREVIEW_SIZE));
                 java.util.Optional<java.nio.file.Path> png = java.util.Optional.empty();
                 // The PNG appears before it is fully written: wait for content that stops growing.

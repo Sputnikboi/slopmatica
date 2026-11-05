@@ -104,7 +104,7 @@ public final class BoardClient {
      */
     public Page browseGroup(String group, String folder, String query, String sort, int page) throws Exception {
         String path = "/api/groups/" + enc(group) + "/posts?limit=20&page=" + page + "&sort=" + enc(sort) + (query.isBlank() ? "" : "&q=" + enc(query.trim()))
-            + (folder.isEmpty() ? "" : "&folder=" + enc(folder));
+            + "&folder=" + enc(folder); // Always sent: without it the server lists the whole group flat (older mods).
         JsonObject json = CloudSync.INSTANCE.getJson(path);
         List<Post> posts = new ArrayList<>();
         for (JsonElement e : json.getAsJsonArray("posts")) {

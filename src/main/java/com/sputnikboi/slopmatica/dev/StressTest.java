@@ -130,6 +130,15 @@ public final class StressTest {
         SlopmaticaActions.actionBar(Component.literal("Rebuilding every hologram section").withColor(SlopmaticaActions.ACCENT));
     }
 
+    /** The slowest of the last {@code frames} HUD frames, in ms (dev harness). */
+    public double slowestRecentMillis(int frames) {
+        long max = 0;
+        for (int i = 1; i <= Math.min(frames, Math.min(frame, FRAMES)); i++) {
+            max = Math.max(max, frameNanos[(frame - i) % FRAMES]);
+        }
+        return max / 1.0E6;
+    }
+
     /** Frame-time graph and hologram stats, bottom left. Times each HUD frame, so it costs almost nothing. */
     public void extractHud(GuiGraphicsExtractor g) {
         long now = Util.getNanos();

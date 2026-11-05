@@ -4,6 +4,7 @@ import com.sputnikboi.slopmatica.SlopmaticaActions;
 import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.mixin.BlockItemInvoker;
 import com.sputnikboi.slopmatica.placement.Placement;
+import com.sputnikboi.slopmatica.verify.BlockMatcher;
 import com.sputnikboi.slopmatica.verify.BlockStatus;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import com.sputnikboi.slopmatica.verify.SchematicRaycast;
@@ -107,7 +108,8 @@ public final class EasyPlace {
         }
         List<SchematicRaycast.Hit> line = new java.util.ArrayList<>();
         for (SchematicRaycast.Hit hit : SchematicRaycast.traceAll(level, transforms, player.getEyePosition(), player.getViewVector(1.0F), player.blockInteractionRange())) {
-            if (hit.status() == BlockStatus.MISSING && hit.actual().canBeReplaced() || buildsUpTo(hit.actual(), hit.want())) {
+            if (hit.status() == BlockStatus.MISSING && hit.actual().canBeReplaced() || buildsUpTo(hit.actual(), hit.want())
+                || toolUse(player, level, hit.pos(), hit.actual(), hit.want()) != null) {
                 line.add(hit);
             }
         }
@@ -158,8 +160,36 @@ public final class EasyPlace {
 
     private static final Component NOT_AN_ITEM = Component.empty();
 
-    /** Places {@code want} at {@code pos}; null on success, otherwise why not. */
+    /** A tool use that turns the block at pos towards want (Use Tools), or null; doors and the like are left alone, a click opens them. */
+    private static ToolUses.@Nullable Use toolUse(LocalPlayer player, ClientLevel level, BlockPos pos, BlockState have, BlockState want) {
+        if (!SlopmaticaConfig.get().easyPlaceTools || have.canBeReplaced() || buildsUpTo(have, want) || interactable(have)) {
+            return null;
+        }
+        return ToolUses.find(player, level, pos, have, want);
+    }
+
+    /** Uses the tool on the block's top face, as a right click with it would. */
+    private static @Nullable Component useTool(Minecraft mc, LocalPlayer player, BlockPos pos, ToolUses.Use use) {
+        if (!use.carried() || !holdItem(mc, player, use.item())) {
+            return Component.translatable("slopmatica.easy_place.no_tool", use.item().getName(new ItemStack(use.item())), use.result().getBlock().getName());
+        }
+        if (!player.isWithinBlockInteractionRange(pos, 1.0)) {
+            return Component.translatable("slopmatica.easy_place.too_far", use.result().getBlock().getName());
+        }
+        BlockHitResult hit = new BlockHitResult(net.minecraft.world.phys.Vec3.atCenterOf(pos).add(0, 0.5, 0), Direction.UP, pos, false);
+        InteractionResult result = mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
+        if (result instanceof InteractionResult.Success success && success.swingSource() == InteractionResult.SwingSource.PREDICTED) {
+            player.swing(InteractionHand.MAIN_HAND, player.getMainHandItem().getInteractAnimation(), false);
+        }
+        return null;
+    }
+
+    /** Places {@code want} at {@code pos} (or uses a tool on what is there); null on success, otherwise why not. */
     private @Nullable Component attempt(Minecraft mc, LocalPlayer player, ClientLevel level, BlockPos pos, BlockState want) {
+        ToolUses.Use use = toolUse(player, level, pos, level.getBlockState(pos), want);
+        if (use != null) {
+            return useTool(mc, player, pos, use);
+        }
         // Two-block things are placed from their base: a bed from its foot, a door or tall plant
         // from its lower half; the item puts the other half in itself.
         if (want.hasProperty(BlockStateProperties.BED_PART) && want.getValue(BlockStateProperties.BED_PART) == BedPart.HEAD
@@ -461,8 +491,11 @@ public final class EasyPlace {
      */
     private static boolean refuseWrongPlacement(Minecraft mc, LocalPlayer player, ClientLevel level, List<Placement.Transform> transforms) {
         ItemStack held = player.getMainHandItem();
-        if (!(held.getItem() instanceof BlockItem) || !(mc.hitResult instanceof BlockHitResult hit) || hit.getType() != HitResult.Type.BLOCK) {
+        if (!(mc.hitResult instanceof BlockHitResult hit) || hit.getType() != HitResult.Type.BLOCK) {
             return false;
+        }
+        if (!(held.getItem() instanceof BlockItem)) {
+            return refuseToolUse(level, held, hit.getBlockPos(), transforms);
         }
         BlockState clicked = level.getBlockState(hit.getBlockPos());
         if (!player.isSecondaryUseActive() && (clicked.hasBlockEntity() || clicked.getBlock() instanceof DoorBlock || clicked.getBlock() instanceof TrapDoorBlock
@@ -487,6 +520,23 @@ public final class EasyPlace {
         fail(want.isAir()
             ? Component.translatable("slopmatica.easy_place.refused_air")
             : Component.translatable("slopmatica.easy_place.refused", want.getBlock().getName()));
+        return true;
+    }
+
+    /**
+     * A tool (axe, shovel, hoe, honeycomb) on a block that already is the schematic's would undo it:
+     * after Use Tools gets copper to the right stage, the next click would scrape it further.
+     */
+    private static boolean refuseToolUse(ClientLevel level, ItemStack held, BlockPos pos, List<Placement.Transform> transforms) {
+        if (!SlopmaticaConfig.get().easyPlaceTools || !(held.is(net.minecraft.world.item.Items.HONEYCOMB) || held.has(net.minecraft.core.component.DataComponents.BLOCK_TRANSFORMER))) {
+            return false;
+        }
+        BlockState want = SchematicRaycast.wantedAt(transforms, pos.getX(), pos.getY(), pos.getZ());
+        BlockState have = level.getBlockState(pos);
+        if (want == null || want.isAir() || interactable(have) || BlockMatcher.compare(want, have) != BlockStatus.MATCH) {
+            return false;
+        }
+        fail(Component.translatable("slopmatica.easy_place.refused_tool", want.getBlock().getName()));
         return true;
     }
 

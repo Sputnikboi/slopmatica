@@ -29,6 +29,8 @@ public class PlacementsScreen extends Screen {
     private static final int DETAIL_COLOR = 0xFF909090;
     private static final int ACTIVE_COLOR = 0xFF55CCFF;
     private static final int BUTTON_WIDTH = 96;
+    /** Each build's icon, the same 3D render the schematic browser shows. */
+    private static final int ICON = 32;
 
     private final @Nullable Screen parent;
     private final HeaderAndFooterLayout layout = new HeaderAndFooterLayout(this, 33, 60);
@@ -123,7 +125,7 @@ public class PlacementsScreen extends Screen {
 
     private class PlacementList extends ObjectSelectionList<PlacementEntry> {
         PlacementList(Minecraft minecraft) {
-            super(minecraft, PlacementsScreen.this.width, layout.getContentHeight(), layout.getHeaderHeight(), 26);
+            super(minecraft, PlacementsScreen.this.width, layout.getContentHeight(), layout.getHeaderHeight(), ICON + 4);
         }
 
         @Override
@@ -148,9 +150,20 @@ public class PlacementsScreen extends Screen {
                 o.getX(), o.getY(), o.getZ(), size.getXSpan(), size.getYSpan(), size.getZSpan(),
                 SlopmaticaActions.rotationLabel(placement.transform().rotation()), SlopmaticaActions.mirrorLabel(placement.transform().mirror()),
                 placement.visible() ? "" : "  ·  hidden");
-            int x = getContentX() + 2;
-            graphics.text(font, font.plainSubstrByWidth(placement.name(), getContentWidth() - 4), x, getContentY() + 1, active ? ACTIVE_COLOR : -1);
-            graphics.text(font, font.plainSubstrByWidth(detail, getContentWidth() - 4), x, getContentY() + 12, DETAIL_COLOR);
+            // Builds without a file (pasted, test builds) have no icon.
+            java.nio.file.Path source = placement.schematic().source();
+            net.minecraft.resources.Identifier icon = source != null && java.nio.file.Files.isRegularFile(source)
+                ? com.sputnikboi.slopmatica.render.SchematicThumbnails.INSTANCE.get(source) : null;
+            int iconY = getContentYMiddle() - ICON / 2;
+            if (icon != null) {
+                int tex = com.sputnikboi.slopmatica.render.SchematicThumbnails.SIZE;
+                graphics.blit(net.minecraft.client.renderer.RenderPipelines.GUI_TEXTURED, icon, getContentX() + 1, iconY, 0, 0, ICON, ICON, tex, tex, tex, tex);
+            } else {
+                graphics.fill(getContentX() + 1, iconY, getContentX() + 1 + ICON, iconY + ICON, 0x40000000);
+            }
+            int x = getContentX() + ICON + 6, w = getContentWidth() - ICON - 8, y = getContentYMiddle() - 10;
+            graphics.text(font, font.plainSubstrByWidth(placement.name(), w), x, y, active ? ACTIVE_COLOR : -1);
+            graphics.text(font, font.plainSubstrByWidth(detail, w), x, y + 11, DETAIL_COLOR);
         }
 
         @Override
