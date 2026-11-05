@@ -30,8 +30,8 @@ import net.minecraft.util.Util;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The website's board in the game: search and sort public builds (or your favourites), see their
- * icons, and download one (to schematics/board/) or add it to your cloud. Adding to the cloud or
+ * The website's board in the game: search and sort public builds (or your favourites, or a group's
+ * builds folder by folder), see their icons, and download one (to schematics/board/) or add it to your cloud. Adding to the cloud or
  * favouriting doesn't use your storage: the build counts against its uploader's.
  */
 public class BoardBrowserScreen extends Screen {
@@ -46,6 +46,9 @@ public class BoardBrowserScreen extends Screen {
     /** Groups to offer, fetched once; the source button lists them after the first two. */
     private List<BoardClient.Group> groups = List.of();
     private boolean groupsAsked;
+    /** In a group: the folder browsed ("" for the top), and the folders in it, listed above its builds. */
+    private String folder = "";
+    private List<BoardClient.Folder> folders = List.of();
     private int page = 1, pages = 1, scroll;
     private List<BoardClient.Post> posts = List.of();
     private BoardClient.@Nullable Post selected;
@@ -81,6 +84,7 @@ public class BoardBrowserScreen extends Screen {
             .withTooltip(v -> Tooltip.create(Component.translatable("slopmatica.board.source.tooltip")))
             .create(left + 308, 26, 80, 20, Component.empty(), (b, v) -> {
                 source = v;
+                folder = "";
                 page = 1;
                 load();
             }));
@@ -128,7 +132,24 @@ public class BoardBrowserScreen extends Screen {
             load();
         } else {
             posts.forEach(this::loadIcon);
+            folders.forEach(f -> loadIcon(f.cover()));
         }
+    }
+
+    /** Rows above the builds: "back up" while inside a folder, then the folders. */
+    private int folderRows() {
+        return (folder.isEmpty() ? 0 : 1) + folders.size();
+    }
+
+    private int rowCount() {
+        return folderRows() + posts.size();
+    }
+
+    /** Into a folder of the group, or up to its parent. */
+    private void openFolder(String path) {
+        folder = path;
+        page = 1;
+        load();
     }
 
     private void turn(int by) {
@@ -138,12 +159,12 @@ public class BoardBrowserScreen extends Screen {
 
     private void load() {
         status = Component.translatable("slopmatica.board.loading").getString();
-        String q = query, s = sort, from = source;
+        String q = query, s = sort, from = source, in = folder;
         int p = page;
         CompletableFuture.supplyAsync(() -> {
             try {
                 return from.equals("*") ? BoardClient.INSTANCE.favorites()
-                    : from.isEmpty() ? BoardClient.INSTANCE.browse(q, s, p) : BoardClient.INSTANCE.browseGroup(from, q, s, p);
+                    : from.isEmpty() ? BoardClient.INSTANCE.browse(q, s, p) : BoardClient.INSTANCE.browseGroup(from, in, q, s, p);
             } catch (Exception e) {
                 throw new RuntimeException(e.getMessage(), e);
             }
@@ -153,24 +174,33 @@ public class BoardBrowserScreen extends Screen {
                 return;
             }
             posts = result.posts();
+            folders = result.folders();
             pages = Math.max(1, result.pages());
             scroll = 0;
             selected = null;
-            status = posts.isEmpty() ? Component.translatable("slopmatica.board.nothing").getString() : "";
+            status = posts.isEmpty() && folders.isEmpty() && folder.isEmpty() ? Component.translatable("slopmatica.board.nothing").getString() : "";
             posts.forEach(this::loadIcon);
+            folders.forEach(f -> loadIcon(f.cover()));
             rebuildWidgets();
         }, minecraft);
     }
 
     private void loadIcon(BoardClient.Post post) {
-        if (!post.hasThumbnail() || icons.containsKey(post.id())) {
+        if (post.hasThumbnail()) {
+            loadIcon(post.id());
+        }
+    }
+
+    /** The thumbnail of the post with this id (null: none), fetched once. */
+    private void loadIcon(@Nullable String postId) {
+        if (postId == null || icons.containsKey(postId)) {
             return;
         }
-        Identifier id = Identifier.fromNamespaceAndPath("slopmatica", "board/" + post.id().toLowerCase(Locale.ROOT) + "_" + Integer.toHexString(post.id().hashCode()));
-        icons.put(post.id(), null); // Loading.
+        Identifier id = Identifier.fromNamespaceAndPath("slopmatica", "board/" + postId.toLowerCase(Locale.ROOT) + "_" + Integer.toHexString(postId.hashCode()));
+        icons.put(postId, null); // Loading.
         CompletableFuture.supplyAsync(() -> {
             try {
-                return BoardClient.INSTANCE.thumbnail(post.id());
+                return BoardClient.INSTANCE.thumbnail(postId);
             } catch (Exception e) {
                 return null;
             }
@@ -180,8 +210,8 @@ public class BoardBrowserScreen extends Screen {
             }
             try {
                 NativeImage image = NativeImage.read(bytes);
-                minecraft.getTextureManager().register(id, new DynamicTexture(() -> "Board icon " + post.id(), image));
-                icons.put(post.id(), id);
+                minecraft.getTextureManager().register(id, new DynamicTexture(() -> "Board icon " + postId, image));
+                icons.put(postId, id);
             } catch (Exception ignored) {
                 // Not an image: no icon.
             }
@@ -259,9 +289,14 @@ public class BoardBrowserScreen extends Screen {
         super.extractRenderState(g, mouseX, mouseY, a);
         g.centeredText(font, title, width / 2, 10, -1);
         int visible = (listBottom - listTop) / ROW;
-        for (int i = 0; i < visible && scroll + i < posts.size(); i++) {
-            BoardClient.Post post = posts.get(scroll + i);
+        int above = folderRows();
+        for (int i = 0; i < visible && scroll + i < rowCount(); i++) {
             int y = listTop + i * ROW;
+            if (scroll + i < above) {
+                extractFolderRow(g, scroll + i, y, mouseX, mouseY);
+                continue;
+            }
+            BoardClient.Post post = posts.get(scroll + i - above);
             boolean over = mouseX >= left && mouseX < right && mouseY >= y && mouseY < y + ROW - 2;
             g.fill(left, y, right, y + ROW - 2, post == selected ? 0x803060C0 : over ? 0x40FFFFFF : 0x40000000);
             Identifier icon = icons.get(post.id());
@@ -279,13 +314,34 @@ public class BoardBrowserScreen extends Screen {
                 .withStyle(post.favorited() ? ChatFormatting.LIGHT_PURPLE : ChatFormatting.GRAY);
             g.text(font, font.plainSubstrByWidth(stats.getString(), right - tx - 4), tx, y + 28, post.favorited() ? 0xFFFF80C0 : 0xFF909090);
         }
-        if (posts.size() > visible) {
-            g.text(font, (scroll + 1) + "-" + Math.min(posts.size(), scroll + visible) + " / " + posts.size(), right - 60, listTop - 10, 0xFF909090);
+        if (rowCount() > visible) {
+            g.text(font, (scroll + 1) + "-" + Math.min(rowCount(), scroll + visible) + " / " + rowCount(), right - 60, listTop - 10, 0xFF909090);
         }
         if (!status.isEmpty()) {
             g.centeredText(font, status, width / 2, listBottom - 10, 0xFFFFD060);
         }
         g.text(font, Component.translatable("slopmatica.board.page", page, pages), left, height - 22, 0xFF909090);
+    }
+
+    /** Row {@code row} of the folder rows: "back up" first while inside a folder, then the folders. */
+    private void extractFolderRow(GuiGraphicsExtractor g, int row, int y, int mouseX, int mouseY) {
+        boolean over = mouseX >= left && mouseX < right && mouseY >= y && mouseY < y + ROW - 2;
+        g.fill(left, y, right, y + ROW - 2, over ? 0x40FFFFFF : 0x40000000);
+        int tx = left + ICON + 8;
+        if (!folder.isEmpty() && row == 0) {
+            g.text(font, Component.translatable("slopmatica.board.folder_up", folder.contains("/") ? folder.substring(0, folder.lastIndexOf('/')) : sourceName(source).getString()), tx, y + 10, 0xFFFFFFFF);
+            g.text(font, font.plainSubstrByWidth(folder, right - tx - 4), tx, y + 22, 0xFF909090);
+            return;
+        }
+        BoardClient.Folder f = folders.get(row - (folder.isEmpty() ? 0 : 1));
+        Identifier icon = f.cover() != null ? icons.get(f.cover()) : null;
+        if (icon != null) {
+            g.blit(RenderPipelines.GUI_TEXTURED, icon, left + 2, y + 1, 0, 0, ICON, ICON, ICON, ICON);
+        } else {
+            g.fill(left + 2, y + 1, left + 2 + ICON, y + 1 + ICON, 0x60202020);
+        }
+        g.text(font, font.plainSubstrByWidth(f.name(), right - tx - 4), tx, y + 10, 0xFFFFD060);
+        g.text(font, Component.translatable("slopmatica.board.folder_count", f.count()), tx, y + 22, 0xFFB0B0B0);
     }
 
     @Override
@@ -295,6 +351,13 @@ public class BoardBrowserScreen extends Screen {
         }
         if (event.x() >= left && event.x() < right && event.y() >= listTop && event.y() < listBottom) {
             int index = scroll + (int) ((event.y() - listTop) / ROW);
+            if (index >= 0 && index < folderRows()) {
+                boolean up = !folder.isEmpty() && index == 0;
+                openFolder(up ? (folder.contains("/") ? folder.substring(0, folder.lastIndexOf('/')) : "")
+                    : folders.get(index - (folder.isEmpty() ? 0 : 1)).path());
+                return true;
+            }
+            index -= folderRows();
             if (index >= 0 && index < posts.size()) {
                 selected = posts.get(index);
                 rebuildWidgets();
@@ -310,7 +373,7 @@ public class BoardBrowserScreen extends Screen {
     @Override
     public boolean mouseScrolled(double x, double y, double scrollX, double scrollY) {
         int visible = (listBottom - listTop) / ROW;
-        scroll = Math.clamp(scroll + (scrollY > 0 ? -1 : 1), 0, Math.max(0, posts.size() - visible));
+        scroll = Math.clamp(scroll + (scrollY > 0 ? -1 : 1), 0, Math.max(0, rowCount() - visible));
         return true;
     }
 

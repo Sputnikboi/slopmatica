@@ -13,7 +13,6 @@ import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.placement.Layers;
 import com.sputnikboi.slopmatica.placement.Placement;
 import com.sputnikboi.slopmatica.placement.PlacementManager;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 import net.minecraft.client.Camera;
@@ -125,7 +124,7 @@ public final class PlacementView {
         startOrigin = target.transform().origin();
         startRotation = target.transform().rotation();
         startMirror = target.transform().mirror();
-        SlopmaticaActions.actionBar(Component.literal("Placement view: " + target.name()).withColor(SlopmaticaActions.ACCENT));
+        SlopmaticaActions.actionBar(Component.literal("Build view: " + target.name()).withColor(SlopmaticaActions.ACCENT));
     }
 
     /** Enters the view for the placement under the crosshair, or the active one; leaves it if already in. */
@@ -173,7 +172,7 @@ public final class PlacementView {
         if (carrying) {
             pickUp(mc, target);
         } else {
-            SlopmaticaActions.actionBar(Component.literal("Placement view: " + target.name()).withColor(SlopmaticaActions.ACCENT));
+            SlopmaticaActions.actionBar(Component.literal("Build view: " + target.name()).withColor(SlopmaticaActions.ACCENT));
         }
     }
 
@@ -198,7 +197,7 @@ public final class PlacementView {
             mc.gui.setScreen(null);
         }
         if (mc.player != null) {
-            SlopmaticaActions.actionBar(Component.literal("Placement view closed").withColor(SlopmaticaActions.ACCENT));
+            SlopmaticaActions.actionBar(Component.literal("Build view closed").withColor(SlopmaticaActions.ACCENT));
         }
     }
 
@@ -622,38 +621,31 @@ public final class PlacementView {
             }
             return;
         }
-        if (p == null) {
-            drawPanel(graphics, mc, List.of(
-                "Build view: no build selected",
-                "Tool: " + tool.label().getString() + " (" + key(SlopmaticaKeys.VIEW_TOOL) + " to change)",
-                "Left click: set a selection corner   Right click: free cursor",
-                key(SlopmaticaKeys.VIEW_SAVE) + ": save the selection   Ctrl+Z: undo",
-                "Done: " + key(SlopmaticaKeys.PLACEMENT_VIEW) + " or Esc"
-            ), 4, 4);
-            return;
-        }
-        KeyMapping[] n = SlopmaticaKeys.VIEW_NUDGES;
-        List<String> lines = new ArrayList<>();
-        lines.add("Placement view: " + p.name() + (carryOffset != null ? "  (carrying)" : ""));
-        int warnings = 0;
-        for (Recommendations.Warning w : Recommendations.of(mc, p)) {
-            lines.add("⚠ " + w.text().getString());
-            warnings++;
-        }
-        lines.add("Fly: " + key(mc.options.keyUp) + key(mc.options.keyLeft) + key(mc.options.keyDown) + key(mc.options.keyRight)
-            + ", " + key(mc.options.keyJump) + " / " + key(mc.options.keyShift) + ", " + key(mc.options.keySprint) + " faster");
-        lines.add("Tool: " + tool.label().getString() + " (" + key(SlopmaticaKeys.VIEW_TOOL) + " to change)");
-        lines.add(switch (tool) {
-            case MOVE -> carryOffset == null ? "Left click: pick up   Right click: free cursor" : "Left click: put down   Right click: free cursor";
-            case SELECT -> "Left click: set a corner   Right click: free cursor";
-            default -> "Right click: free cursor, then drag a face of the box";
-        });
-        lines.add("Rotate: " + key(SlopmaticaKeys.VIEW_ROTATE) + "   Mirror: " + key(SlopmaticaKeys.VIEW_MIRROR) + " (" + SlopmaticaActions.mirrorLabel(p.transform().mirror()) + ")");
-        lines.add("Nudge: " + key(n[0]) + " " + key(n[1]) + " " + key(n[2]) + " " + key(n[3]) + "   up/down: " + key(n[4]) + " " + key(n[5]) + " or scroll");
-        lines.add("Hold Shift to nudge 5 blocks");
-        lines.add("Done: " + key(SlopmaticaKeys.PLACEMENT_VIEW) + " or Esc");
-        drawPanel(graphics, mc, lines, 4, 4, warnings);
+        // Just the way in to the actions and the way out; the cursor screen explains the rest.
+        String title = p == null ? "Build view: no build selected" : "Build view: " + p.name() + (carryOffset != null ? "  (carrying)" : "");
+        String actions = carryOffset != null
+            ? key(mc.options.keyAttack) + ": put down   " + key(mc.options.keyUse) + ": put back"
+            : key(mc.options.keyUse) + ": Show actions";
+        drawPanel(graphics, mc, List.of(title, actions, key(SlopmaticaKeys.PLACEMENT_VIEW) + ": Done"), 4, 4);
+        drawMenuIcon(graphics, mc, graphics.guiWidth());
     }
+
+    static final int MENU_ICON = 20;
+
+    /** Top-right corner of the view: where the menu button sits (the cursor screen's is clickable). */
+    static int menuIconX(int screenWidth) {
+        return screenWidth - MENU_ICON - 4;
+    }
+
+    /** The menu button as the flying HUD shows it: the same look as the cursor screen's real button. */
+    static void drawMenuIcon(GuiGraphicsExtractor graphics, Minecraft mc, int screenWidth) {
+        int x = menuIconX(screenWidth), y = 4;
+        graphics.blitSprite(net.minecraft.client.renderer.RenderPipelines.GUI_TEXTURED,
+            net.minecraft.resources.Identifier.withDefaultNamespace("widget/button"), x, y, MENU_ICON, MENU_ICON);
+        graphics.centeredText(mc.font, MENU_LABEL, x + MENU_ICON / 2, y + 6, 0xFFFFFFFF);
+    }
+
+    static final String MENU_LABEL = "☰";
 
     static void drawPanel(GuiGraphicsExtractor graphics, Minecraft mc, List<String> lines, int x, int y) {
         drawPanel(graphics, mc, lines, x, y, 0);

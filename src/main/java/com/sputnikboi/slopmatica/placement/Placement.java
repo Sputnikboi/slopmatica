@@ -5,8 +5,10 @@ import com.sputnikboi.slopmatica.schematic.Schematic;
 import net.minecraft.world.phys.Vec3;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.Items;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Mirror;
@@ -268,7 +270,8 @@ public final class Placement {
                 return null;
             }
             BlockState state = stateAt(wx, wy, wz);
-            if (state != null && !shownItems.isEmpty() && !state.isAir() && !shownItems.contains(state.getBlock().asItem())) {
+            if (state != null && !shownItems.isEmpty() && !state.isAir() && !shownItems.contains(state.getBlock().asItem())
+                && !shownItems.contains(Objects.requireNonNullElse(com.sputnikboi.slopmatica.verify.MaterialList.bucketFor(state), Items.AIR))) {
                 return null;
             }
             return state;

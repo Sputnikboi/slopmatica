@@ -143,6 +143,10 @@ public final class SlopmaticaConfig {
     public com.sputnikboi.slopmatica.plan.InventoryPlanner.Sort planSort = com.sputnikboi.slopmatica.plan.InventoryPlanner.Sort.NEXT;
     /** Item ids left out of the plan. */
     public java.util.Set<String> planIgnored = new java.util.LinkedHashSet<>();
+    /** Bring this much more (percent of the amount, plus a flat number) of each item the plan needs more than {@link #planExtraOver} of. */
+    public int planExtraPercent = 0;
+    public int planExtraFlat = 0;
+    public int planExtraOver = 0;
     /** Forget the plan when leaving a world (otherwise it lasts until the game closes). */
     public boolean planForgetOnLeave = false;
     /** The list beside the inventory: what doesn't fit, ender chest boxes, tools. */
@@ -344,6 +348,9 @@ public final class SlopmaticaConfig {
             planIgnored = new java.util.LinkedHashSet<>();
         }
         planSlots = Math.clamp(planSlots, 1, 36);
+        planExtraPercent = Math.clamp(planExtraPercent, 0, 100);
+        planExtraFlat = Math.clamp(planExtraFlat, 0, 64);
+        planExtraOver = Math.clamp(planExtraOver, 0, 1728);
         planShulkers = Math.clamp(planShulkers, 0, planUnlimitedShulkers ? 200 : 53);
         return this;
     }

@@ -50,8 +50,18 @@ public final class BoardClient {
     public record Group(String id, String name, @Nullable String role) {
     }
 
-    /** A page of results. */
-    public record Page(List<Post> posts, int page, int pages) {
+    /**
+     * A folder inside a group: its name, its whole path there ("Overworld/Village"), how many builds
+     * are in it and below it, and a build whose thumbnail stands for it (or null).
+     */
+    public record Folder(String name, String path, int count, @Nullable String cover) {
+    }
+
+    /** A page of results; {@code folders}: the folders in the group folder browsed (none elsewhere). */
+    public record Page(List<Post> posts, int page, int pages, List<Folder> folders) {
+        Page(List<Post> posts, int page, int pages) {
+            this(posts, page, pages, List.of());
+        }
     }
 
     private BoardClient() {
@@ -88,15 +98,27 @@ public final class BoardClient {
         return out;
     }
 
-    /** A group's builds, like {@link #browse}. */
-    public Page browseGroup(String group, String query, String sort, int page) throws Exception {
-        String path = "/api/groups/" + enc(group) + "/posts?limit=20&page=" + page + "&sort=" + enc(sort) + (query.isBlank() ? "" : "&q=" + enc(query.trim()));
+    /**
+     * A group's builds in one of its folders ("" for the top), like {@link #browse}, with the folders
+     * inside it. A search looks through the folder and every folder below it.
+     */
+    public Page browseGroup(String group, String folder, String query, String sort, int page) throws Exception {
+        String path = "/api/groups/" + enc(group) + "/posts?limit=20&page=" + page + "&sort=" + enc(sort) + (query.isBlank() ? "" : "&q=" + enc(query.trim()))
+            + (folder.isEmpty() ? "" : "&folder=" + enc(folder));
         JsonObject json = CloudSync.INSTANCE.getJson(path);
         List<Post> posts = new ArrayList<>();
         for (JsonElement e : json.getAsJsonArray("posts")) {
             posts.add(Post.of(e.getAsJsonObject()));
         }
-        return new Page(posts, json.has("page") ? json.get("page").getAsInt() : page, json.has("pages") ? json.get("pages").getAsInt() : 1);
+        List<Folder> folders = new ArrayList<>();
+        if (json.has("folders") && json.get("folders").isJsonArray()) {
+            for (JsonElement e : json.getAsJsonArray("folders")) {
+                JsonObject f = e.getAsJsonObject();
+                folders.add(new Folder(str(f, "name"), str(f, "path"), f.has("count") ? f.get("count").getAsInt() : 0,
+                    f.has("cover") && !f.get("cover").isJsonNull() ? f.get("cover").getAsString() : null));
+            }
+        }
+        return new Page(posts, json.has("page") ? json.get("page").getAsInt() : page, json.has("pages") ? json.get("pages").getAsInt() : 1, folders);
     }
 
     /** Your favourites (needs a login). */

@@ -20,11 +20,14 @@ import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.block.state.properties.IntegerProperty;
 import net.minecraft.world.level.block.state.properties.SlabType;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.level.material.FluidState;
+import org.jspecify.annotations.Nullable;
 
 /**
  * The items a placement needs: how many of each in total, how many are still missing from the
  * world, and how many the player is carrying. Counted in items, not blocks: a double slab is two
- * slabs, three candles in one block are three candles, a door or bed counts once.
+ * slabs, three candles in one block are three candles, a door or bed counts once. Fluid sources
+ * (including the water in waterlogged blocks) count as their bucket.
  */
 public final class MaterialList {
     /** Blocks that hold several of their item, by the property that says how many. */
@@ -65,6 +68,14 @@ public final class MaterialList {
                     BlockState want = t.stateAt(x, y, z);
                     if (want == null || want.isAir()) {
                         continue;
+                    }
+                    Item bucket = bucketFor(want);
+                    if (bucket != null) {
+                        int[] c = counts.computeIfAbsent(bucket, k -> new int[2]);
+                        c[0]++;
+                        if (!loaded || fluidMissing(want, level.getBlockState(pos.set(x, y, z)))) {
+                            c[1]++;
+                        }
                     }
                     Item item = want.getBlock().asItem();
                     int n = itemCount(want);
@@ -130,6 +141,24 @@ public final class MaterialList {
             // Unreadable data: the plain item will do.
         }
         return stack;
+    }
+
+    /**
+     * The bucket a block's fluid comes in: water and lava sources, and the water in waterlogged
+     * blocks, kelp and the like. Null for flowing fluid, which runs out of the sources by itself.
+     */
+    public static @Nullable Item bucketFor(BlockState state) {
+        FluidState fluid = state.getFluidState();
+        if (!fluid.isSource()) {
+            return null;
+        }
+        Item bucket = fluid.getType().getBucket();
+        return bucket == Items.AIR ? null : bucket;
+    }
+
+    /** True when the world doesn't hold the source the schematic's block has (see {@link #bucketFor}). */
+    public static boolean fluidMissing(BlockState want, BlockState have) {
+        return !have.getFluidState().isSourceOfType(want.getFluidState().getType());
     }
 
     public static int itemCount(BlockState state) {

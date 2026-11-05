@@ -93,6 +93,15 @@ public class InventoryPlanScreen extends Screen {
             .create(x, y, LEFT_W, 20, Component.translatable("slopmatica.plan.sort"), (b, v) -> changed(() -> c.planSort = v)));
         y += step;
         if (c.showAdvanced) {
+            int half = (LEFT_W - 2) / 2;
+            addRenderableWidget(new IntSlider(x, y, half, "slopmatica.plan.extra_percent", 0, 100, 5, c.planExtraPercent, v -> c.planExtraPercent = v))
+                .setTooltip(Tooltip.create(Component.translatable("slopmatica.plan.extra.tooltip")));
+            addRenderableWidget(new IntSlider(x + LEFT_W - half, y, half, "slopmatica.plan.extra_flat", 0, 64, 1, c.planExtraFlat, v -> c.planExtraFlat = v))
+                .setTooltip(Tooltip.create(Component.translatable("slopmatica.plan.extra.tooltip")));
+            y += step;
+            addRenderableWidget(new IntSlider(x, y, LEFT_W, "slopmatica.plan.extra_over", 0, 1728, 16, c.planExtraOver, v -> c.planExtraOver = v))
+                .setTooltip(Tooltip.create(Component.translatable("slopmatica.plan.extra_over.tooltip")));
+            y += step;
             addRenderableWidget(CycleButton.onOffBuilder(c.planForgetOnLeave)
                 .withTooltip(v -> Tooltip.create(Component.translatable("slopmatica.plan.forget.tooltip")))
                 .create(x, y, LEFT_W, 20, Component.translatable("slopmatica.plan.forget"), (b, v) -> changed(() -> c.planForgetOnLeave = v)));
@@ -271,20 +280,26 @@ public class InventoryPlanScreen extends Screen {
     /** A whole-number slider that saves and recalculates when released. */
     private class IntSlider extends AbstractSliderButton {
         private final String key;
-        private final int min, max;
+        private final int min, max, step;
         private final Consumer<Integer> setter;
 
         IntSlider(int x, int y, int w, String key, int min, int max, int value, Consumer<Integer> setter) {
+            this(x, y, w, key, min, max, 1, value, setter);
+        }
+
+        /** {@code step}: the value moves in steps of this much. */
+        IntSlider(int x, int y, int w, String key, int min, int max, int step, int value, Consumer<Integer> setter) {
             super(x, y, w, 20, Component.empty(), (double) (Math.clamp(value, min, max) - min) / Math.max(1, max - min));
             this.key = key;
             this.min = min;
             this.max = max;
+            this.step = step;
             this.setter = setter;
             updateMessage();
         }
 
         private int intValue() {
-            return min + (int) Math.round(value * (max - min));
+            return min + (int) Math.round(value * (max - min) / step) * step;
         }
 
         @Override

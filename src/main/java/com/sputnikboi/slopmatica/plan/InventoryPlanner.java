@@ -227,12 +227,17 @@ public final class InventoryPlanner {
                             if (want == null || want.isAir()) {
                                 continue;
                             }
+                            boolean loaded = level.hasChunk(SectionPos.blockToSectionCoord(x), SectionPos.blockToSectionCoord(z));
+                            Item bucket = MaterialList.bucketFor(want);
+                            if (bucket != null && !ignored.contains(bucket) && !p.ignoredMaterials().contains(bucket)
+                                && (!loaded || MaterialList.fluidMissing(want, level.getBlockState(pos.set(x, y, z))))) {
+                                missing.merge(bucket, 1L, Long::sum);
+                            }
                             Item item = want.getBlock().asItem();
                             int n = MaterialList.itemCount(want);
                             if (item == Items.AIR || n == 0 || ignored.contains(item) || p.ignoredMaterials().contains(item)) {
                                 continue;
                             }
-                            boolean loaded = level.hasChunk(SectionPos.blockToSectionCoord(x), SectionPos.blockToSectionCoord(z));
                             BlockStatus status = loaded ? BlockMatcher.compare(want, level.getBlockState(pos.set(x, y, z))) : BlockStatus.MISSING;
                             if (status == BlockStatus.MISSING || status == BlockStatus.WRONG) {
                                 missing.merge(item, (long) n, Long::sum);
@@ -275,6 +280,12 @@ public final class InventoryPlanner {
             }
             need.merge(item, e.getValue(), Long::sum);
         }
+        // A margin for mistakes (advanced): a percentage and a flat amount more of every item needed past a threshold.
+        if (config.planExtraPercent > 0 || config.planExtraFlat > 0) {
+            need.replaceAll((item, n) -> n > config.planExtraOver ? n + (n * config.planExtraPercent + 99) / 100 + config.planExtraFlat : n);
+        }
+        // Two water sources make an infinite one, so two buckets do for any amount of water.
+        need.computeIfPresent(Items.WATER_BUCKET, (item, n) -> Math.min(n, 2L));
         Inventory inventory = mc.player.getInventory();
         if (extra.containsKey(Items.IRON_AXE) && carriesAny(inventory, ItemTags.AXES)) {
             extra.remove(Items.IRON_AXE); // Any axe will do, and you have one.

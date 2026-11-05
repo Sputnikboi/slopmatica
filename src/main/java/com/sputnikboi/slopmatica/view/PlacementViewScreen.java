@@ -62,6 +62,11 @@ public class PlacementViewScreen extends Screen {
         PlacementView view = PlacementView.INSTANCE;
         initLeft(view);
 
+        // Top right, where the flying HUD draws it too: the main menu, coming back here when closed.
+        addRenderableWidget(Button.builder(Component.literal(PlacementView.MENU_LABEL), b -> minecraft.gui.setScreen(new com.sputnikboi.slopmatica.gui.SlopmaticaMenuScreen(this)))
+            .bounds(PlacementView.menuIconX(width), 4, PlacementView.MENU_ICON, PlacementView.MENU_ICON)
+            .tooltip(Tooltip.create(Component.translatable("slopmatica.view.menu", PlacementView.key(SlopmaticaKeys.openMenu())))).build());
+
         // Bottom-right panel, built right to left from the corner.
         int right = width - 6;
         int bottom = height - 6;
@@ -293,7 +298,7 @@ public class PlacementViewScreen extends Screen {
             case CROP -> "Drag a face of the orange box to crop the build";
         };
         List<String> lines = new java.util.ArrayList<>();
-        lines.add("Placement view: " + p.name() + "  (" + p.worldOriginPoint().toShortString() + ")");
+        lines.add("Build view: " + p.name() + "  (" + p.worldOriginPoint().toShortString() + ")");
         List<Recommendations.Warning> warnings = Recommendations.of(minecraft, p);
         warnings.forEach(w -> lines.add("⚠ " + w.text().getString()));
         lines.add(hint);
