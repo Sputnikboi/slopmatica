@@ -164,28 +164,39 @@ public final class BoardClient {
      * Sends a bug report (or suggestion) to the website, with the game log and a schematic if
      * given. Works without a login too.
      */
-    public void sendReport(String type, String message, String modVersion, String mcVersion, @Nullable Path log, @Nullable Path schematic) throws Exception {
+    /**
+     * @param log the game log as it should be sent (already redacted), or null
+     * @param anonymous sent without the login, and the schematic without its file name
+     */
+    public void sendReport(String type, String message, String modVersion, String mcVersion, @Nullable String log, @Nullable Path schematic,
+                           boolean anonymous) throws Exception {
         String boundary = "slopmatica-" + UUID.randomUUID();
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         field(body, boundary, "type", type);
         field(body, boundary, "message", message);
         field(body, boundary, "modVersion", modVersion);
         field(body, boundary, "mcVersion", mcVersion);
-        if (log != null && Files.isRegularFile(log)) {
+        if (log != null) {
             // Gzipped: logs shrink to a tenth, and the server accepts either.
             ByteArrayOutputStream gz = new ByteArrayOutputStream();
             try (GZIPOutputStream out = new GZIPOutputStream(gz)) {
-                Files.copy(log, out);
+                out.write(log.getBytes(StandardCharsets.UTF_8));
             }
             file(body, boundary, "log", "latest.log.gz", gz.toByteArray());
         }
         if (schematic != null && Files.isRegularFile(schematic)) {
-            file(body, boundary, "schematic", schematic.getFileName().toString(), Files.readAllBytes(schematic));
+            String name = schematic.getFileName().toString();
+            file(body, boundary, "schematic", anonymous ? "build" + name.substring(Math.max(0, name.lastIndexOf('.'))) : name,
+                Files.readAllBytes(schematic));
         }
         body.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
-        CloudSync.INSTANCE.request("POST", "/api/feedback", HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()),
-            // Without a login the server asks for this header (its guard against forged cross-site posts).
-            Map.of("Content-Type", "multipart/form-data; boundary=" + boundary, "X-Requested-With", "slopmatica"), true);
+        // Without a login the server asks for X-Requested-With (its guard against forged cross-site posts).
+        Map<String, String> headers = Map.of("Content-Type", "multipart/form-data; boundary=" + boundary, "X-Requested-With", "slopmatica");
+        if (anonymous) {
+            CloudSync.INSTANCE.requestAnonymously("POST", "/api/feedback", HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()), headers);
+        } else {
+            CloudSync.INSTANCE.request("POST", "/api/feedback", HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()), headers, true);
+        }
     }
 
     private static void field(ByteArrayOutputStream out, String boundary, String name, String value) throws IOException {

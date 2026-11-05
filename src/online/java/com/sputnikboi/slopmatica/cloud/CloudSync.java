@@ -532,6 +532,13 @@ public final class CloudSync {
         return checked ? check(response) : response;
     }
 
+    /** As {@link #request}, checked, but without the login: the server can't tell who sent it. */
+    HttpResponse<String> requestAnonymously(String method, String path, HttpRequest.BodyPublisher body, Map<String, String> headers) throws Exception {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(uri(path)).timeout(Duration.ofMinutes(5)).method(method, body);
+        headers.forEach(builder::header);
+        return check(http.send(builder.build(), HttpResponse.BodyHandlers.ofString()));
+    }
+
     private HttpRequest.Builder authorized(HttpRequest.Builder builder) {
         String token = account.token;
         return token == null ? builder : builder.header("Authorization", "Bearer " + token);

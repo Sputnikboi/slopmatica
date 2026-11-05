@@ -39,13 +39,15 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Opt-in usage reports ("Share Usage Data", off unless chosen), sent only to the Slopmatica cloud
- * server. Nothing is recorded while it is off. A report covers one play session and holds:
- * rendering performance while builds are shown (frame times, hologram size) with the computer's
- * specs (GPU name, cores, memory, OS); where the loaded builds came from (a board post's id, or
- * just "cloud", "shared" or "local"; the server keeps a post id only if the post is public);
- * the names (not values) of settings changed from their defaults; and how often each of the
- * mod's keys was used. Reports carry a random id for this install, nothing about the player.
- * They queue on disk and are sent when the server is reachable.
+ * server. Nothing is recorded while it is off. A report covers one play session and holds: how
+ * long it was (not when); rendering performance while builds are shown (frame times, hologram
+ * size) with the computer's specs, kept coarse (OS name without its version, GPU model, cores,
+ * memory and window size rounded); where the loaded builds came from (a board post's id, or just
+ * "cloud", "shared" or "local"; the server keeps a post id only if the post is public); the names
+ * (not values) of settings changed from their defaults; how often each of the mod's keys was used;
+ * and the Quick Menu and wheel layouts when changed. Reports carry a random id for this install,
+ * nothing about the player; the server unlinks them from it after a month. They queue on disk and
+ * are sent without a login when the server is reachable.
  */
 public final class Telemetry {
     public static final Telemetry INSTANCE = new Telemetry();
@@ -156,24 +158,25 @@ public final class Telemetry {
         r.addProperty("mod", Updates.modVersion());
         r.addProperty("mc", SharedConstants.getCurrentVersion().name());
         r.addProperty("loader", "fabric");
-        r.addProperty("start", sessionStart / 1000);
-        r.addProperty("end", System.currentTimeMillis() / 1000);
+        r.addProperty("minutes", (System.currentTimeMillis() - sessionStart) / 60_000);
 
         JsonObject specs = new JsonObject();
-        specs.addProperty("os", System.getProperty("os.name") + " " + System.getProperty("os.version"));
+        specs.addProperty("os", System.getProperty("os.name")); // "Windows 11", "Linux": not the exact build
         specs.addProperty("cpuCores", Runtime.getRuntime().availableProcessors());
-        specs.addProperty("maxMemoryMb", Runtime.getRuntime().maxMemory() / (1024 * 1024));
+        long memory = Runtime.getRuntime().maxMemory() / (1024 * 1024);
+        specs.addProperty("maxMemoryMb", memory - memory % 512);
         try {
             var device = RenderSystem.getDevice().getDeviceInfo();
-            specs.addProperty("gpu", device.name());
+            specs.addProperty("gpu", device.name().split("/")[0].trim()); // without the driver's "/PCIe/SSE2" and versions
             specs.addProperty("gpuVendor", device.vendorName());
             specs.addProperty("backend", device.backendName());
         } catch (RuntimeException e) {
             // Not available (no render device yet): leave it out.
         }
         specs.addProperty("renderDistance", mc.options.getEffectiveRenderDistance());
-        specs.addProperty("width", mc.getWindow().getWidth());
-        specs.addProperty("height", mc.getWindow().getHeight());
+        // Rounded, so an unusual window size doesn't single anyone out.
+        specs.addProperty("width", Math.max(160, Math.round(mc.getWindow().getWidth() / 160f) * 160));
+        specs.addProperty("height", Math.max(90, Math.round(mc.getWindow().getHeight() / 90f) * 90));
         r.add("specs", specs);
 
         JsonObject render = new JsonObject();
