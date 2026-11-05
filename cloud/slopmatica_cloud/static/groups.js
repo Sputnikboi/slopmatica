@@ -177,6 +177,7 @@
         title: form.elements.title.value.trim(), description: form.elements.description.value,
         tags: Array.from(form.querySelectorAll("input[name=tags]:checked")).map((i) => i.value),
         credit: form.elements.credit.value.trim() || null,
+        folder: form.elements.folder.value.trim(),
       };
       if (!body.title) { say(fmsg, "Give it a title.", true); return; }
       await act(form.querySelector("button[type=submit]"), fmsg, "PATCH", base + "/api/board/" + encodeURIComponent(postId), body);

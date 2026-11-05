@@ -36,6 +36,7 @@
 <section class="toolbar board-toolbar">
   <form class="search-form" method="get" action="{{ base }}/g/{{ group.slug }}" role="search">
     <input type="hidden" name="sort" value="{{ sort }}">
+    {% if folder %}<input type="hidden" name="folder" value="{{ folder }}">{% endif %}
     <input type="search" name="q" value="{{ q }}" placeholder="Search this group&rsquo;s builds" aria-label="Search the group" maxlength="100">
     <button class="btn ghost" type="submit">Search</button>
   </form>
@@ -45,7 +46,29 @@
     {% endfor %}
   </div>
 </section>
-{% if q %}<p class="muted result-note">{{ total }} result{{ "" if total == 1 else "s" }} for &ldquo;{{ q }}&rdquo; &middot; <a href="{{ link(q='') }}">clear</a></p>{% endif %}
+{% if crumbs %}
+<nav class="crumbs" aria-label="Folder">
+  <a href="{{ link(folder='', sort=sort) }}">{{ group.name }}</a>
+  {% for c in crumbs %}<span class="sep" aria-hidden="true">&rsaquo;</span>{% if loop.last %}<span aria-current="page">{{ c.name }}</span>{% else %}<a href="{{ link(folder=c.folder, sort=sort) }}">{{ c.name }}</a>{% endif %}{% endfor %}
+</nav>
+{% endif %}
+{% if folders %}
+<section class="grid folder-grid" aria-label="Folders">
+  {% for f in folders %}
+  <article class="card post-card folder-card">
+    <div class="thumb">
+      {% if f.cover %}<img loading="lazy" src="{{ base }}/api/board/{{ f.cover }}/thumbnail" alt="">{% else %}<div class="ph" aria-hidden="true"></div>{% endif %}
+      <span class="folder-badge" aria-hidden="true">&#128193;</span>
+    </div>
+    <div class="meta">
+      <h3 class="name" title="{{ f.name }}"><a class="card-link" href="{{ link(folder=f.path, sort=sort) }}">{{ f.name }}</a></h3>
+      <div class="sub muted">{{ f.count|num }} build{{ "" if f.count == 1 else "s" }}</div>
+    </div>
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
+{% if q %}<p class="muted result-note">{{ total }} result{{ "" if total == 1 else "s" }} for &ldquo;{{ q }}&rdquo;{% if folder %} in {{ crumbs[-1].name }} and its folders{% endif %} &middot; <a href="{{ link(q='') }}">clear</a></p>{% endif %}
 
 {% if posts %}
 <section class="grid">
@@ -58,6 +81,7 @@
   {% if page < pages %}<a class="btn ghost small" href="{{ link(page=page + 1, sort=sort, q=q) }}" rel="next">Next &rarr;</a>{% else %}<span></span>{% endif %}
 </nav>
 {% endif %}
+{% elif folders %}
 {% elif q %}
 <p class="empty muted">Nothing matches.</p>
 {% elif page > 1 %}

@@ -72,6 +72,7 @@
         body.credit = form.elements.credit.value.trim() || null;
       }
       if (form.elements.group) body.group = form.elements.group.value || null;
+      if (form.elements.folder && body.group) body.folder = form.elements.folder.value.trim();
       // Names are only sent for private posts; an edit to another visibility keeps the stored list.
       if (body.visibility === "private") body.allowed = names(form.elements.allowed.value);
       const create = form.dataset.postForm === "create";

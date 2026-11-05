@@ -17,7 +17,7 @@
   </div>
 </fieldset>
 {% endmacro %}
-{% macro post_fields(visibilities, max_title, max_description, title="", description="", visibility="public", allowed_text="", all_tags={}, tags=(), limits={}, players_text="", names_text="", links=(), version_label="", mc="", groups=(), group_id=None, credit="") %}
+{% macro post_fields(visibilities, max_title, max_description, title="", description="", visibility="public", allowed_text="", all_tags={}, tags=(), limits={}, players_text="", names_text="", links=(), version_label="", mc="", groups=(), group_id=None, credit="", folder="", max_folder=200) %}
 {{ listing_fields(max_title, max_description, title, description, all_tags, tags) }}
 {% if groups %}
 <label class="field">
@@ -27,6 +27,10 @@
     {% for g in groups %}<option value="{{ g.id }}"{% if g.id == group_id %} selected{% endif %}{% if g.post_visibility == "group" %} data-members-only{% endif %}>{{ g.name }}</option>{% endfor %}
   </select>
   <span class="muted small" data-group-note hidden>Builds in this group are for its members only, whatever the visibility below says.</span>
+</label>
+<label class="field">
+  <span class="label">Folder in the group <span class="muted">(optional, e.g. Overworld/Village; empty: the top)</span></span>
+  <input type="text" name="folder" value="{{ folder }}" maxlength="{{ max_folder }}" autocomplete="off" spellcheck="false">
 </label>
 {% endif %}
 <details class="edit more-fields"{% if players_text or names_text or links or version_label or credit %} open{% endif %}>

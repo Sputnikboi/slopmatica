@@ -284,6 +284,8 @@ MAX_GROUP_NAME_LEN = 60
 MAX_GROUP_DESCRIPTION_LEN = 2000
 MAX_JOIN_MESSAGE_LEN = 500
 MAX_CREDIT_LEN = 60
+MAX_FOLDER_DEPTH = 8  # folders inside a group: at most this deep
+MAX_FOLDER_NAME_LEN = 60
 GROUPS_PER_USER = 10  # groups an account may own; admins have no limit
 GROUP_CREATE_LIMIT = 5  # new groups per account per LOGIN_WINDOW, counted in login_failures
 GROUP_REQUEST_LIMIT = 10  # join requests per account per LOGIN_WINDOW
@@ -684,6 +686,7 @@ class PostRow:
     group_vis: str | None = None  # the group's visibility
     group_post_vis: str | None = None  # the group's post_visibility: 'group' makes the post members only
     group_hidden: int | None = None  # unix ms when a group admin or moderator hid it in the group
+    group_folder: str = ""  # the folder it sits in inside its group, "a/b" ('' at the top)
 
     @property
     def group_only(self) -> bool:
@@ -720,7 +723,7 @@ class PostRow:
             r["mc_version"], r["distinct_count"], links, r["downloads"], r["version_count"],
             favorites=r["favorites"], saves=r["saves"], total_bytes=r["total_bytes"], credit=r["credit"],
             group_id=r["group_id"], group_slug=r["group_slug"], group_name=r["group_name"], group_vis=r["group_vis"],
-            group_post_vis=r["group_post_vis"], group_hidden=r["group_hidden"],
+            group_post_vis=r["group_post_vis"], group_hidden=r["group_hidden"], group_folder=r["group_folder"] or "",
         )
 
 
@@ -1280,6 +1283,10 @@ ALTER TABLE posts ADD COLUMN group_hidden INTEGER;  -- unix ms when a group admi
 ALTER TABLE posts ADD COLUMN credit TEXT;          -- a credited author shown instead of the uploader, NULL for none
 CREATE INDEX IF NOT EXISTS posts_group ON posts(group_id) WHERE group_id IS NOT NULL;
 """,
+    # Folders inside a group: the path of the folder a post sits in there ('' at the top).
+    10: """
+ALTER TABLE posts ADD COLUMN group_folder TEXT NOT NULL DEFAULT '';
+""",
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 # Created by Store.fill_display_names once every account has a display name (migration 6).
@@ -1303,6 +1310,11 @@ POST_SELECT += POST_FROM + "\n"
 NOT_GROUP_ONLY_SQL = "NOT EXISTS (SELECT 1 FROM groups gx WHERE gx.id = p.group_id AND gx.post_visibility = 'group')"
 # The group tab of list_posts: which of a group's posts (alias p, group g) the viewer is listed. Group posts follow
 # can_view; besides, unlisted ones are listed to members only. :member, :manager and :admin are the viewer's standing.
+def like_prefix(folder: str) -> str:
+    """A LIKE pattern (ESCAPE '\\') for every folder below folder."""
+    return folder.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%"
+
+
 GROUP_LISTED_SQL = """(p.uuid = :viewer OR :admin OR CASE WHEN g.post_visibility = 'group' THEN :member
     ELSE p.visibility = 'public' OR (p.visibility = 'unlisted' AND :member)
         OR (p.visibility = 'private' AND (EXISTS (SELECT 1 FROM post_access a WHERE a.post_id = p.id AND a.uuid = :viewer)
@@ -2571,7 +2583,7 @@ class Store:
     def list_posts(
         self, tab: str, viewer: str | None, sort: str, query: str, page: int, page_size: int,
         tags: list[str] = (), size: str | None = None, complexity: str | None = None, mc: str | None = None,
-        author: str | None = None, group: Standing | None = None,
+        author: str | None = None, group: Standing | None = None, folder: str | None = None,
     ) -> tuple[list[PostRow], int]:
         """One page of a board tab and the total number of matching posts.
         'public' lists public posts only; 'shared' private posts whose access list has viewer;
@@ -2579,7 +2591,8 @@ class Store:
         those the group hid (but for its admins and moderators). Posts in a members-only group are never in 'public' or
         'shared'. Posts an admin hid are only listed in 'mine' (and to their author in 'group'). Every tag in tags must
         be on the post; size is a size class, complexity a complexity class; mc a Minecraft version any version of the
-        post is for; author a uuid that owns the post or is a co-author of it."""
+        post is for; author a uuid that owns the post or is a co-author of it. folder ('group' only): the posts in that folder
+        of the group, or with a search, in it and every folder below it."""
         params: dict[str, Any] = {"viewer": viewer, "now": int(time.time() * 1000)}
         if tab == "public":
             where = ["p.visibility = 'public'", "p.hidden IS NULL", NOT_GROUP_ONLY_SQL]
@@ -2594,14 +2607,12 @@ class Store:
         elif tab == "mine":
             where = ["p.uuid = :viewer"]
         elif tab == "group" and group is not None:
-            params.update(group=group.group.id, member=int(group.member), manager=int(group.manager),
-                          admin=int(group.site_admin))
-            where = [
-                "p.group_id = :group",
-                "(p.hidden IS NULL OR p.uuid = :viewer)",
-                "(p.group_hidden IS NULL OR p.uuid = :viewer OR :manager)",
-                GROUP_LISTED_SQL,
-            ]
+            where = self._group_where(group, params)
+            if folder is not None and (folder or not query.strip()):
+                params["folder"] = folder
+                params["below"] = like_prefix(folder)
+                where.append("(p.group_folder = :folder OR p.group_folder LIKE :below ESCAPE '\\')" if query.strip()
+                             else "p.group_folder = :folder")
         else:
             raise ValueError(tab)
         for i, term in enumerate(query.casefold().split()[:10]):
@@ -2634,6 +2645,46 @@ class Store:
                 {**params, "limit": page_size, "offset": (page - 1) * page_size},
             ).fetchall()
         return self.attach_coauthors([PostRow.from_row(r) for r in rows]), int(total)
+
+    @staticmethod
+    def _group_where(group: Standing, params: dict[str, Any]) -> list[str]:
+        """The conditions for the posts in group that params["viewer"] may see (see list_posts)."""
+        params.update(group=group.group.id, member=int(group.member), manager=int(group.manager),
+                      admin=int(group.site_admin))
+        return [
+            "p.group_id = :group",
+            "(p.hidden IS NULL OR p.uuid = :viewer)",
+            "(p.group_hidden IS NULL OR p.uuid = :viewer OR :manager)",
+            GROUP_LISTED_SQL,
+        ]
+
+    def group_folders(self, group: Standing, viewer: str | None, folder: str) -> list[dict[str, Any]]:
+        """The folders right inside folder of group ('' for the top) that hold posts viewer may see, by name: each with
+        its path, how many posts are in it (and below it), and a cover post with a thumbnail (the biggest), or None."""
+        params: dict[str, Any] = {"viewer": viewer, "now": int(time.time() * 1000)}
+        where = self._group_where(group, params)
+        if folder:
+            params["below"] = like_prefix(folder)
+            where.append("p.group_folder LIKE :below ESCAPE '\\'")
+        else:
+            where.append("p.group_folder != ''")
+        with self.lock:
+            rows = self.db.execute(
+                f"SELECT p.id, p.group_folder AS f, p.has_thumb, p.block_count {POST_FROM} WHERE " + " AND ".join(where), params,
+            ).fetchall()
+        start = len(folder) + 1 if folder else 0
+        children: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            name = r["f"][start:].split("/", 1)[0]
+            child = children.setdefault(name, {"name": name, "path": (folder + "/" if folder else "") + name,
+                                               "count": 0, "cover": None, "_big": -1})
+            child["count"] += 1
+            if r["has_thumb"] and (r["block_count"] or 0) > child["_big"]:
+                child["cover"], child["_big"] = r["id"], r["block_count"] or 0
+        out = sorted(children.values(), key=lambda c: c["name"].casefold())
+        for c in out:
+            del c["_big"]
+        return out
 
     # ---- releases
 
@@ -3379,6 +3430,7 @@ class PostIn(BaseModel):
     versionLabel: Any = None
     mc: Any = None  # the Minecraft version the build is for
     group: Any = None  # a group's id to post it in
+    folder: Any = None  # the folder in that group, "a/b" (omitted: the top)
     credit: Any = None  # a credited author shown instead of the uploader
 
 
@@ -3393,6 +3445,7 @@ class PostPatchIn(BaseModel):
     versionLabel: Any = None  # of the current version
     mc: Any = None
     group: Any = None  # a group's id, or null to take it out of its group
+    folder: Any = None  # the folder in its group, "a/b"; "" or null for the top
     credit: Any = None
 
 
@@ -4463,7 +4516,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if post.group_vis == "private" and not (viewer and (viewer.is_admin or store.group_member(post.group_id, viewer.uuid))):
             return None
         return {"id": post.group_id, "slug": post.group_slug, "name": post.group_name, "postVisibility": post.group_post_vis,
-                "hidden": post.group_hidden is not None, "url": f"{settings.site_url}/g/{post.group_slug}"}
+                "hidden": post.group_hidden is not None, "url": f"{settings.site_url}/g/{post.group_slug}",
+                "folder": post.group_folder}
+
+    def clean_folder(user: User, value: Any) -> str:
+        """A folder inside a group, "a/b/c" ('' for the top): names of one line, joined by slashes."""
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ApiError(400, "folder must be text")
+        parts = [part.strip() for part in value.strip().strip("/").split("/")] if value.strip().strip("/") else []
+        if len(parts) > MAX_FOLDER_DEPTH or any(not part or len(part) > MAX_FOLDER_NAME_LEN or not part.isprintable()
+                                                 or part in (".", "..") for part in parts):
+            raise ApiError(400, f"folder must be up to {MAX_FOLDER_DEPTH} names of at most {MAX_FOLDER_NAME_LEN} characters,"
+                                " separated by /")
+        return filtered(user, "/".join(parts), "folder") if parts else ""
 
     def clean_credit(user: User, value: Any) -> str | None:
         """A credited author (free text on one line, e.g. Mojang for a vanilla structure), None for none."""
@@ -4651,6 +4718,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         label, mc = clean_version_label(user, body.versionLabel), clean_mc(body.mc)
         credit = clean_credit(user, body.credit)
         group = posting_group(user, body.group) if body.group is not None else None
+        folder = clean_folder(user, body.folder) if group is not None else ""
         if group is not None and group.post_visibility == "group":
             visibility = "private"  # members only whatever it says; stays private should it leave the group
         limit = settings.max_posts_per_user if not user.is_admin else 10**9  # admins curate collections
@@ -4674,7 +4742,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "id": post_id, "uuid": user.uuid, "title": title, "description": description,
                         "visibility": visibility, "source_path": path, "created": int(time.time() * 1000),
                         "links": json.dumps(links), "version_label": label, "mc_version": mc,
-                        "credit": credit, "group_id": group.id if group else None,
+                        "credit": credit, "group_id": group.id if group else None, "group_folder": folder,
                         **snapshot_columns(snap),
                     }, allowed, tags, coauthors)
                 except BaseException:
@@ -4695,17 +4763,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.patch("/api/board/{post_id}")
     def board_patch(post_id: str, request: Request, body: PostPatchIn) -> dict[str, Any]:
-        """The author changes anything. A group's admins and moderators may change the title, description, tags and
-        credit of a post in their group, or take it out of the group (group: null)."""
+        """The author changes anything. A group's admins and moderators may change the title, description, tags,
+        credit and folder of a post in their group, or take it out of the group (group: null)."""
         post, user = acting_on_post(request, post_id, owner_only=False)
         given = body.model_fields_set
         if post.uuid != user.uuid:
             group = store.get_group(post.group_id) if post.group_id else None
             if group is None or not standing(group, user).manager:
                 raise ApiError(403, "only the author can do that")
-            if given - {"title", "description", "tags", "credit", "group"} or ("group" in given and body.group not in (None, post.group_id)):
-                raise ApiError(403, "group admins and moderators can only change the title, description, tags and credit"
-                                    " of a post, or take it out of the group")
+            if given - {"title", "description", "tags", "credit", "group", "folder"} or ("group" in given and body.group not in (None, post.group_id)):
+                raise ApiError(403, "group admins and moderators can only change the title, description, tags, credit"
+                                    " and folder of a post, or take it out of the group")
         values: dict[str, Any] = {}
         if "title" in given:
             values["title"] = filtered(user, clean_title(body.title), "title")
@@ -4723,7 +4791,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             values["credit"] = clean_credit(user, body.credit)
         if "group" in given and body.group != post.group_id:
             values.update(group_values(posting_group(user, body.group) if body.group is not None else None))
-        elif post.group_only and "visibility" in values:
+            values["group_folder"] = clean_folder(user, body.folder) if body.group is not None and "folder" in given else ""
+        elif "folder" in given:
+            if post.group_id is None:
+                raise ApiError(409, "the post isn't in a group")
+            values["group_folder"] = clean_folder(user, body.folder)
+        if "group_id" not in values and post.group_only and "visibility" in values:
             values["visibility"] = "private"  # members only in its group, whatever it says
         allowed = None
         if "allowed" in given:
@@ -5176,7 +5249,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def group_values(group: GroupRow | None) -> dict[str, Any]:
         """The post columns for putting a post in group (None: out of its group). In a members-only group a post is
         private, so it stays private if it ever leaves the group."""
-        values: dict[str, Any] = {"group_id": group.id if group else None, "group_hidden": None}
+        values: dict[str, Any] = {"group_id": group.id if group else None, "group_hidden": None, "group_folder": ""}
         if group is not None and group.post_visibility == "group":
             values["visibility"] = "private"
         return values
@@ -5361,6 +5434,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         group = store.get_group(group.id)  # type: ignore[assignment]
         return group_api(group, standing(group, user))
 
+    def clean_folder_query(value: str | None, strict: bool) -> str:
+        """The ?folder= of a group listing, normalised like clean_folder ('' for the top)."""
+        parts = [part.strip() for part in (value or "").strip("/").split("/") if part.strip()]
+        if len(parts) > MAX_FOLDER_DEPTH or any(len(part) > MAX_FOLDER_NAME_LEN for part in parts):
+            if strict:
+                raise ApiError(400, "no such folder")
+            return ""
+        return "/".join(parts)
+
     @app.get("/api/groups/{group_id}/posts")
     def group_posts(group_id: str, request: Request) -> dict[str, Any]:
         """The group's builds the caller may see: the same items, sorts, filters and paging as GET /api/board."""
@@ -5369,10 +5451,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         size = board_limit(request.query_params)
         user = optional_user(request)
         group, st = find_group(group_id, user)
-        posts, total = store.list_posts("group", user.uuid if user else None, sort, query, page, size, group=st, **filters)
+        folder = clean_folder_query(request.query_params.get("folder"), strict=True)
+        posts, total = store.list_posts("group", user.uuid if user else None, sort, query, page, size, group=st,
+                                        folder=folder, **filters)
         favs = store.favorite_ids(user.uuid, [p.id for p in posts]) if user else None
         return {
-            "posts": [post_api(p, user, favs=favs) for p in posts], "group": group.id,
+            "posts": [post_api(p, user, favs=favs) for p in posts], "group": group.id, "folder": folder,
+            "folders": [] if query.strip() else store.group_folders(st, user.uuid if user else None, folder),
             "sort": sort, "q": query, **filters, "page": page, "pageSize": size, "total": total,
             "pages": max(1, -(-total // size)),
         }
@@ -7315,15 +7400,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return not_found_page(request)
         group, st, user = found
         _, sort, query, page = board_query(request.query_params, strict=False)
+        folder = clean_folder_query(request.query_params.get("folder"), strict=False)
         size = settings.board_page_size
-        posts, total = store.list_posts("group", user.uuid if user else None, sort, query, page, size, group=st)
+        viewer = user.uuid if user else None
+        posts, total = store.list_posts("group", viewer, sort, query, page, size, group=st, folder=folder)
+        folders = [] if query.strip() or page > 1 else store.group_folders(st, viewer, folder)
 
         def link(**change: Any) -> str:
-            """This group page with sort, q or page changed (page resets to 1)."""
-            state = {"sort": sort, "q": query, "page": 1, **change}
-            params = [(k, v) for k, v in (("sort", state["sort"] if state["sort"] != "top" else ""), ("q", state["q"]),
-                                          ("page", state["page"] if state["page"] > 1 else "")) if v]
+            """This group page with sort, q, page or folder changed (page resets to 1)."""
+            state = {"sort": sort, "q": query, "page": 1, "folder": folder, **change}
+            params = [(k, v) for k, v in (("folder", state["folder"]), ("sort", state["sort"] if state["sort"] != "top" else ""),
+                                          ("q", state["q"]), ("page", state["page"] if state["page"] > 1 else "")) if v]
             return f"{base}/g/{group.slug}" + ("?" + urllib.parse.urlencode(params) if params else "")
+
+        parts = folder.split("/") if folder else []
+        crumbs = [{"name": name, "folder": "/".join(parts[: i + 1])} for i, name in enumerate(parts)]
 
         return render(
             "group.html",
@@ -7333,6 +7424,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             st=st,
             posts=posts,
             total=total,
+            folder=folder,
+            folders=folders,
+            crumbs=crumbs,
             sort=sort,
             q=query,
             page=page,

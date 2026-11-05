@@ -49,7 +49,7 @@
     {% if post.hidden %}<p class="notice warn small"><strong>Hidden by an admin.</strong> Only {{ "you" if own else "the author" }} and admins can see this post{% if post.hidden_reason %}: {{ post.hidden_reason }}{% else %}.{% endif %}</p>{% endif %}
     {% if post.group_only %}<span class="badge vis-group" title="Only the group's members can see it">Group members only</span>
     {% elif post.visibility != "public" %}<span class="badge vis-{{ post.visibility }}">{{ post.visibility|capitalize }}</span>{% endif %}
-    {% if group %}<p class="small group-line"><span class="muted">In the group</span> <a href="{{ base }}/g/{{ group.slug }}">{{ group.name }}</a>{% if post.group_hidden %} <span class="badge mod-hidden" title="Hidden in the group by its admins or moderators">Hidden in the group</span>{% endif %}</p>{% endif %}
+    {% if group %}<p class="small group-line"><span class="muted">In the group</span> <a href="{{ base }}/g/{{ group.slug }}">{{ group.name }}</a>{% if post.group_folder %}{% set fparts = post.group_folder.split("/") %}{% for name in fparts %} <span class="muted" aria-hidden="true">&rsaquo;</span> <a href="{{ base }}/g/{{ group.slug }}?folder={{ fparts[:loop.index]|join('/')|urlencode }}">{{ name }}</a>{% endfor %}{% endif %}{% if post.group_hidden %} <span class="badge mod-hidden" title="Hidden in the group by its admins or moderators">Hidden in the group</span>{% endif %}</p>{% endif %}
     {% if post.tags or ver.size_class or ver.complexity or ver.mc %}
     <div class="chips">
       {% for t in post.tags %}<a class="chip tag-chip" href="{{ board_url(tags=[t]) }}">{{ all_tags[t] }}</a>{% endfor %}
@@ -196,7 +196,7 @@
       {{ post_fields(visibilities, max_title, max_description, post.title, post.description, post.visibility, allowed|map(attribute=1)|join(", "), all_tags, post.tags,
          {"max_author_name": max_author_name, "max_links": max_links, "max_version_label": max_version_label, "max_credit": max_credit},
          post.coauthors|selectattr("uuid")|map(attribute="name")|join(", "), post.coauthors|rejectattr("uuid")|map(attribute="name")|join("\n"),
-         post.links, post.version_label, post.mc or "", groups=post_groups, group_id=post.group_id, credit=post.credit or "") }}
+         post.links, post.version_label, post.mc or "", groups=post_groups, group_id=post.group_id, credit=post.credit or "", folder=post.group_folder) }}
       <p class="form-msg" role="status"></p>
       <div class="form-actions"><button type="submit" class="btn">Save changes</button></div>
     </form>
@@ -229,12 +229,16 @@
   </div>
   <p class="form-msg small" data-group-msg role="status"></p>
   <details class="edit">
-    <summary>Edit title, description, tags and credit</summary>
+    <summary>Edit title, description, tags, credit and folder</summary>
     <form class="post-form" data-group-edit novalidate>
       {{ listing_fields(max_title, max_description, post.title, post.description, all_tags, post.tags) }}
       <label class="field">
         <span class="label">Credit <span class="muted">(optional: who made it, e.g. Mojang)</span></span>
         <input type="text" name="credit" value="{{ post.credit or '' }}" maxlength="{{ max_credit }}" autocomplete="off">
+      </label>
+      <label class="field">
+        <span class="label">Folder in the group <span class="muted">(e.g. Overworld/Village; empty: the top)</span></span>
+        <input type="text" name="folder" value="{{ post.group_folder }}" maxlength="200" autocomplete="off" spellcheck="false">
       </label>
       <p class="form-msg" role="status"></p>
       <div class="form-actions"><button type="submit" class="btn">Save changes</button></div>
