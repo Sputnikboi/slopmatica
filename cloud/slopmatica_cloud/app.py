@@ -2798,9 +2798,13 @@ class Store:
             sets = ", ".join(f"{k}=:{k}" for k in values)
             self.db.execute(f"UPDATE releases SET {sets} WHERE filename=:filename", {**values, "filename": filename})
 
-    def count_download(self, filename: str) -> None:
+    def count_download(self, filename: str) -> tuple[int, int]:
+        """One more download of the release; returns its downloads and those of every release."""
         with self.lock:
             self.db.execute("UPDATE releases SET downloads = downloads + 1 WHERE filename=?", (filename,))
+            (mine,) = self.db.execute("SELECT downloads FROM releases WHERE filename=?", (filename,)).fetchone()
+            (total,) = self.db.execute("SELECT SUM(downloads) FROM releases").fetchone()
+        return mine, total
 
     # ---- feedback
 
@@ -6448,7 +6452,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         disk = release_path(store.releases_dir, r.filename)
         if not disk.is_file():
             raise ApiError(404, "no such release")
-        store.count_download(r.filename)
+        mine, total = store.count_download(r.filename)
+        # The only request logged (there is no access log): a count, nothing about who.
+        log.info("release %s downloaded: %d times, %d downloads of all releases", r.filename, mine, total)
         return FileResponse(
             disk,
             media_type="application/java-archive",

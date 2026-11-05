@@ -241,7 +241,8 @@ def test_patch_release(client, admin, alice):
 # ------------------------------------------------------------------ downloads
 
 
-def test_download_counts_and_headers(client, admin):
+def test_download_counts_and_headers(client, admin, caplog):
+    caplog.set_level("INFO")
     jar = jar_bytes()
     publish(client, admin.h, filename="slopmatica-0.6.0.jar", body=jar)
     anon = TestClient(client.app)
@@ -253,6 +254,7 @@ def test_download_counts_and_headers(client, admin):
         assert d.headers["x-sha256"] == hashlib.sha256(jar).hexdigest()
         assert anon.get("/api/releases").json()["releases"][0]["downloads"] == n
     assert "2 downloads" in anon.get("/releases").text
+    assert "release slopmatica-0.6.0.jar downloaded: 2 times, 2 downloads of all releases" in caplog.text
 
 
 def test_download_path_safety(client, admin, data_dir):
