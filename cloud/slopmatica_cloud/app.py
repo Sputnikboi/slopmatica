@@ -5452,13 +5452,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         size = board_limit(request.query_params)
         user = optional_user(request)
         group, st = find_group(group_id, user)
-        folder = clean_folder_query(request.query_params.get("folder"), strict=True)
+        # Without ?folder= (clients from before folders): every post, as one flat list, and no folders.
+        folder = clean_folder_query(request.query_params["folder"], strict=True) if "folder" in request.query_params else None
         posts, total = store.list_posts("group", user.uuid if user else None, sort, query, page, size, group=st,
                                         folder=folder, **filters)
         favs = store.favorite_ids(user.uuid, [p.id for p in posts]) if user else None
         return {
             "posts": [post_api(p, user, favs=favs) for p in posts], "group": group.id, "folder": folder,
-            "folders": [] if query.strip() else store.group_folders(st, user.uuid if user else None, folder),
+            "folders": [] if query.strip() or folder is None else store.group_folders(st, user.uuid if user else None, folder),
             "sort": sort, "q": query, **filters, "page": page, "pageSize": size, "total": total,
             "pages": max(1, -(-total // size)),
         }

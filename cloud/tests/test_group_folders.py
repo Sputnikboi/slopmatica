@@ -21,7 +21,7 @@ def test_folders_list_by_level(gated, ppl):
     fort = post(c, a, "Fortress", "fort.litematic", group=g["id"], folder="Nether/Fortress")
     assert camp["group"]["folder"] == "Overworld/Abandoned Camp"
 
-    res = listing(c, g)
+    res = listing(c, g, folder="")
     assert [p["id"] for p in res["posts"]] == [top["id"]] and res["folder"] == ""
     assert [(f["name"], f["count"]) for f in res["folders"]] == [("Nether", 1), ("Overworld", 2)]
     res = listing(c, g, folder="Overworld")
@@ -32,7 +32,10 @@ def test_folders_list_by_level(gated, ppl):
     # a search looks below the folder too, and lists no folders
     res = listing(c, g, folder="Overworld", q="tent")
     assert [p["id"] for p in res["posts"]] == [tent["id"]] and res["folders"] == []
-    assert listing(c, g, q="fortress")["posts"][0]["id"] == fort["id"]
+    assert listing(c, g, folder="", q="fortress")["posts"][0]["id"] == fort["id"]
+    # clients from before folders leave ?folder= out: everything, flat, no folders
+    res = listing(c, g)
+    assert res["total"] == 4 and res["folders"] == [] and res["folder"] is None
     # LIKE wildcards in a name match only themselves
     assert listing(c, g, folder="Over%")["folders"] == [] and listing(c, g, folder="Over_orld")["folders"] == []
 
