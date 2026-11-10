@@ -111,6 +111,8 @@ public final class SlopmaticaConfig {
     public boolean easyPlaceInsideOnly = true;
     /** Easy Place uses tools on blocks they turn into the schematic's (paths, stripped logs, copper stages and wax). */
     public boolean easyPlaceTools = true;
+    /** Replace Block: blocks the player breaks are replaced with the offhand's block. One or the other with Easy Place. */
+    public boolean replaceBlock = false;
     /** In a single-layer or up-to-layer view, move up a layer once every block in it is right. */
     public boolean autoLayer = true;
     /** Copy block entity data (chest contents, sign text) and entities (frames, armor stands), and paste them. */
@@ -304,6 +306,7 @@ public final class SlopmaticaConfig {
         if (easyPlaceOrder == null) {
             easyPlaceOrder = EasyPlaceOrder.FURTHEST;
         }
+        replaceBlock &= !easyPlace; // one or the other
         if (copyFormat == null) {
             copyFormat = SchematicFormats.SLOPMATIC;
         }

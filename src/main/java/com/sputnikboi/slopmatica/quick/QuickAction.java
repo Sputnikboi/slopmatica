@@ -59,6 +59,8 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
         add("materials", Items.PAPER, mc -> PlacementManager.INSTANCE.selected().ifPresent(p -> mc.gui.setScreen(new MaterialListScreen(null, p))), true,
             mc -> PlacementManager.INSTANCE.selected().isPresent(), null);
         // Optional ones, for the player to add.
+        add("replace_block", Items.STONE_PICKAXE, mc -> com.sputnikboi.slopmatica.build.ReplaceBlock.INSTANCE.toggle(), false, null,
+            () -> com.sputnikboi.slopmatica.build.ReplaceBlock.INSTANCE.enabled());
         add("load", Items.MAP, mc -> mc.gui.setScreen(new SchematicBrowserScreen(null, false)), false, null, null);
         add("placements", Items.ITEM_FRAME, mc -> mc.gui.setScreen(new PlacementsScreen(null)), false, null, null);
         add("plan_screen", Items.ENDER_CHEST, mc -> mc.gui.setScreen(new InventoryPlanScreen(null)), false, null, null);

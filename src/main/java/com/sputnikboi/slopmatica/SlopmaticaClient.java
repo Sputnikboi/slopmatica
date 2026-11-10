@@ -59,6 +59,9 @@ public final class SlopmaticaClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(BlockInfoHud.INSTANCE::tick);
         ClientTickEvents.END_CLIENT_TICK.register(PlacementBuilder.INSTANCE::tick);
         ClientTickEvents.END_CLIENT_TICK.register(com.sputnikboi.slopmatica.build.EasyPlace.INSTANCE::tick);
+        ClientTickEvents.END_CLIENT_TICK.register(com.sputnikboi.slopmatica.build.ReplaceBlock.INSTANCE::tick);
+        HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "replace_block"),
+            (graphics, delta) -> com.sputnikboi.slopmatica.build.ReplaceBlock.INSTANCE.extractHud(graphics));
         ClientTickEvents.END_CLIENT_TICK.register(com.sputnikboi.slopmatica.verify.AutoLayer.INSTANCE::tick);
         ClientTickEvents.END_CLIENT_TICK.register(com.sputnikboi.slopmatica.quick.ActionWheel.INSTANCE::warmUp);
         ClientTickEvents.END_CLIENT_TICK.register(SchematicThumbnails.INSTANCE::tick);

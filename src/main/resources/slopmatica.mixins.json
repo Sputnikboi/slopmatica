@@ -9,6 +9,7 @@
     "KeyBindsListMixin",
     "KeyBindsScreenAccessor",
     "MinecraftEasyPlaceMixin",
+    "MultiPlayerGameModeReplaceMixin",
     "MinecraftQuickMenuMixin",
     "MouseHandlerQuickMenuMixin",
     "RenderSetupAccessor",

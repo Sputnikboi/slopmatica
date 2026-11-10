@@ -83,7 +83,14 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
 
         list.addHeader(Component.translatable("slopmatica.options.easy_place"));
         list.addSmall(
-            toggle("slopmatica.options.easy_place_on", c.easyPlace, v -> c.easyPlace = v, false),
+            toggle("slopmatica.options.easy_place_on", c.easyPlace, v -> {
+                c.easyPlace = v;
+                offOther(v && c.replaceBlock, () -> c.replaceBlock = false);
+            }, false),
+            toggle("slopmatica.options.replace_block", c.replaceBlock, v -> {
+                c.replaceBlock = v;
+                offOther(v && c.easyPlace, () -> c.easyPlace = false);
+            }, false),
             cycle("slopmatica.options.easy_place_order", SlopmaticaConfig.EasyPlaceOrder.values(), c.easyPlaceOrder, v -> c.easyPlaceOrder = v),
             toggle("slopmatica.options.easy_place_restrict", c.easyPlaceRestrict, v -> c.easyPlaceRestrict = v, false),
             toggle("slopmatica.options.easy_place_angel", c.easyPlaceAngel, v -> c.easyPlaceAngel = v, false),
@@ -288,6 +295,14 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
             value,
             setter::accept
         );
+    }
+
+    /** Easy Place and Replace Block are one or the other: turning one on turns the other off, shown at once. */
+    private void offOther(boolean clash, Runnable off) {
+        if (clash) {
+            off.run();
+            minecraft.execute(this::rebuildWidgets);
+        }
     }
 
     private static void changed(boolean baked) {

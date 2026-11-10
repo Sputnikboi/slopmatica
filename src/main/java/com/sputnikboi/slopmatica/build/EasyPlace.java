@@ -82,8 +82,11 @@ public final class EasyPlace {
     public void toggle() {
         SlopmaticaConfig config = SlopmaticaConfig.get();
         config.easyPlace = !config.easyPlace;
+        boolean wasReplacing = config.easyPlace && config.replaceBlock;
+        config.replaceBlock &= !config.easyPlace; // the two modes are one or the other
         config.save();
-        SlopmaticaActions.actionBar(Component.literal(config.easyPlace ? "Easy Place on" : "Easy Place off").withColor(SlopmaticaActions.ACCENT));
+        SlopmaticaActions.actionBar(Component.translatable(config.easyPlace ? (wasReplacing ? "slopmatica.easy_place.on_replace_off" : "slopmatica.easy_place.on")
+            : "slopmatica.easy_place.off").withColor(SlopmaticaActions.ACCENT));
     }
 
     /**
@@ -250,6 +253,38 @@ public final class EasyPlace {
             player.swing(InteractionHand.MAIN_HAND, player.getMainHandItem().getInteractAnimation(), false);
         }
         return null;
+    }
+
+    /**
+     * Replace Block: places the offhand's block at {@code pos}, as close to {@code want} as it can
+     * get (turning the player for the click when Turn to Place allows it). Unlike Easy Place it
+     * never refuses for a facing it can't get: the closest one is fine. True if it placed.
+     */
+    public boolean placeFromOffhand(Minecraft mc, LocalPlayer player, ClientLevel level, BlockPos pos, BlockState want) {
+        ItemStack stack = player.getOffhandItem();
+        if (!(stack.getItem() instanceof BlockItem) || !level.getBlockState(pos).canBeReplaced()) {
+            return false;
+        }
+        boolean mayTurn = SlopmaticaConfig.get().easyPlaceRotate;
+        float[] yaws = mayTurn ? YAWS : new float[] {player.getYRot()};
+        float[] pitches = mayTurn ? PITCHES : new float[] {player.getXRot()};
+        Candidate best = bestCandidate(player, level, pos, want, null, stack.copyWithCount(1), yaws, pitches).best;
+        if (best == null) {
+            return false;
+        }
+        float yaw = player.getYRot(), pitch = player.getXRot();
+        boolean turn = best.yaw() != yaw || best.pitch() != pitch;
+        if (turn) {
+            look(mc, player, best.yaw(), best.pitch());
+        }
+        InteractionResult result = mc.gameMode.useItemOn(player, InteractionHand.OFF_HAND, best.hit());
+        if (turn) {
+            look(mc, player, yaw, pitch);
+        }
+        if (result instanceof InteractionResult.Success success && success.swingSource() == InteractionResult.SwingSource.PREDICTED) {
+            player.swing(InteractionHand.OFF_HAND, stack.getInteractAnimation(), false);
+        }
+        return result.consumesAction();
     }
 
     private static boolean has(LocalPlayer player, Item item) {
