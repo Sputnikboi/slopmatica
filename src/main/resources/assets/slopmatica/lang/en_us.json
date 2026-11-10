@@ -170,7 +170,7 @@
   "slopmatica.options.easy_place_inside": "Only Inside Schematics",
   "slopmatica.options.easy_place_inside.tooltip": "While Easy Place is on, placing blocks outside every schematic is refused, so stray blocks never end up next to the build. Inside a schematic but outside the shown layer is still allowed (scaffolding).",
   "slopmatica.options.replace_block": "Replace Block",
-  "slopmatica.options.replace_block.tooltip": "Every block you break is replaced with the block in your offhand, turned the way the broken one was where it can be (stairs, logs). When the offhand runs out it's refilled from your inventory, and the bottom left of the screen shows how many are left. Breaking a block of the offhand's own kind leaves it broken. Turning it on turns Easy Place off, and the other way round. Has a toggle key in Key Binds.",
+  "slopmatica.options.replace_block.tooltip": "Every block you break is replaced with the block in your offhand, turned the way the broken one was where it can be (stairs, logs). When placing uses up the last one in your offhand, it's refilled from your inventory (taking the block out yourself stops it instead), and the bottom left of the screen shows how many are left. Breaking a block of the offhand's own kind leaves it broken. Turning it on turns Easy Place off, and the other way round. Has a toggle key in Key Binds.",
   "slopmatica.replace.on": "Replace Block on: broken blocks are replaced with your offhand's",
   "slopmatica.replace.on_easy_place_off": "Replace Block on (Easy Place off)",
   "slopmatica.replace.off": "Replace Block off",

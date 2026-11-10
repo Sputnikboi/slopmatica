@@ -22,7 +22,8 @@ import org.jspecify.annotations.Nullable;
  * Replace Block: every block the player breaks is replaced with the block in their offhand,
  * keeping what it can of the broken one's facing (stairs stay stairs the same way round, logs
  * keep their axis). When the offhand runs out it is refilled from the inventory, and the bottom
- * left of the screen shows how many are left. One or the other with Easy Place.
+ * left of the screen shows how many are left. Taking the block out of the offhand by hand forgets
+ * it (no refill). One or the other with Easy Place.
  *
  * <p>Breaking a block of the offhand's own kind leaves it broken, so mistakes can be undone.
  */
@@ -49,6 +50,11 @@ public final class ReplaceBlock {
     private @Nullable BlockState breaking;
     /** The block being placed: the offhand's, remembered so it can be refilled once it runs out. */
     private @Nullable Item item;
+    /**
+     * The offhand is empty because placing used up the last one: refilled (now, or once more of
+     * the block turns up). Emptied any other way, the player took it out, and the block is forgotten.
+     */
+    private boolean ranOut;
 
     private ReplaceBlock() {
     }
@@ -105,8 +111,11 @@ public final class ReplaceBlock {
         ItemStack offhand = player.getOffhandItem();
         if (offhand.getItem() instanceof BlockItem) {
             item = offhand.getItem();
-        } else if (!offhand.isEmpty()) {
-            item = null; // Something else there now: the player chose to stop.
+            ranOut = false;
+        } else if (!offhand.isEmpty() || !ranOut) {
+            // Something else there now, or the block taken out by hand: the player chose to stop.
+            item = null;
+            ranOut = false;
         }
         refill(mc, player);
         replacePending(mc, player, level, true);
@@ -143,14 +152,15 @@ public final class ReplaceBlock {
             BlockState want = held.getBlock().withPropertiesOf(b.state());
             if (EasyPlace.INSTANCE.placeFromOffhand(mc, player, level, b.pos(), want)) {
                 placed.put(b.pos(), ticks);
+                ranOut |= player.getOffhandItem().isEmpty();
             }
             refill(mc, player);
         }
     }
 
-    /** An empty offhand gets the next stack of the remembered block from the inventory. */
+    /** An offhand placing emptied gets the next stack of the remembered block from the inventory. */
     private void refill(Minecraft mc, LocalPlayer player) {
-        if (item == null || !player.getOffhandItem().isEmpty()) {
+        if (item == null || !ranOut || !player.getOffhandItem().isEmpty()) {
             return;
         }
         Inventory inventory = player.getInventory();
