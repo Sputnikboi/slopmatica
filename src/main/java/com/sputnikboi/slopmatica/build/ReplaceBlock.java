@@ -31,11 +31,20 @@ public final class ReplaceBlock {
 
     /** Ticks a broken block waits to be air (the server may be slow to agree it broke) before it is given up on. */
     private static final int WAIT_TICKS = 10;
+    /**
+     * Ticks a just-placed block can't be broken, and for as long after as attack stays held: with
+     * attack held, creative (and fast survival) breaking would otherwise break the new block a
+     * moment later, and, being the offhand's kind, leave it broken.
+     */
+    private static final int PROTECT_TICKS = 10;
 
     private record Broken(BlockPos pos, BlockState state, int age) {
     }
 
     private final Deque<Broken> pending = new ArrayDeque<>();
+    /** Blocks just placed, and the tick they were placed at (see {@link #PROTECT_TICKS}). */
+    private final java.util.Map<BlockPos, Long> placed = new java.util.HashMap<>();
+    private long ticks;
     /** The state at the position being broken, from just before the break (see the game mode mixin). */
     private @Nullable BlockState breaking;
     /** The block being placed: the offhand's, remembered so it can be refilled once it runs out. */
@@ -59,14 +68,19 @@ public final class ReplaceBlock {
             : "slopmatica.replace.off").withColor(SlopmaticaActions.ACCENT));
     }
 
+    /** Whether breaking at pos is held off: a block just placed there (start/continueDestroyBlock do nothing). */
+    public boolean protects(BlockPos pos) {
+        return !placed.isEmpty() && enabled() && placed.containsKey(pos);
+    }
+
     /** MultiPlayerGameMode.destroyBlock, before: what is about to be broken. */
     public void beforeBreak(BlockState state) {
         breaking = state;
     }
 
     /**
-     * MultiPlayerGameMode.destroyBlock, after it broke the block. Placed at the end of the tick,
-     * not here: the packet saying it broke is only sent after this returns.
+     * MultiPlayerGameMode.destroyBlock, after it broke the block. Not placed here: the packet
+     * saying it broke is only sent after this returns (see {@link #afterBreakSent}).
      */
     public void broke(BlockPos pos) {
         if (enabled() && breaking != null && !breaking.isAir()) {
@@ -81,7 +95,12 @@ public final class ReplaceBlock {
         ClientLevel level = mc.level;
         if (!enabled() || player == null || level == null || mc.gameMode == null || player.isSpectator()) {
             pending.clear();
+            placed.clear();
             return;
+        }
+        ticks++;
+        if (!mc.options.keyAttack.isDown()) {
+            placed.values().removeIf(at -> ticks - at >= PROTECT_TICKS);
         }
         ItemStack offhand = player.getOffhandItem();
         if (offhand.getItem() instanceof BlockItem) {
@@ -90,10 +109,29 @@ public final class ReplaceBlock {
             item = null; // Something else there now: the player chose to stop.
         }
         refill(mc, player);
+        replacePending(mc, player, level, true);
+    }
+
+    /**
+     * Right after start/continueDestroyBlock sent the break: replaced at once, before the player
+     * moves this tick. A block broken under the player's feet is back before they start to fall
+     * into its space (by the end of the tick they would be in the way of it, and it couldn't go).
+     */
+    public void afterBreakSent(Minecraft mc) {
+        LocalPlayer player = mc.player;
+        if (enabled() && !pending.isEmpty() && player != null && mc.level != null && mc.gameMode != null && !player.isSpectator()) {
+            replacePending(mc, player, mc.level, false);
+        }
+    }
+
+    /** Places what can be placed; the rest waits (and, once a tick, ages until given up on). */
+    private void replacePending(Minecraft mc, LocalPlayer player, ClientLevel level, boolean age) {
         for (int n = pending.size(); n > 0; n--) {
             Broken b = pending.poll();
             if (!level.getBlockState(b.pos()).canBeReplaced()) {
-                if (b.age() < WAIT_TICKS) {
+                if (!age) {
+                    pending.add(b);
+                } else if (b.age() < WAIT_TICKS) {
                     pending.add(new Broken(b.pos(), b.state(), b.age() + 1));
                 }
                 continue;
@@ -103,7 +141,9 @@ public final class ReplaceBlock {
             }
             // The new block, turned the way the old one was where they share properties.
             BlockState want = held.getBlock().withPropertiesOf(b.state());
-            EasyPlace.INSTANCE.placeFromOffhand(mc, player, level, b.pos(), want);
+            if (EasyPlace.INSTANCE.placeFromOffhand(mc, player, level, b.pos(), want)) {
+                placed.put(b.pos(), ticks);
+            }
             refill(mc, player);
         }
     }
