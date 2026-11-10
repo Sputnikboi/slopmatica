@@ -28,11 +28,13 @@ abstract class MultiPlayerGameModeReplaceMixin {
         }
     }
 
-    /** A block Replace Block just placed isn't broken right away by attack still being held. */
+    /** A block Replace Block just placed isn't broken right away by attack still being held; any other is noted as being mined. */
     @Inject(method = {"startDestroyBlock", "continueDestroyBlock"}, at = @At("HEAD"), cancellable = true)
     private void slopmatica$protect(BlockPos pos, Direction direction, CallbackInfoReturnable<Boolean> cir) {
         if (ReplaceBlock.INSTANCE.protects(pos)) {
             cir.setReturnValue(false);
+        } else {
+            ReplaceBlock.INSTANCE.mining(pos);
         }
     }
 

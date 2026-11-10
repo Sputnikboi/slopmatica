@@ -38,13 +38,46 @@ public final class ReplaceBlock {
      * moment later, and, being the offhand's kind, leave it broken.
      */
     private static final int PROTECT_TICKS = 10;
+    /**
+     * Ticks a placed block is watched: if the server takes it back (it hadn't finished breaking
+     * the old block yet, which happens mining while falling, and breaks it a little later) it is
+     * placed again, up to {@link #MAX_TRIES} times in all.
+     */
+    private static final int WATCH_TICKS = 40;
+    private static final int MAX_TRIES = 3;
+    /**
+     * Ticks a block the player was mining counts as theirs if it disappears: the server can finish
+     * breaking it before the client does (mining in the air, it disagrees about the speed), and
+     * then the client never breaks it itself.
+     */
+    private static final int MINING_TICKS = 20;
 
-    private record Broken(BlockPos pos, BlockState state, int age) {
+    /** A block to replace: what was there, ticks waited for it to be gone, and placements tried before. */
+    private record Broken(BlockPos pos, BlockState state, int age, int tries) {
+    }
+
+    /** A block it placed: what was broken there, and when. */
+    private static final class Placed {
+        final BlockState broken;
+        final long at;
+        final int tries;
+        /** Can't be broken yet (see {@link #PROTECT_TICKS}). */
+        boolean guarded = true;
+
+        Placed(BlockState broken, long at, int tries) {
+            this.broken = broken;
+            this.at = at;
+            this.tries = tries;
+        }
+    }
+
+    /** A block being mined: what it is, and the last tick it was. */
+    private record Mining(BlockState state, long at) {
     }
 
     private final Deque<Broken> pending = new ArrayDeque<>();
-    /** Blocks just placed, and the tick they were placed at (see {@link #PROTECT_TICKS}). */
-    private final java.util.Map<BlockPos, Long> placed = new java.util.HashMap<>();
+    private final java.util.Map<BlockPos, Placed> placed = new java.util.HashMap<>();
+    private final java.util.Map<BlockPos, Mining> mining = new java.util.HashMap<>();
     private long ticks;
     /** The state at the position being broken, from just before the break (see the game mode mixin). */
     private @Nullable BlockState breaking;
@@ -76,7 +109,16 @@ public final class ReplaceBlock {
 
     /** Whether breaking at pos is held off: a block just placed there (start/continueDestroyBlock do nothing). */
     public boolean protects(BlockPos pos) {
-        return !placed.isEmpty() && enabled() && placed.containsKey(pos);
+        Placed p = placed.isEmpty() || !enabled() ? null : placed.get(pos);
+        return p != null && p.guarded;
+    }
+
+    /** start/continueDestroyBlock (when not protected): the player is mining the block at pos. */
+    public void mining(BlockPos pos) {
+        ClientLevel level = Minecraft.getInstance().level;
+        if (enabled() && level != null && !level.getBlockState(pos).isAir()) {
+            mining.put(pos.immutable(), new Mining(level.getBlockState(pos), ticks));
+        }
     }
 
     /** MultiPlayerGameMode.destroyBlock, before: what is about to be broken. */
@@ -89,8 +131,10 @@ public final class ReplaceBlock {
      * saying it broke is only sent after this returns (see {@link #afterBreakSent}).
      */
     public void broke(BlockPos pos) {
+        mining.remove(pos);
+        placed.remove(pos); // broken on purpose (after its protection): not to be put back
         if (enabled() && breaking != null && !breaking.isAir()) {
-            pending.add(new Broken(pos.immutable(), breaking, 0));
+            pending.add(new Broken(pos.immutable(), breaking, 0, 0));
         }
         breaking = null;
     }
@@ -102,11 +146,34 @@ public final class ReplaceBlock {
         if (!enabled() || player == null || level == null || mc.gameMode == null || player.isSpectator()) {
             pending.clear();
             placed.clear();
+            mining.clear();
             return;
         }
         ticks++;
-        if (!mc.options.keyAttack.isDown()) {
-            placed.values().removeIf(at -> ticks - at >= PROTECT_TICKS);
+        boolean attacking = mc.options.keyAttack.isDown();
+        for (var it = placed.entrySet().iterator(); it.hasNext(); ) {
+            var e = it.next();
+            Placed p = e.getValue();
+            p.guarded &= attacking || ticks - p.at < PROTECT_TICKS;
+            if (ticks - p.at >= WATCH_TICKS && !p.guarded) {
+                it.remove();
+            } else if (level.getBlockState(e.getKey()).canBeReplaced()) {
+                // The server took it back: try again.
+                it.remove();
+                if (p.tries < MAX_TRIES) {
+                    queue(e.getKey(), p.broken, p.tries);
+                }
+            }
+        }
+        for (var it = mining.entrySet().iterator(); it.hasNext(); ) {
+            var e = it.next();
+            if (ticks - e.getValue().at() > MINING_TICKS) {
+                it.remove();
+            } else if (level.getBlockState(e.getKey()).canBeReplaced()) {
+                // Gone without the client breaking it: the server finished first.
+                it.remove();
+                queue(e.getKey(), e.getValue().state(), 0);
+            }
         }
         ItemStack offhand = player.getOffhandItem();
         if (offhand.getItem() instanceof BlockItem) {
@@ -133,6 +200,12 @@ public final class ReplaceBlock {
         }
     }
 
+    private void queue(BlockPos pos, BlockState state, int tries) {
+        if (pending.stream().noneMatch(b -> b.pos().equals(pos))) {
+            pending.add(new Broken(pos, state, 0, tries));
+        }
+    }
+
     /** Places what can be placed; the rest waits (and, once a tick, ages until given up on). */
     private void replacePending(Minecraft mc, LocalPlayer player, ClientLevel level, boolean age) {
         for (int n = pending.size(); n > 0; n--) {
@@ -141,7 +214,7 @@ public final class ReplaceBlock {
                 if (!age) {
                     pending.add(b);
                 } else if (b.age() < WAIT_TICKS) {
-                    pending.add(new Broken(b.pos(), b.state(), b.age() + 1));
+                    pending.add(new Broken(b.pos(), b.state(), b.age() + 1, b.tries()));
                 }
                 continue;
             }
@@ -151,7 +224,7 @@ public final class ReplaceBlock {
             // The new block, turned the way the old one was where they share properties.
             BlockState want = held.getBlock().withPropertiesOf(b.state());
             if (EasyPlace.INSTANCE.placeFromOffhand(mc, player, level, b.pos(), want)) {
-                placed.put(b.pos(), ticks);
+                placed.put(b.pos(), new Placed(b.state(), ticks, b.tries() + 1));
                 ranOut |= player.getOffhandItem().isEmpty();
             }
             refill(mc, player);
