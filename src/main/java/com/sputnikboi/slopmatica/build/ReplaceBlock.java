@@ -88,6 +88,8 @@ public final class ReplaceBlock {
      * the block turns up). Emptied any other way, the player took it out, and the block is forgotten.
      */
     private boolean ranOut;
+    /** The tick the player was warned they have none of the block left (the HUD box flashes a while), or -1. */
+    private long outAt = -1;
 
     private ReplaceBlock() {
     }
@@ -179,6 +181,7 @@ public final class ReplaceBlock {
         if (offhand.getItem() instanceof BlockItem) {
             item = offhand.getItem();
             ranOut = false;
+            outAt = -1;
         } else if (!offhand.isEmpty() || !ranOut) {
             // Something else there now, or the block taken out by hand: the player chose to stop.
             item = null;
@@ -245,6 +248,12 @@ public final class ReplaceBlock {
                 return;
             }
         }
+        if (outAt < 0) {
+            // None left anywhere: say so once, with a ding, and flash the HUD box.
+            outAt = ticks;
+            SlopmaticaActions.actionBar(Component.translatable("slopmatica.replace.out", new ItemStack(item).getHoverName()).withColor(0xFFFF6060));
+            mc.getSoundManager().play(net.minecraft.client.resources.sounds.SimpleSoundInstance.forUI(net.minecraft.sounds.SoundEvents.NOTE_BLOCK_BELL, 1.0F));
+        }
     }
 
     /** How many of the block there are left, offhand and inventory together. */
@@ -271,7 +280,12 @@ public final class ReplaceBlock {
             : player.hasInfiniteMaterials() ? Component.translatable("slopmatica.replace.hud_creative").getString()
             : Component.translatable("slopmatica.replace.hud", left(player, shown)).getString();
         int x = 4, y = g.guiHeight() - 24, w = 20 + mc.font.width(text) + 6;
-        g.fill(x, y, x + w, y + 20, 0x90000000);
+        // Just ran out: flashes red for three seconds.
+        boolean flash = outAt >= 0 && ticks - outAt < 60 && (ticks - outAt) / 5 % 2 == 0;
+        if (outAt >= 0 && ticks - outAt < 60) {
+            g.fill(x - 1, y - 1, x + w + 1, y + 21, 0xFFFF4040);
+        }
+        g.fill(x, y, x + w, y + 20, flash ? 0xC0801010 : 0x90000000);
         if (shown != null) {
             g.item(new ItemStack(shown), x + 2, y + 2);
         }
