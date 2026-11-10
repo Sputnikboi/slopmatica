@@ -26,6 +26,7 @@ import org.jspecify.annotations.Nullable;
  * it (no refill). One or the other with Easy Place.
  *
  * <p>Breaking a block of the offhand's own kind leaves it broken, so mistakes can be undone.
+ * Shulker boxes are left alone by default: neither replaced nor placed.
  */
 public final class ReplaceBlock {
     public static final ReplaceBlock INSTANCE = new ReplaceBlock();
@@ -178,7 +179,7 @@ public final class ReplaceBlock {
             }
         }
         ItemStack offhand = player.getOffhandItem();
-        if (offhand.getItem() instanceof BlockItem) {
+        if (offhand.getItem() instanceof BlockItem held && !ignored(held.getBlock())) {
             item = offhand.getItem();
             ranOut = false;
             outAt = -1;
@@ -221,7 +222,8 @@ public final class ReplaceBlock {
                 }
                 continue;
             }
-            if (!(player.getOffhandItem().getItem() instanceof BlockItem held) || b.state().is(held.getBlock())) {
+            if (!(player.getOffhandItem().getItem() instanceof BlockItem held) || ignored(held.getBlock()) || ignored(b.state().getBlock())
+                || b.state().is(held.getBlock())) {
                 continue;
             }
             // The new block, turned the way the old one was where they share properties.
@@ -232,6 +234,11 @@ public final class ReplaceBlock {
             }
             refill(mc, player);
         }
+    }
+
+    /** Shulker boxes (unless that option is off): one broken is being picked up, not replaced, and one in the offhand isn't placed. */
+    private static boolean ignored(net.minecraft.world.level.block.Block block) {
+        return SlopmaticaConfig.get().replaceIgnoreShulkers && block instanceof net.minecraft.world.level.block.ShulkerBoxBlock;
     }
 
     /** An offhand placing emptied gets the next stack of the remembered block from the inventory. */
@@ -275,7 +282,7 @@ public final class ReplaceBlock {
         if (!enabled() || player == null || mc.gui.screen() != null) {
             return;
         }
-        Item shown = player.getOffhandItem().getItem() instanceof BlockItem held ? held : item;
+        Item shown = player.getOffhandItem().getItem() instanceof BlockItem held && !ignored(held.getBlock()) ? held : item;
         String text = shown == null ? Component.translatable("slopmatica.replace.hud_empty").getString()
             : player.hasInfiniteMaterials() ? Component.translatable("slopmatica.replace.hud_creative").getString()
             : Component.translatable("slopmatica.replace.hud", left(player, shown)).getString();

@@ -91,6 +91,7 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
                 c.replaceBlock = v;
                 offOther(v && c.easyPlace, () -> c.easyPlace = false);
             }, false),
+            toggle("slopmatica.options.replace_ignore_shulkers", c.replaceIgnoreShulkers, v -> c.replaceIgnoreShulkers = v, false),
             cycle("slopmatica.options.easy_place_order", SlopmaticaConfig.EasyPlaceOrder.values(), c.easyPlaceOrder, v -> c.easyPlaceOrder = v),
             toggle("slopmatica.options.easy_place_restrict", c.easyPlaceRestrict, v -> c.easyPlaceRestrict = v, false),
             toggle("slopmatica.options.easy_place_angel", c.easyPlaceAngel, v -> c.easyPlaceAngel = v, false),

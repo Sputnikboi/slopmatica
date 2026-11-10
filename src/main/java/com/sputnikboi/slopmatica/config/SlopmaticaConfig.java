@@ -113,6 +113,8 @@ public final class SlopmaticaConfig {
     public boolean easyPlaceTools = true;
     /** Replace Block: blocks the player breaks are replaced with the offhand's block. One or the other with Easy Place. */
     public boolean replaceBlock = false;
+    /** Replace Block leaves shulker boxes alone: a broken one isn't replaced, one in the offhand isn't placed. */
+    public boolean replaceIgnoreShulkers = true;
     /** In a single-layer or up-to-layer view, move up a layer once every block in it is right. */
     public boolean autoLayer = true;
     /** Copy block entity data (chest contents, sign text) and entities (frames, armor stands), and paste them. */
