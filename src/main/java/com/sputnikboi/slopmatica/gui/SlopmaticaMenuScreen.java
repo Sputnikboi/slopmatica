@@ -76,17 +76,19 @@ public class SlopmaticaMenuScreen extends Screen {
         Button plan = materialRow.addChild(Button.builder(Component.translatable("slopmatica.menu.plan"), b -> minecraft.gui.setScreen(new InventoryPlanScreen(this)))
             .width((BUTTON_WIDTH - 4) / 2).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.plan.tooltip"))).build());
         plan.active = loaded > 0; // The planner uses every shown build, not just the selected one.
+        // Opened from the title screen there's no world: what works on one is greyed out.
+        boolean inWorld = minecraft.level != null;
         LinearLayout copyRow = column.addChild(LinearLayout.horizontal().spacing(4));
         copyRow.addChild(Button.builder(Component.translatable("slopmatica.menu.copy"), b -> {
             onClose();
             Clipboard.INSTANCE.copy(minecraft);
-        }).width((BUTTON_WIDTH - 8) / 3).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.copy.tooltip"))).build());
+        }).width((BUTTON_WIDTH - 8) / 3).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.copy.tooltip"))).build()).active = inWorld;
         copyRow.addChild(Button.builder(Component.translatable("slopmatica.menu.paste"), b -> {
             onClose();
             Clipboard.INSTANCE.paste(minecraft);
-        }).width((BUTTON_WIDTH - 8) / 3).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.paste.tooltip"))).build());
+        }).width((BUTTON_WIDTH - 8) / 3).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.paste.tooltip"))).build()).active = inWorld;
         copyRow.addChild(Button.builder(Component.translatable("slopmatica.menu.clear_selection"), b -> Selection.INSTANCE.clear())
-            .width(BUTTON_WIDTH - 8 - 2 * ((BUTTON_WIDTH - 8) / 3)).build());
+            .width(BUTTON_WIDTH - 8 - 2 * ((BUTTON_WIDTH - 8) / 3)).build()).active = inWorld;
         if (Online.available()) {
             LinearLayout cloudRow = column.addChild(LinearLayout.horizontal().spacing(4));
             cloudRow.addChild(Button.builder(Component.translatable("slopmatica.menu.cloud"), b -> minecraft.gui.setScreen(Online.cloudScreen(this)))
@@ -104,7 +106,7 @@ public class SlopmaticaMenuScreen extends Screen {
         toggleRow.addChild(Button.builder(spawnLabel(), b -> {
             SpawnCheck.INSTANCE.toggle(minecraft);
             b.setMessage(spawnLabel());
-        }).width((BUTTON_WIDTH - 4) / 2).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.spawn.tooltip"))).build());
+        }).width((BUTTON_WIDTH - 4) / 2).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.spawn.tooltip"))).build()).active = inWorld;
         column.addChild(new StringWidget(Component.translatable("slopmatica.menu.keybinds_hint").withColor(0xFFA0A0A0), font));
 
         layout.addToFooter(Button.builder(CommonComponents.GUI_DONE, b -> onClose()).width(BUTTON_WIDTH).build());

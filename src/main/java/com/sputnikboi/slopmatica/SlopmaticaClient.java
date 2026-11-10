@@ -73,6 +73,7 @@ public final class SlopmaticaClient implements ClientModInitializer {
             }
         });
         com.sputnikboi.slopmatica.plan.InventoryOverlay.register();
+        com.sputnikboi.slopmatica.gui.TitleScreenButton.register();
         // The Quick Menu reads clicks and E before vanilla does, and takes the hotbar's place while open.
         ClientTickEvents.START_CLIENT_TICK.register(com.sputnikboi.slopmatica.quick.QuickMenu.INSTANCE::tick);
         ClientTickEvents.START_CLIENT_TICK.register(com.sputnikboi.slopmatica.quick.ActionWheel.INSTANCE::tick);
