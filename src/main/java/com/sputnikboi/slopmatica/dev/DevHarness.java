@@ -123,10 +123,11 @@ public final class DevHarness {
                 boolean handled = mc.gui.screen().keyPressed(event);
                 LOGGER.info("dev key {} handled={} focus={}", step, handled, mc.gui.screen() == null ? null : mc.gui.screen().getFocused());
             } else if (step.startsWith("click ") && mc.gui.screen() != null) {
-                // click <x> <y> in GUI coordinates, left button.
+                // click <x> <y> [right] in GUI coordinates, left button unless "right".
                 String[] parts = step.split(" ");
+                int button = parts.length > 3 && parts[3].equals("right") ? InputConstants.MOUSE_BUTTON_RIGHT : 1; // SDL numbering: 1 is the left button.
                 var event = new net.minecraft.client.input.MouseButtonEvent(Double.parseDouble(parts[1]), Double.parseDouble(parts[2]),
-                    new net.minecraft.client.input.MouseButtonInfo(1, 0)); // SDL numbering: 1 is the left button.
+                    new net.minecraft.client.input.MouseButtonInfo(button, 0));
                 Screen screen = mc.gui.screen();
                 screen.mouseClicked(event, false);
                 if (mc.gui.screen() == screen) {

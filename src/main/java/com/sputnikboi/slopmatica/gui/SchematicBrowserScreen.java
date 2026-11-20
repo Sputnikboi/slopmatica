@@ -3,6 +3,7 @@ package com.sputnikboi.slopmatica.gui;
 import com.mojang.blaze3d.Blaze3D;
 import com.sputnikboi.slopmatica.SlopmaticaActions;
 import com.sputnikboi.slopmatica.schematic.SchematicFormats;
+import com.sputnikboi.slopmatica.schematic.SchematicMeta;
 import net.minecraft.nbt.ListTag;
 import com.sputnikboi.slopmatica.online.Online;
 import com.sputnikboi.slopmatica.schematic.VanillaStructures;
@@ -36,6 +37,7 @@ import net.minecraft.client.gui.layouts.LinearLayout;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
@@ -61,6 +63,8 @@ public class SchematicBrowserScreen extends Screen {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
     /** File info is read off-thread once per file and kept for the session. */
     private static final Map<Path, Component> INFO_CACHE = new ConcurrentHashMap<>();
+    /** Each file's saved settings (its saved position, for Load at Saved), read with its info. */
+    private static final Map<Path, SchematicMeta> META_CACHE = new ConcurrentHashMap<>();
 
     private final @Nullable Screen parent;
     private static final int BADGE_COLOR = 0xFF55CCFF;
@@ -91,6 +95,7 @@ public class SchematicBrowserScreen extends Screen {
     /** What loading a file does instead of placing it at your feet (the build view's +), or null. */
     private java.util.function.@Nullable Consumer<Path> onPick;
     private Button loadButton;
+    private Button loadSavedButton;
     private Button uploadButton;
 
     public SchematicBrowserScreen(@Nullable Screen parent) {
@@ -199,7 +204,11 @@ public class SchematicBrowserScreen extends Screen {
         footer.defaultCellSetting().alignHorizontallyCenter();
         infoLabel = footer.addChild(new StringWidget(Math.min(width - 20, 400), 9, Component.empty(), font));
         LinearLayout buttons = footer.addChild(LinearLayout.horizontal().spacing(8));
-        loadButton = buttons.addChild(Button.builder(Component.translatable("slopmatica.browser.load"), b -> activate(list.getSelected())).width(100).build());
+        loadButton = buttons.addChild(Button.builder(Component.translatable("slopmatica.browser.load"), b -> activate(list.getSelected())).width(100)
+            .tooltip(Tooltip.create(Component.translatable("slopmatica.browser.load.tooltip"))).build());
+        loadSavedButton = buttons.addChild(Button.builder(Component.translatable("slopmatica.browser.load_saved"), b -> loadAtSaved(list.getSelected()))
+            .width(100).build());
+        loadSavedButton.active = false;
         uploadButton = buttons.addChild(Button.builder(Component.translatable("slopmatica.browser.upload"), b -> {
             FileEntry selected = list.getSelected();
             if (selected != null && selected.kind == Kind.FILE) {
@@ -209,6 +218,9 @@ public class SchematicBrowserScreen extends Screen {
         buttons.addChild(Button.builder(Component.translatable("slopmatica.info.button"), b -> {
             FileEntry selected = list.getSelected();
             if (selected != null && selected.kind == Kind.FILE) {
+                // Its settings may change there (the saved position too): read them again after.
+                INFO_CACHE.remove(selected.path);
+                META_CACHE.remove(selected.path);
                 minecraft.gui.setScreen(new SchematicInfoScreen(this, selected.path, null));
             }
         }).width(100).tooltip(Tooltip.create(Component.translatable("slopmatica.info.button.tooltip"))).build());
@@ -348,27 +360,55 @@ public class SchematicBrowserScreen extends Screen {
     private void onSelectionChanged(@Nullable FileEntry entry) {
         loadButton.active = entry != null && entry.kind == Kind.FILE;
         uploadButton.active = loadButton.active && Online.loggedIn() && !Online.inCloud(entry.path);
+        showSaved(null);
         if (entry == null || entry.kind != Kind.FILE) {
             setLabel(infoLabel, Component.empty());
             return;
         }
         Component cached = INFO_CACHE.get(entry.path);
-        if (cached != null) {
+        if (cached != null && META_CACHE.containsKey(entry.path)) {
             setLabel(infoLabel, cached);
+            showSaved(META_CACHE.get(entry.path));
             return;
         }
         setLabel(infoLabel, Component.literal("...").withColor(DETAIL_COLOR));
         Path path = entry.path;
         Util.ioPool().execute(() -> {
+            SchematicMeta meta = SchematicMeta.read(path);
             Component info = readInfo(path);
+            if (meta.position != null) {
+                info = info.copy().append(Component.translatable("slopmatica.browser.saved_at",
+                    meta.position.getX(), meta.position.getY(), meta.position.getZ()));
+            }
             INFO_CACHE.put(path, info);
+            META_CACHE.put(path, meta);
+            Component shown = info;
             minecraft.execute(() -> {
                 FileEntry selected = list.getSelected();
                 if (selected != null && selected.path.equals(path)) {
-                    setLabel(infoLabel, info);
+                    setLabel(infoLabel, shown);
+                    showSaved(meta);
                 }
             });
         });
+    }
+
+    /** Load at Saved: on for a file with a saved position, in a world, when not picking a file for something else. */
+    private void showSaved(@Nullable SchematicMeta meta) {
+        BlockPos at = meta == null ? null : meta.position;
+        loadSavedButton.active = at != null && minecraft.level != null && onPick == null;
+        loadSavedButton.setTooltip(Tooltip.create(at == null ? Component.translatable("slopmatica.browser.load_saved.none")
+            : Component.translatable("slopmatica.browser.load_saved.tooltip", at.getX(), at.getY(), at.getZ(),
+                meta.rotation == null ? Component.translatable("slopmatica.info.none") : com.sputnikboi.slopmatica.view.Recommendations.rotationName(meta.rotation))));
+    }
+
+    private void loadAtSaved(@Nullable FileEntry entry) {
+        SchematicMeta meta = entry == null ? null : META_CACHE.get(entry.path);
+        if (meta == null || meta.position == null || minecraft.player == null) {
+            return;
+        }
+        SlopmaticaActions.loadAtSaved(entry.path, meta, SlopmaticaActions::chat);
+        minecraft.gui.setScreen(null);
     }
 
     /** Size, block count and author, from each format's header where it keeps one. */

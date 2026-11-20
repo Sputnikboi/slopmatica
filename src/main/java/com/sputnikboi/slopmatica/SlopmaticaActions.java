@@ -48,6 +48,22 @@ public final class SlopmaticaActions {
         load(file, origin, feedback, p -> { });
     }
 
+    /**
+     * Loads a schematic where it was saved to go (its settings' position, with their rotation if
+     * set), not where the player stands.
+     */
+    public static void loadAtSaved(Path file, com.sputnikboi.slopmatica.schematic.SchematicMeta meta, Consumer<Component> feedback) {
+        BlockPos at = java.util.Objects.requireNonNull(meta.position);
+        load(file, at, feedback, placement -> {
+            if (meta.rotation != null && placement.transform().rotation() != meta.rotation) {
+                // Turn in place: the origin point stays on the saved position.
+                placement.setRotation(meta.rotation);
+                placement.moveOriginPointTo(at);
+                PlacementManager.INSTANCE.changed();
+            }
+        });
+    }
+
     /** {@code loaded}: told the new placement once it is in the world. */
     public static void load(Path file, BlockPos origin, Consumer<Component> feedback, Consumer<Placement> loaded) {
         feedback.accept(prefix().append("Loading " + file.getFileName() + "..."));

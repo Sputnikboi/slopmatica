@@ -1,6 +1,8 @@
 package com.sputnikboi.slopmatica.gui;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import com.sputnikboi.slopmatica.placement.Placement;
+import com.sputnikboi.slopmatica.placement.PlacementStore;
 import com.sputnikboi.slopmatica.verify.MaterialList;
 import java.util.Locale;
 import net.minecraft.client.Minecraft;
@@ -11,6 +13,7 @@ import net.minecraft.client.gui.components.StringWidget;
 import net.minecraft.client.gui.layouts.HeaderAndFooterLayout;
 import net.minecraft.client.gui.layouts.LinearLayout;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
@@ -26,6 +29,7 @@ public class MaterialListScreen extends Screen {
     private static final int MISSING_COLOR = 0xFFFF7070;
     private static final int DONE_COLOR = 0xFF60D070;
     private static final int ENOUGH_COLOR = 0xFFE0E0E0;
+    private static final int IGNORED_COLOR = 0xFF606060;
 
     private final @Nullable Screen parent;
     private final Placement placement;
@@ -48,6 +52,7 @@ public class MaterialListScreen extends Screen {
         header.defaultCellSetting().alignHorizontallyCenter();
         header.addChild(new StringWidget(title, font));
         summary = header.addChild(new StringWidget(Math.min(width - 20, 500), 9, Component.empty(), font));
+        header.addChild(new StringWidget(Component.translatable("slopmatica.materials.ignore_hint").withColor(DETAIL_COLOR), font));
         list = layout.addToContents(new ItemList(minecraft));
 
         LinearLayout footer = layout.addToFooter(LinearLayout.horizontal().spacing(8));
@@ -128,11 +133,29 @@ public class MaterialListScreen extends Screen {
             this.stack = entry.icon();
         }
 
+        /** Right click leaves the material out (as on the side panels: same list, saved with the build), or brings it back. */
+        @Override
+        public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+            if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
+                placement.setIgnoredMaterials(Placement.toggled(placement.ignoredMaterials(), entry.item()));
+                PlacementStore.INSTANCE.markDirty();
+                return true;
+            }
+            return super.mouseClicked(event, doubleClick);
+        }
+
         @Override
         public void extractContent(GuiGraphicsExtractor graphics, int mouseX, int mouseY, boolean hovered, float a) {
             int x = getContentX();
             int y = getContentYMiddle();
             graphics.item(stack, x + 2, y - 8);
+            if (placement.ignoredMaterials().contains(entry.item())) {
+                String name = font.plainSubstrByWidth(stack.getHoverName().getString(), getContentRight() - x - 40);
+                graphics.text(font, name, x + 24, y - 4, IGNORED_COLOR);
+                String label = Component.translatable("slopmatica.materials.ignored").getString();
+                graphics.text(font, label, getContentRight() - 4 - font.width(label), y - 4, IGNORED_COLOR);
+                return;
+            }
             String missing = entry.missing() == 0 ? "done" : amount(entry.missing()) + " missing";
             String detail = "of " + amount(entry.total()) + "   have " + amount(entry.have());
             int detailWidth = font.width(detail);
