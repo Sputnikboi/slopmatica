@@ -135,7 +135,7 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
             toggle("slopmatica.wheel.reset_page", c.wheelResetPage, v -> c.wheelResetPage = v, false).createButton(minecraft.options));
         list.addSmall(
             slider("slopmatica.wheel.size", 50, 200, c.wheelSize, "%", v -> c.wheelSize = v, false).createButton(minecraft.options),
-            Button.builder(Component.translatable("slopmatica.quick.action_keys"), b -> minecraft.gui.setScreen(new ControlsKeysScreen(this)))
+            Button.builder(Component.translatable("slopmatica.quick.action_keys"), b -> minecraft.gui.setScreen(new ActionKeysScreen(this)))
                 .tooltip(Tooltip.create(Component.translatable("slopmatica.quick.action_keys.tooltip"))).width(WIDE).build());
 
         list.addHeader(Component.translatable("slopmatica.options.controls"));

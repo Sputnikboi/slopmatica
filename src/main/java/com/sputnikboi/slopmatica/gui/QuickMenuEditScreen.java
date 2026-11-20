@@ -164,7 +164,7 @@ public class QuickMenuEditScreen extends Screen {
             };
             size.setTooltip(Tooltip.create(Component.translatable("slopmatica.wheel.size.tooltip")));
             addRenderableWidget(size);
-            addRenderableWidget(Button.builder(Component.translatable("slopmatica.quick.action_keys"), b -> minecraft.gui.setScreen(new ControlsKeysScreen(this)))
+            addRenderableWidget(Button.builder(Component.translatable("slopmatica.quick.action_keys"), b -> minecraft.gui.setScreen(new ActionKeysScreen(this)))
                 .bounds(wx + 318, by - 24, 92, 20).tooltip(Tooltip.create(Component.translatable("slopmatica.quick.action_keys.tooltip"))).build());
         } else if (!addingToggle) {
             // How the hotbar works.

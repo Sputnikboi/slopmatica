@@ -38,6 +38,8 @@ public class SlopmaticaKeyBindsScreen extends KeyBindsScreen {
             ((KeyBindsScreenAccessor) this).slopmatica$keyBindsList().resetMappingAndUpdateButtons();
         }).build());
         ((KeyBindsScreenAccessor) this).slopmatica$setResetButton(reset);
+        buttons.addChild(Button.builder(Component.translatable("slopmatica.quick.action_keys"), b -> minecraft.gui.setScreen(new ActionKeysScreen(this)))
+            .tooltip(net.minecraft.client.gui.components.Tooltip.create(Component.translatable("slopmatica.quick.action_keys.tooltip"))).build());
         buttons.addChild(Button.builder(CommonComponents.GUI_DONE, b -> onClose()).build());
     }
 }

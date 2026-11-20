@@ -97,6 +97,7 @@ public final class DevHarness {
                     case "cloud" -> com.sputnikboi.slopmatica.online.Online.cloudScreen(null);
                     case "slopkeys" -> new SlopmaticaKeyBindsScreen(null);
                     case "color" -> new com.sputnikboi.slopmatica.gui.ColorPickerScreen(null, com.sputnikboi.slopmatica.verify.BlockStatus.MISSING);
+                    case "action-keys" -> new com.sputnikboi.slopmatica.gui.ActionKeysScreen(null);
                     case "controls-keys" -> new com.sputnikboi.slopmatica.gui.ControlsKeysScreen(null);
                     case "welcome" -> new com.sputnikboi.slopmatica.gui.WelcomeScreen(null);
                     case "import" -> new com.sputnikboi.slopmatica.gui.LitematicaImportScreen(null);
