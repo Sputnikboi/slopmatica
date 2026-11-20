@@ -36,10 +36,12 @@ public final class MaterialPanels {
     private static final int MAX_ROWS = 8;
     private static final int FOOTER = 11;
     private static final int DEFAULT_TOP = 70;
-    private static final long REFRESH_MS = 2000;
+    /** How often the list is remade from the live counts (for what you carry, which isn't tracked). */
+    private static final long REFRESH_MS = 250;
     private static final int BUTTON = 10;
 
-    private record Cached(MaterialList list, long time) {
+    /** The live counts (counted once, then kept up to date block by block) and the list last made from them. */
+    private record Cached(MaterialList.Live live, MaterialList list, long time) {
     }
 
     private final Map<Placement, Cached> cache = new WeakHashMap<>();
@@ -48,6 +50,18 @@ public final class MaterialPanels {
     private int dragDX, dragDY;
 
     private MaterialPanels() {
+        com.sputnikboi.slopmatica.verify.BlockChanges.listen(new com.sputnikboi.slopmatica.verify.BlockChanges.Listener() {
+            @Override
+            public void blockChanged(net.minecraft.core.BlockPos pos, net.minecraft.world.level.block.state.BlockState old,
+                                     net.minecraft.world.level.block.state.BlockState now) {
+                cache.values().forEach(c -> c.live().blockChanged(pos, old, now));
+            }
+
+            @Override
+            public void chunkChanged(int chunkX, int chunkZ) {
+                cache.values().forEach(c -> c.live().chunkChanged(chunkX, chunkZ));
+            }
+        });
     }
 
     /** In the placement view: the open panels. Elsewhere: the pinned ones. */
@@ -71,8 +85,12 @@ public final class MaterialPanels {
         }
         Cached c = cache.get(p);
         long now = Util.getMillis();
-        if (c == null || now - c.time() > REFRESH_MS) {
-            c = new Cached(MaterialList.count(p, mc.level, mc.player.getInventory()), now);
+        if (c == null || !c.live().valid() || c.live().transform != p.transform()) {
+            MaterialList.Live live = MaterialList.Live.count(p, mc.level);
+            c = new Cached(live, live.list(mc.player.getInventory()), now);
+            cache.put(p, c);
+        } else if (now - c.time() > REFRESH_MS) {
+            c = new Cached(c.live(), c.live().list(mc.player.getInventory()), now);
             cache.put(p, c);
         }
         return c.list();

@@ -194,8 +194,8 @@ public final class InventoryPlanner {
         }
 
         // What is missing, in the order it will be needed: layer by layer in the chosen direction.
-        Map<Item, Long> missing = new LinkedHashMap<>();
-        Map<String, Integer> toBreak = new LinkedHashMap<>();
+        // A quiet re-plan (what you carry changed) reuses the last count of the world when nothing
+        // it depends on changed: block changes since are already in it (see Scan.blockChanged).
         BoundingBox all = null;
         for (Placement p : placements) {
             BoundingBox b = p.transform().worldBounds();
@@ -204,55 +204,14 @@ public final class InventoryPlanner {
         if (area != null) {
             all = intersect(all, area);
         }
-        boolean truncated = false;
-        if (all != null) {
-            int y0 = Math.max(all.minY(), minY), y1 = Math.min(all.maxY(), maxY);
-            long looked = 0;
-            BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-            for (int i = 0; i <= y1 - y0 && !truncated; i++) {
-                int y = topDown ? y1 - i : y0 + i;
-                for (Placement p : placements) {
-                    BoundingBox b = intersect(p.transform().worldBounds(), all);
-                    if (b == null || y < b.minY() || y > b.maxY()) {
-                        continue;
-                    }
-                    Placement.Transform t = p.transform();
-                    for (int x = b.minX(); x <= b.maxX(); x++) {
-                        for (int z = b.minZ(); z <= b.maxZ(); z++) {
-                            if (++looked > MAX_POSITIONS) {
-                                truncated = true;
-                                break;
-                            }
-                            BlockState want = t.stateAt(x, y, z);
-                            if (want == null || want.isAir()) {
-                                continue;
-                            }
-                            boolean loaded = level.hasChunk(SectionPos.blockToSectionCoord(x), SectionPos.blockToSectionCoord(z));
-                            Item bucket = MaterialList.bucketFor(want);
-                            if (bucket != null && !ignored.contains(bucket) && !p.ignoredMaterials().contains(bucket)
-                                && (!loaded || MaterialList.fluidMissing(want, level.getBlockState(pos.set(x, y, z))))) {
-                                missing.merge(bucket, 1L, Long::sum);
-                            }
-                            Item item = want.getBlock().asItem();
-                            int n = MaterialList.itemCount(want);
-                            if (item == Items.AIR || n == 0 || ignored.contains(item) || p.ignoredMaterials().contains(item)) {
-                                continue;
-                            }
-                            BlockStatus status = loaded ? BlockMatcher.compare(want, level.getBlockState(pos.set(x, y, z))) : BlockStatus.MISSING;
-                            if (status == BlockStatus.MISSING || status == BlockStatus.WRONG) {
-                                missing.merge(item, (long) n, Long::sum);
-                            }
-                            if (status == BlockStatus.WRONG) {
-                                String tool = toolFor(level.getBlockState(pos));
-                                if (tool != null) {
-                                    toBreak.merge(tool, 1, Integer::sum);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        Scan fresh = new Scan(placements, all, minY, maxY, topDown, ignored);
+        if (!quiet || scan == null || !scan.sameAs(fresh)) {
+            fresh.count(level);
+            scan = fresh;
         }
+        Map<Item, Long> missing = scan.missing;
+        boolean truncated = scan.truncated;
+        Map<String, Integer> toBreak = new LinkedHashMap<>(scan.toBreak);
 
         // Variants: bring the plain block and the tool or item that turns it into the wanted one.
         Map<Item, Long> need = new LinkedHashMap<>();
@@ -364,6 +323,153 @@ public final class InventoryPlanner {
         "shovel", Items.IRON_SHOVEL, "hoe", Items.IRON_HOE, "shears", Items.SHEARS);
 
     /** The tool that breaks a block fastest, or null when a hand will do just as well. */
+    /** The last count of what is missing from the world, kept up to date block by block until something it depends on changes. */
+    private @Nullable Scan scan;
+
+    {
+        com.sputnikboi.slopmatica.verify.BlockChanges.listen(new com.sputnikboi.slopmatica.verify.BlockChanges.Listener() {
+            @Override
+            public void blockChanged(BlockPos pos, BlockState old, BlockState now) {
+                if (scan != null) {
+                    scan.blockChanged(Minecraft.getInstance().level, pos, old, now);
+                }
+            }
+
+            @Override
+            public void chunkChanged(int chunkX, int chunkZ) {
+                if (scan != null && scan.covers(chunkX, chunkZ)) {
+                    scan = null; // What was unknown there is known now, or the other way round: count again.
+                }
+            }
+        });
+    }
+
+    /**
+     * What the shown builds are missing (in the order it will be needed) and what has to be broken
+     * first, over an area and height range, with the materials left out at the time. Counting a big
+     * build takes a while, so a scan is kept and adjusted as blocks change.
+     */
+    private static final class Scan {
+        final List<Placement> placements;
+        final List<Placement.Transform> transforms;
+        final List<Set<Item>> placementIgnored;
+        final @Nullable BoundingBox all;
+        final int minY, maxY;
+        final boolean topDown;
+        final Set<Item> ignored;
+        final Map<Item, Long> missing = new LinkedHashMap<>();
+        final Map<String, Integer> toBreak = new LinkedHashMap<>();
+        boolean truncated;
+
+        Scan(List<Placement> placements, @Nullable BoundingBox all, int minY, int maxY, boolean topDown, Set<Item> ignored) {
+            this.placements = placements;
+            this.transforms = placements.stream().map(Placement::transform).toList();
+            this.placementIgnored = placements.stream().map(p -> Set.copyOf(p.ignoredMaterials())).toList();
+            this.all = all;
+            this.minY = minY;
+            this.maxY = maxY;
+            this.topDown = topDown;
+            this.ignored = Set.copyOf(ignored);
+        }
+
+        /** Counted over the same builds (unmoved), area, heights and left-out materials. */
+        boolean sameAs(Scan o) {
+            if (truncated || placements.size() != o.placements.size() || minY != o.minY || maxY != o.maxY || topDown != o.topDown
+                || !java.util.Objects.equals(all, o.all) || !ignored.equals(o.ignored) || !placementIgnored.equals(o.placementIgnored)) {
+                return false;
+            }
+            for (int i = 0; i < placements.size(); i++) {
+                if (placements.get(i) != o.placements.get(i) || transforms.get(i) != o.transforms.get(i)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        boolean covers(int chunkX, int chunkZ) {
+            return all != null && chunkX >= SectionPos.blockToSectionCoord(all.minX()) && chunkX <= SectionPos.blockToSectionCoord(all.maxX())
+                && chunkZ >= SectionPos.blockToSectionCoord(all.minZ()) && chunkZ <= SectionPos.blockToSectionCoord(all.maxZ());
+        }
+
+        void count(ClientLevel level) {
+            if (all == null) {
+                return;
+            }
+            int y0 = Math.max(all.minY(), minY), y1 = Math.min(all.maxY(), maxY);
+            long looked = 0;
+            BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+            for (int i = 0; i <= y1 - y0 && !truncated; i++) {
+                int y = topDown ? y1 - i : y0 + i;
+                for (int pi = 0; pi < placements.size(); pi++) {
+                    BoundingBox b = intersect(transforms.get(pi).worldBounds(), all);
+                    if (b == null || y < b.minY() || y > b.maxY()) {
+                        continue;
+                    }
+                    for (int x = b.minX(); x <= b.maxX(); x++) {
+                        for (int z = b.minZ(); z <= b.maxZ(); z++) {
+                            if (++looked > MAX_POSITIONS) {
+                                truncated = true;
+                                break;
+                            }
+                            boolean loaded = level.hasChunk(SectionPos.blockToSectionCoord(x), SectionPos.blockToSectionCoord(z));
+                            add(pi, x, y, z, loaded ? level.getBlockState(pos.set(x, y, z)) : null, 1);
+                        }
+                    }
+                }
+            }
+        }
+
+        /** Adds (sign 1) or takes back (-1) what the block at x y z counts for; {@code have} null: not loaded, so missing. */
+        private void add(int pi, int x, int y, int z, @Nullable BlockState have, int sign) {
+            BlockState want = transforms.get(pi).stateAt(x, y, z);
+            if (want == null || want.isAir()) {
+                return;
+            }
+            Set<Item> leftOut = placementIgnored.get(pi);
+            Item bucket = MaterialList.bucketFor(want);
+            if (bucket != null && !ignored.contains(bucket) && !leftOut.contains(bucket) && (have == null || MaterialList.fluidMissing(want, have))) {
+                bump(missing, bucket, sign);
+            }
+            Item item = want.getBlock().asItem();
+            int n = MaterialList.itemCount(want);
+            if (item == Items.AIR || n == 0 || ignored.contains(item) || leftOut.contains(item)) {
+                return;
+            }
+            BlockStatus status = have != null ? BlockMatcher.compare(want, have) : BlockStatus.MISSING;
+            if (status == BlockStatus.MISSING || status == BlockStatus.WRONG) {
+                bump(missing, item, (long) n * sign);
+            }
+            if (status == BlockStatus.WRONG) {
+                String tool = toolFor(have);
+                if (tool != null) {
+                    toBreak.merge(tool, sign, Integer::sum);
+                    toBreak.values().removeIf(v -> v <= 0);
+                }
+            }
+        }
+
+        private static void bump(Map<Item, Long> map, Item item, long by) {
+            long n = map.getOrDefault(item, 0L) + by;
+            if (n > 0) {
+                map.put(item, n);
+            } else {
+                map.remove(item);
+            }
+        }
+
+        void blockChanged(@Nullable ClientLevel level, BlockPos pos, BlockState old, BlockState now) {
+            if (all == null || truncated || !all.isInside(pos) || pos.getY() < minY || pos.getY() > maxY) {
+                return;
+            }
+            for (int pi = 0; pi < placements.size(); pi++) {
+                if (transforms.get(pi).worldBounds().isInside(pos)) {
+                    add(pi, pos.getX(), pos.getY(), pos.getZ(), old, -1);
+                    add(pi, pos.getX(), pos.getY(), pos.getZ(), now, 1);
+                }
+            }
+        }
+    }
+
     private static @Nullable String toolFor(net.minecraft.world.level.block.state.BlockState state) {
         if (state.is(net.minecraft.tags.BlockTags.MINEABLE_WITH_PICKAXE)) {
             return "pickaxe";

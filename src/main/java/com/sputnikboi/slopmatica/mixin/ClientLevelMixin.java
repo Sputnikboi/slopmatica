@@ -16,6 +16,7 @@ abstract class ClientLevelMixin {
     private void slopmatica$onBlockUpdated(BlockPos pos, BlockState old, BlockState current, int flags, CallbackInfo ci) {
         if (old != current) {
             HologramRenderer.INSTANCE.onBlockChanged(pos);
+            com.sputnikboi.slopmatica.verify.BlockChanges.blockChanged(pos, old, current);
         }
     }
 }

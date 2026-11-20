@@ -42,8 +42,14 @@ public final class SlopmaticaClient implements ClientModInitializer {
 
         LevelRenderEvents.END_MAIN.register(renderer::render);
         LevelRenderEvents.COLLECT_SUBMITS.register(renderer::collectSubmits);
-        ClientChunkEvents.CHUNK_LOAD.register((level, chunk) -> renderer.onChunkLoaded(chunk.getPos().x(), chunk.getPos().z()));
-        ClientChunkEvents.CHUNK_UNLOAD.register((level, chunk) -> renderer.onChunkUnloaded(chunk.getPos().x(), chunk.getPos().z()));
+        ClientChunkEvents.CHUNK_LOAD.register((level, chunk) -> {
+            renderer.onChunkLoaded(chunk.getPos().x(), chunk.getPos().z());
+            com.sputnikboi.slopmatica.verify.BlockChanges.chunkChanged(chunk.getPos().x(), chunk.getPos().z());
+        });
+        ClientChunkEvents.CHUNK_UNLOAD.register((level, chunk) -> {
+            renderer.onChunkUnloaded(chunk.getPos().x(), chunk.getPos().z());
+            com.sputnikboi.slopmatica.verify.BlockChanges.chunkChanged(chunk.getPos().x(), chunk.getPos().z());
+        });
         ClientLevelEvents.AFTER_CLIENT_LEVEL_CHANGE.register((mc, level) -> renderer.reset());
         ClientCommandRegistrationCallback.EVENT.register(SlopmaticaCommands::register);
         SlopmaticaKeys.register();

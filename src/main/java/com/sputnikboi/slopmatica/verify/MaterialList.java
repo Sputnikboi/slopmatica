@@ -55,70 +55,144 @@ public final class MaterialList {
 
     /** Client thread: reads the live world. */
     public static MaterialList count(Placement placement, ClientLevel level, Inventory inventory) {
-        Placement.Transform t = placement.transform();
-        BoundingBox box = t.worldBounds();
-        Map<Item, int[]> counts = new LinkedHashMap<>();
-        Map<Item, ItemStack> icons = new java.util.HashMap<>();
-        int unloaded = 0;
-        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        for (int x = box.minX(); x <= box.maxX(); x++) {
-            for (int z = box.minZ(); z <= box.maxZ(); z++) {
-                boolean loaded = level.hasChunk(SectionPos.blockToSectionCoord(x), SectionPos.blockToSectionCoord(z));
-                for (int y = box.minY(); y <= box.maxY(); y++) {
-                    BlockState want = t.stateAt(x, y, z);
-                    if (want == null || want.isAir()) {
-                        continue;
-                    }
-                    Item bucket = bucketFor(want);
-                    if (bucket != null) {
-                        int[] c = counts.computeIfAbsent(bucket, k -> new int[2]);
-                        c[0]++;
-                        if (!loaded || fluidMissing(want, level.getBlockState(pos.set(x, y, z)))) {
-                            c[1]++;
+        return Live.count(placement, level).list(inventory);
+    }
+
+    /**
+     * A placement's counts from the world, kept up to date block by block ({@link #blockChanged})
+     * rather than recounted: counting a big build takes a while. Render thread only.
+     */
+    public static final class Live {
+        /** The transform counted; the placement moved if it has another one now. */
+        public final Placement.Transform transform;
+        /** Item -> {total, missing}. */
+        private final Map<Item, int[]> counts = new LinkedHashMap<>();
+        private final Map<Item, ItemStack> icons = new java.util.HashMap<>();
+        private int unloaded;
+        private boolean valid = true;
+        private int version;
+
+        private Live(Placement.Transform transform) {
+            this.transform = transform;
+        }
+
+        public static Live count(Placement placement, ClientLevel level) {
+            Placement.Transform t = placement.transform();
+            Live live = new Live(t);
+            BoundingBox box = t.worldBounds();
+            BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+            for (int x = box.minX(); x <= box.maxX(); x++) {
+                for (int z = box.minZ(); z <= box.maxZ(); z++) {
+                    boolean loaded = level.hasChunk(SectionPos.blockToSectionCoord(x), SectionPos.blockToSectionCoord(z));
+                    for (int y = box.minY(); y <= box.maxY(); y++) {
+                        BlockState want = t.stateAt(x, y, z);
+                        if (want == null || want.isAir()) {
+                            continue;
                         }
-                    }
-                    Item item = want.getBlock().asItem();
-                    int n = itemCount(want);
-                    if (item == Items.AIR || n == 0) {
-                        continue;
-                    }
-                    if (want.getBlock() instanceof net.minecraft.world.level.block.AbstractSkullBlock && !icons.containsKey(item)) {
-                        // Heads look like their owner: take the skin from the first one's data.
-                        icons.put(item, iconWithData(item, want, t.tileEntityAt(x, y, z), pos.set(x, y, z), level));
-                    }
-                    int[] c = counts.computeIfAbsent(item, k -> new int[2]);
-                    c[0] += n;
-                    if (!loaded) {
-                        c[1] += n;
-                        unloaded++;
-                        continue;
-                    }
-                    BlockStatus status = BlockMatcher.compare(want, level.getBlockState(pos.set(x, y, z)));
-                    if (status == BlockStatus.MISSING || status == BlockStatus.WRONG) {
-                        c[1] += n;
+                        Item bucket = bucketFor(want);
+                        if (bucket != null) {
+                            int[] c = live.counts.computeIfAbsent(bucket, k -> new int[2]);
+                            c[0]++;
+                            if (!loaded || fluidMissing(want, level.getBlockState(pos.set(x, y, z)))) {
+                                c[1]++;
+                            }
+                        }
+                        Item item = want.getBlock().asItem();
+                        int n = itemCount(want);
+                        if (item == Items.AIR || n == 0) {
+                            continue;
+                        }
+                        if (want.getBlock() instanceof net.minecraft.world.level.block.AbstractSkullBlock && !live.icons.containsKey(item)) {
+                            // Heads look like their owner: take the skin from the first one's data.
+                            live.icons.put(item, iconWithData(item, want, t.tileEntityAt(x, y, z), pos.set(x, y, z), level));
+                        }
+                        int[] c = live.counts.computeIfAbsent(item, k -> new int[2]);
+                        c[0] += n;
+                        if (!loaded) {
+                            c[1] += n;
+                            live.unloaded++;
+                            continue;
+                        }
+                        if (missing(BlockMatcher.compare(want, level.getBlockState(pos.set(x, y, z))))) {
+                            c[1] += n;
+                        }
                     }
                 }
             }
+            return live;
         }
 
-        Map<Item, Integer> carried = new LinkedHashMap<>();
-        for (int i = 0; i < inventory.getContainerSize(); i++) {
-            ItemStack stack = inventory.getItem(i);
-            if (!stack.isEmpty()) {
-                carried.merge(stack.getItem(), stack.getCount(), Integer::sum);
+        private static boolean missing(BlockStatus status) {
+            return status == BlockStatus.MISSING || status == BlockStatus.WRONG;
+        }
+
+        /** False once a chunk in it loaded or unloaded: count again. */
+        public boolean valid() {
+            return valid;
+        }
+
+        /** Goes up with every change to the counts. */
+        public int version() {
+            return version;
+        }
+
+        /** A block in the world changed: adjust what it counts as missing. */
+        public void blockChanged(BlockPos pos, BlockState old, BlockState now) {
+            if (!valid || !transform.worldBounds().isInside(pos)) {
+                return;
+            }
+            BlockState want = transform.stateAt(pos.getX(), pos.getY(), pos.getZ());
+            if (want == null || want.isAir()) {
+                return;
+            }
+            Item bucket = bucketFor(want);
+            if (bucket != null) {
+                int d = (fluidMissing(want, now) ? 1 : 0) - (fluidMissing(want, old) ? 1 : 0);
+                if (d != 0) {
+                    counts.computeIfAbsent(bucket, k -> new int[2])[1] += d;
+                    version++;
+                }
+            }
+            Item item = want.getBlock().asItem();
+            int n = itemCount(want);
+            if (item == Items.AIR || n == 0) {
+                return;
+            }
+            int d = (missing(BlockMatcher.compare(want, now)) ? n : 0) - (missing(BlockMatcher.compare(want, old)) ? n : 0);
+            if (d != 0) {
+                counts.computeIfAbsent(item, k -> new int[2])[1] += d;
+                version++;
             }
         }
 
-        List<Entry> entries = new ArrayList<>();
-        int total = 0, missing = 0;
-        for (Map.Entry<Item, int[]> e : counts.entrySet()) {
-            int[] c = e.getValue();
-            entries.add(new Entry(e.getKey(), c[0], c[1], carried.getOrDefault(e.getKey(), 0), icons.getOrDefault(e.getKey(), new ItemStack(e.getKey()))));
-            total += c[0];
-            missing += c[1];
+        public void chunkChanged(int chunkX, int chunkZ) {
+            BoundingBox b = transform.worldBounds();
+            if (chunkX >= SectionPos.blockToSectionCoord(b.minX()) && chunkX <= SectionPos.blockToSectionCoord(b.maxX())
+                && chunkZ >= SectionPos.blockToSectionCoord(b.minZ()) && chunkZ <= SectionPos.blockToSectionCoord(b.maxZ())) {
+                valid = false;
+            }
         }
-        entries.sort(Comparator.comparingInt(Entry::missing).reversed().thenComparing(Comparator.comparingInt(Entry::total).reversed()));
-        return new MaterialList(List.copyOf(entries), total, missing, unloaded);
+
+        /** The list as it stands, with what the player carries. */
+        public MaterialList list(Inventory inventory) {
+            Map<Item, Integer> carried = new LinkedHashMap<>();
+            for (int i = 0; i < inventory.getContainerSize(); i++) {
+                ItemStack stack = inventory.getItem(i);
+                if (!stack.isEmpty()) {
+                    carried.merge(stack.getItem(), stack.getCount(), Integer::sum);
+                }
+            }
+            List<Entry> entries = new ArrayList<>();
+            int total = 0, missing = 0;
+            for (Map.Entry<Item, int[]> e : counts.entrySet()) {
+                int[] c = e.getValue();
+                entries.add(new Entry(e.getKey(), c[0], c[1], carried.getOrDefault(e.getKey(), 0), icons.getOrDefault(e.getKey(), new ItemStack(e.getKey()))));
+                total += c[0];
+                missing += c[1];
+            }
+            entries.sort(Comparator.comparingInt(Entry::missing).reversed().thenComparing(Comparator.comparingInt(Entry::total).reversed()));
+            return new MaterialList(List.copyOf(entries), total, missing, unloaded);
+        }
     }
 
     /** The item with the components its block entity data gives it (a head's skin, a banner's pattern). */
