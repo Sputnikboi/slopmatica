@@ -65,7 +65,9 @@ final class SectionMeshBuilder {
         BlockColors blockColors,
         float lineWidth,
         /** Indexed by BlockStatus ordinal: whether that status gets an outline at all. */
-        boolean[] outlined
+        boolean[] outlined,
+        /** Block items the player carries: missing blocks of these go in the pulsing outlines. */
+        java.util.Set<net.minecraft.world.item.Item> carried
     ) {
     }
 
@@ -79,21 +81,22 @@ final class SectionMeshBuilder {
     /**
      * Owns native memory until closed; must be uploaded or closed on the render thread.
      * {@code lines} holds missing/match outlines, which fade with distance; {@code alerts} holds
-     * variant/wrong outlines, which stay visible from anywhere.
+     * variant/wrong outlines, which stay visible from anywhere; {@code carried} holds the missing
+     * outlines of blocks the player carries, which pulse.
      */
     record Output(
         long sectionKey, int version,
-        @Nullable MeshData ghosts, @Nullable MeshData lines, @Nullable MeshData alerts,
+        @Nullable MeshData ghosts, @Nullable MeshData lines, @Nullable MeshData alerts, @Nullable MeshData carried,
         List<SpecialGhost> specials,
         ByteBufferBuilder[] buffers
     ) implements AutoCloseable {
         static Output empty(long sectionKey, int version) {
-            return new Output(sectionKey, version, null, null, null, List.of(), new ByteBufferBuilder[0]);
+            return new Output(sectionKey, version, null, null, null, null, List.of(), new ByteBufferBuilder[0]);
         }
 
         @Override
         public void close() {
-            for (MeshData mesh : new MeshData[] {ghosts, lines, alerts}) {
+            for (MeshData mesh : new MeshData[] {ghosts, lines, alerts, carried}) {
                 if (mesh != null) {
                     mesh.close();
                 }
@@ -152,9 +155,11 @@ final class SectionMeshBuilder {
         ByteBufferBuilder ghostBuffer = new ByteBufferBuilder(GHOST_BUFFER_START);
         ByteBufferBuilder lineBuffer = new ByteBufferBuilder(LINE_BUFFER_START);
         ByteBufferBuilder alertBuffer = new ByteBufferBuilder(LINE_BUFFER_START);
+        ByteBufferBuilder carriedBuffer = new ByteBufferBuilder(LINE_BUFFER_START);
         BufferBuilder ghosts = new BufferBuilder(ghostBuffer, PrimitiveTopology.QUADS, DefaultVertexFormat.BLOCK);
         BufferBuilder lines = new BufferBuilder(lineBuffer, PrimitiveTopology.LINES, DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH);
         BufferBuilder alerts = new BufferBuilder(alertBuffer, PrimitiveTopology.LINES, DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH);
+        BufferBuilder carried = new BufferBuilder(carriedBuffer, PrimitiveTopology.LINES, DefaultVertexFormat.POSITION_COLOR_NORMAL_LINE_WIDTH);
         GhostBlockView view = new GhostBlockView(in.level(), world, expected, false);
         GhostBlockView fluidView = new GhostBlockView(in.level(), world, shown, true);
         // No ambient occlusion: ghosts are lit flat, which keeps the vanilla look without dark seams.
@@ -187,13 +192,15 @@ final class SectionMeshBuilder {
                         }
                     }
                     if (in.outlined()[st.ordinal()]) {
-                        outline(st == BlockStatus.VARIANT || st == BlockStatus.WRONG ? alerts : lines, x, y, z, i, st, pos);
+                        BufferBuilder into = st == BlockStatus.VARIANT || st == BlockStatus.WRONG ? alerts
+                            : st == BlockStatus.MISSING && in.carried().contains(want.getBlock().asItem()) ? carried : lines;
+                        outline(into, x, y, z, i, st, pos);
                     }
                 }
             }
         }
-        return new Output(in.sectionKey(), in.version(), ghosts.build(), lines.build(), alerts.build(), List.copyOf(specials),
-            new ByteBufferBuilder[] {ghostBuffer, lineBuffer, alertBuffer});
+        return new Output(in.sectionKey(), in.version(), ghosts.build(), lines.build(), alerts.build(), carried.build(), List.copyOf(specials),
+            new ByteBufferBuilder[] {ghostBuffer, lineBuffer, alertBuffer, carriedBuffer});
     }
 
     private @Nullable BlockState expectedAt(int wx, int wy, int wz) {

@@ -10,14 +10,16 @@ final class SectionMesh implements AutoCloseable {
     final @Nullable Part ghosts;
     final @Nullable Part lines;
     final @Nullable Part alerts;
+    final @Nullable Part carried;
 
     record Part(GpuBuffer vertices, int indexCount) {
     }
 
-    private SectionMesh(@Nullable Part ghosts, @Nullable Part lines, @Nullable Part alerts) {
+    private SectionMesh(@Nullable Part ghosts, @Nullable Part lines, @Nullable Part alerts, @Nullable Part carried) {
         this.ghosts = ghosts;
         this.lines = lines;
         this.alerts = alerts;
+        this.carried = carried;
     }
 
     /** Returns null when the section has nothing to draw. Render thread only. */
@@ -25,10 +27,11 @@ final class SectionMesh implements AutoCloseable {
         Part ghosts = upload("ghosts", output.ghosts());
         Part lines = upload("outlines", output.lines());
         Part alerts = upload("alerts", output.alerts());
-        if (ghosts == null && lines == null && alerts == null) {
+        Part carried = upload("carried outlines", output.carried());
+        if (ghosts == null && lines == null && alerts == null && carried == null) {
             return null;
         }
-        return new SectionMesh(ghosts, lines, alerts);
+        return new SectionMesh(ghosts, lines, alerts, carried);
     }
 
     private static @Nullable Part upload(String what, @Nullable MeshData mesh) {
@@ -41,7 +44,7 @@ final class SectionMesh implements AutoCloseable {
 
     @Override
     public void close() {
-        for (Part part : new Part[] {ghosts, lines, alerts}) {
+        for (Part part : new Part[] {ghosts, lines, alerts, carried}) {
             if (part != null) {
                 part.vertices.close();
             }

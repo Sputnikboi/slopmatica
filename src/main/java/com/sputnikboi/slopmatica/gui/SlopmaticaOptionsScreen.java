@@ -62,6 +62,7 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
             slider("slopmatica.options.outline_width", 1, 400, Math.round(c.outlineWidth * 100), "%", v -> c.outlineWidth = v / 100.0F, true));
         list.addSmall(colorButton(BlockStatus.MISSING), colorButton(BlockStatus.MATCH));
         list.addSmall(colorButton(BlockStatus.VARIANT), colorButton(BlockStatus.WRONG));
+        list.addSmall(toggle("slopmatica.options.pulse_carried", c.pulseCarried, v -> c.pulseCarried = v, false), null);
         if (advanced) {
             list.addSmall(
                 toggle("slopmatica.options.outline_missing", c.outlineMissing, v -> c.outlineMissing = v, true),

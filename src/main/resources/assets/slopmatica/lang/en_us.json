@@ -67,6 +67,8 @@
   "slopmatica.options.outline_variant.tooltip": "Outline blocks of the right kind in the wrong state: facing, half, waxed vs unwaxed copper, oxidation and so on.",
   "slopmatica.options.outline_wrong": "Wrong Block",
   "slopmatica.options.outline_wrong.tooltip": "Outline blocks that are a different block entirely.",
+  "slopmatica.options.pulse_carried": "Pulse What You Carry",
+  "slopmatica.options.pulse_carried.tooltip": "Outlines of missing blocks you have in your inventory pulse gently, so you can see where what you're carrying goes.",
   "slopmatica.options.outline_extra": "Should Be Air",
   "slopmatica.options.outline_extra.tooltip": "Outline blocks where the schematic has air (in the Wrong Block colour), so you can see what to clear away. Water and lava aren't outlined.",
   "slopmatica.options.outline_width": "Outline Thickness",

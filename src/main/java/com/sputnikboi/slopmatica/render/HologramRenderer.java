@@ -128,6 +128,23 @@ public final class HologramRenderer {
     }
 
     /** An option that is baked into the meshes (outline width or which statuses get outlines) changed. */
+    /** Block items the player carries (inventory and offhand), when pulsing outlines are on. */
+    private java.util.Set<net.minecraft.world.item.Item> carried = java.util.Set.of();
+
+    private static java.util.Set<net.minecraft.world.item.Item> carriedBlocks(Minecraft mc) {
+        if (mc.player == null || !SlopmaticaConfig.get().pulseCarried) {
+            return java.util.Set.of();
+        }
+        java.util.Set<net.minecraft.world.item.Item> out = new java.util.HashSet<>();
+        var inventory = mc.player.getInventory();
+        for (int slot = 0; slot <= net.minecraft.world.entity.player.Inventory.SLOT_OFFHAND; slot++) {
+            if (inventory.getItem(slot).getItem() instanceof net.minecraft.world.item.BlockItem block) {
+                out.add(block);
+            }
+        }
+        return java.util.Set.copyOf(out);
+    }
+
     public void rebuildAll() {
         sections.values().forEach(Section::markDirty);
     }
@@ -266,6 +283,12 @@ public final class HologramRenderer {
             layoutDirty = false;
             refreshLayout(level);
         }
+        java.util.Set<net.minecraft.world.item.Item> nowCarried = carriedBlocks(mc);
+        if (!nowCarried.equals(carried)) {
+            // A kind of block came into or left the inventory: its outlines move to or from the pulsing set.
+            carried = nowCarried;
+            sections.values().forEach(Section::markDirty);
+        }
 
         Vec3 camera = context.levelState().cameraRenderState.pos;
         int maxDistance = mc.options.getEffectiveRenderDistance() + 1;
@@ -373,7 +396,7 @@ public final class HologramRenderer {
             SectionMeshBuilder.Input input = new SectionMeshBuilder.Input(
                 section.key, section.version, pos, transforms, WorldSnapshot.capture(level, pos), level,
                 mc.getModelManager().getBlockStateModelSet(), mc.getModelManager().getFluidStateModelSet(), mc.getBlockColors(),
-                mc.getWindow().getAppropriateLineWidth() * BASE_LINE_WIDTH * config.outlineWidth, outlined
+                mc.getWindow().getAppropriateLineWidth() * BASE_LINE_WIDTH * config.outlineWidth, outlined, carried
             );
             section.building = true;
             inFlight.incrementAndGet();
@@ -423,7 +446,7 @@ public final class HologramRenderer {
             }
             visible.add(section);
             maxQuadIndices = Math.max(maxQuadIndices, indexCount(mesh.ghosts));
-            maxLineIndices = Math.max(maxLineIndices, Math.max(indexCount(mesh.lines), indexCount(mesh.alerts)));
+            maxLineIndices = Math.max(maxLineIndices, Math.max(indexCount(mesh.carried), Math.max(indexCount(mesh.lines), indexCount(mesh.alerts))));
         }
         if (visible.isEmpty()) {
             return;
@@ -442,7 +465,10 @@ public final class HologramRenderer {
         // findable from any distance.
         Matrix4f fadeRange = new Matrix4f().m30(config.fadeOutlines ? config.fadeStartBlocks() : 0).m31(config.fadeOutlines ? config.fadeEndBlocks() : 0);
         Matrix4f alertStyle = new Matrix4f().m32(1);
-        DynamicGpuData.Transform[] transforms = new DynamicGpuData.Transform[visible.size() * 3];
+        // Carried blocks' outlines pulse, about once a second, a little brighter and dimmer.
+        float pulse = 1.0F + 0.4F * (float) Math.sin(net.minecraft.util.Util.getMillis() / 1000.0 * Math.PI * 2);
+        Vector4f carriedColor = new Vector4f(pulse, pulse, pulse, 1.0F);
+        DynamicGpuData.Transform[] transforms = new DynamicGpuData.Transform[visible.size() * 4];
         for (int i = 0; i < visible.size(); i++) {
             long key = visible.get(i).key;
             float ox = (float) (SectionPos.sectionToBlockCoord(SectionPos.x(key)) - camera.x);
@@ -451,9 +477,10 @@ public final class HologramRenderer {
             // The block shader adds ModelOffset itself (and uses it for fog); the line shaders
             // ignore it, so outlines carry their offset in the model-view matrix instead.
             Matrix4f lineView = new Matrix4f(modelView).translate(ox, oy, oz);
-            transforms[i * 3] = new DynamicGpuData.Transform(modelView, ghostColor, new Vector3f(ox, oy, oz), IDENTITY);
-            transforms[i * 3 + 1] = new DynamicGpuData.Transform(lineView, WHITE, NO_OFFSET, fadeRange);
-            transforms[i * 3 + 2] = new DynamicGpuData.Transform(lineView, WHITE, NO_OFFSET, alertStyle);
+            transforms[i * 4] = new DynamicGpuData.Transform(modelView, ghostColor, new Vector3f(ox, oy, oz), IDENTITY);
+            transforms[i * 4 + 1] = new DynamicGpuData.Transform(lineView, WHITE, NO_OFFSET, fadeRange);
+            transforms[i * 4 + 2] = new DynamicGpuData.Transform(lineView, WHITE, NO_OFFSET, alertStyle);
+            transforms[i * 4 + 3] = new DynamicGpuData.Transform(lineView, carriedColor, NO_OFFSET, fadeRange);
         }
         GpuBufferSlice[] uniforms = RenderSystem.getDynamicUniforms().writeTransforms(transforms);
 
@@ -472,12 +499,15 @@ public final class HologramRenderer {
                 pass.setIndexBuffer(lineIndexBuffer, lineIndices.type());
                 pass.setPipeline(RenderSystem.getCompiledPipeline(SlopmaticaPipelines.FADING_LINES));
                 for (int i = 0; i < visible.size(); i++) {
-                    drawPart(pass, visible.get(i).mesh.lines, uniforms[i * 3 + 1]);
+                    drawPart(pass, visible.get(i).mesh.lines, uniforms[i * 4 + 1]);
+                }
+                for (int i = 0; i < visible.size(); i++) {
+                    drawPart(pass, visible.get(i).mesh.carried, uniforms[i * 4 + 3]);
                 }
                 // Wrong and variant blocks stay visible from any distance: those are the ones to find.
                 // Drawn last so they win the edges they share with a neighbour's blue or green box.
                 for (int i = 0; i < visible.size(); i++) {
-                    drawPart(pass, visible.get(i).mesh.alerts, uniforms[i * 3 + 2]);
+                    drawPart(pass, visible.get(i).mesh.alerts, uniforms[i * 4 + 2]);
                 }
             }
 
@@ -491,7 +521,7 @@ public final class HologramRenderer {
                 pass.setUniform("Sampler2", mc.gameRenderer.lightmap(), RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
                 pass.setIndexBuffer(quadIndexBuffer, quadIndices.type());
                 for (int i = 0; i < visible.size(); i++) {
-                    drawPart(pass, visible.get(i).mesh.ghosts, uniforms[i * 3]);
+                    drawPart(pass, visible.get(i).mesh.ghosts, uniforms[i * 4]);
                 }
             }
         }

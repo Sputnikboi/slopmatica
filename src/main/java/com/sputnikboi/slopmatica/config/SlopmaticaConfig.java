@@ -92,6 +92,8 @@ public final class SlopmaticaConfig {
     public boolean outlineWrong = true;
     /** Outline (in the Wrong Block colour) real blocks where the schematic has air. */
     public boolean outlineExtra = true;
+    /** Missing blocks you carry the item for have outlines that pulse. */
+    public boolean pulseCarried = true;
     /** Multiplier on {@code HologramRenderer.BASE_LINE_WIDTH}, half of vanilla's block outline. */
     public float outlineWidth = 1.0F;
     public boolean fadeOutlines = true;
