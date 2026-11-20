@@ -90,6 +90,8 @@ public final class SlopmaticaConfig {
     public boolean outlineMatch = true;
     public boolean outlineVariant = true;
     public boolean outlineWrong = true;
+    /** Outline (in the Wrong Block colour) real blocks where the schematic has air. */
+    public boolean outlineExtra = true;
     /** Multiplier on {@code HologramRenderer.BASE_LINE_WIDTH}, half of vanilla's block outline. */
     public float outlineWidth = 1.0F;
     public boolean fadeOutlines = true;

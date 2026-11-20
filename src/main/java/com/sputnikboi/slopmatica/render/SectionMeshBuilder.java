@@ -122,6 +122,8 @@ final class SectionMeshBuilder {
     private Output run() {
         WorldSnapshot world = in.world();
         boolean any = false;
+        // Real blocks where the schematic has air: outlined as wrong (along the real block's shape).
+        boolean extras = in.outlined()[BlockStatus.WRONG.ordinal()] && com.sputnikboi.slopmatica.config.SlopmaticaConfig.get().outlineExtra;
         for (int y = 0; y < S; y++) {
             for (int z = 0; z < S; z++) {
                 for (int x = 0; x < S; x++) {
@@ -129,6 +131,11 @@ final class SectionMeshBuilder {
                     int i = WorldSnapshot.index(x, y, z);
                     shown[i] = want;
                     if (want == null || want.isAir()) {
+                        BlockState real = world.get(i);
+                        if (want != null && extras && !real.isAir() && !(real.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock)) {
+                            status[i] = BlockStatus.WRONG;
+                            any = true;
+                        }
                         continue;
                     }
                     expected[i] = want;

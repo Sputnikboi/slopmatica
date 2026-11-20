@@ -67,6 +67,8 @@
   "slopmatica.options.outline_variant.tooltip": "Outline blocks of the right kind in the wrong state: facing, half, waxed vs unwaxed copper, oxidation and so on.",
   "slopmatica.options.outline_wrong": "Wrong Block",
   "slopmatica.options.outline_wrong.tooltip": "Outline blocks that are a different block entirely.",
+  "slopmatica.options.outline_extra": "Should Be Air",
+  "slopmatica.options.outline_extra.tooltip": "Outline blocks where the schematic has air (in the Wrong Block colour), so you can see what to clear away. Water and lava aren't outlined.",
   "slopmatica.options.outline_width": "Outline Thickness",
   "slopmatica.options.outline_width.tooltip": "100% is half as thick as vanilla's block outline, seen from 6 blocks away. Outlines have a fixed thickness in the world, so they get thinner with distance just like the blocks do.",
   "slopmatica.options.fade_outlines": "Fade Distant Outlines",

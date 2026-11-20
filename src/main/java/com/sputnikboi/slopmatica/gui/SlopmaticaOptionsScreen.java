@@ -68,6 +68,7 @@ public class SlopmaticaOptionsScreen extends OptionsSubScreen {
                 toggle("slopmatica.options.outline_match", c.outlineMatch, v -> c.outlineMatch = v, true),
                 toggle("slopmatica.options.outline_variant", c.outlineVariant, v -> c.outlineVariant = v, true),
                 toggle("slopmatica.options.outline_wrong", c.outlineWrong, v -> c.outlineWrong = v, true),
+                toggle("slopmatica.options.outline_extra", c.outlineExtra, v -> c.outlineExtra = v, true),
                 toggle("slopmatica.options.fade_outlines", c.fadeOutlines, v -> c.fadeOutlines = v, false),
                 slider("slopmatica.options.outline_distance", 25, 500, c.outlineDistance, "%", v -> c.outlineDistance = v, false)
             );
