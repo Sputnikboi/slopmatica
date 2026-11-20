@@ -222,6 +222,8 @@ public final class DevHarness {
                 } catch (ReflectiveOperationException e) {
                     LOGGER.warn("No int option {}", parts[1]);
                 }
+            } else if (step.equals("plan")) {
+                com.sputnikboi.slopmatica.plan.InventoryPlanner.INSTANCE.calculate(mc);
             } else if (step.equals("quit")) {
                 mc.stop();
             } else {

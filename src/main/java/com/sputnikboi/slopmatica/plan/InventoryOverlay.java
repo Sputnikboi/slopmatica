@@ -121,6 +121,12 @@ public final class InventoryOverlay {
         // To the right: a header with recalculate and close, ender chest boxes, what doesn't fit
         // (in red), and tools worth bringing.
         int x = left + imageWidth + 6, y = top + 2;
+        // Below the potion effects, which the game draws in the same place (spaced as it spaces them).
+        int effects = mc.player.getActiveEffects().size();
+        if (effects > 0 && screen.width - (left + imageWidth + 2) >= 32) {
+            int step = effects > 5 ? 132 / (effects - 1) : 33;
+            y += (effects - 1) * step + 32 + 4;
+        }
         g.text(font, Component.translatable("slopmatica.plan.title").withStyle(ChatFormatting.BOLD), x, y, 0xFFE0E0E0);
         int hx = x + font.width(Component.translatable("slopmatica.plan.title").withStyle(ChatFormatting.BOLD)) + 6;
         sideRecalc = new int[] {hx, y - 1, hx + 10, y + 9};
@@ -130,7 +136,7 @@ public final class InventoryOverlay {
         if (hovering(sideRecalc, mouseX, mouseY)) {
             g.setTooltipForNextFrame(font, Component.translatable("slopmatica.plan.recalculate"), mouseX, mouseY);
         } else if (hovering(sideClose, mouseX, mouseY)) {
-            g.setTooltipForNextFrame(font, Component.translatable("slopmatica.plan.side.tooltip"), mouseX, mouseY);
+            g.setTooltipForNextFrame(font, Component.translatable("slopmatica.plan.dismiss"), mouseX, mouseY);
         }
         y += 14;
         if (r.enderShulkers() > 0) {
@@ -183,8 +189,8 @@ public final class InventoryOverlay {
             return true;
         }
         if (hovering(sideClose, mx, my)) {
-            SlopmaticaConfig.get().planSideList = false;
-            SlopmaticaConfig.get().save();
+            // Dismisses the plan, ghosts and all (the Side List setting stays as it is).
+            InventoryPlanner.INSTANCE.clear();
             sideClose = sideRecalc = null;
             return true;
         }

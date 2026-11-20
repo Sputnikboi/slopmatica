@@ -102,7 +102,7 @@ public final class EasyPlace {
     public boolean tryUse(Minecraft mc) {
         LocalPlayer player = mc.player;
         ClientLevel level = mc.level;
-        if (!enabled() || player == null || level == null || mc.gameMode == null || player.isSpectator()) {
+        if (!enabled() || player == null || level == null || mc.gameMode == null || player.isSpectator() || wantsToEat(player)) {
             return false;
         }
         List<Placement.Transform> transforms = SchematicRaycast.visibleTransforms(level);
@@ -150,6 +150,13 @@ public final class EasyPlace {
     }
 
     private static final boolean DEBUG = Boolean.getBoolean("slopmatica.debug.easyplace");
+
+    /** Holding food the player could eat now (hungry, or food that can always be eaten): right click eats, as normal. */
+    private static boolean wantsToEat(LocalPlayer player) {
+        ItemStack hand = player.getMainHandItem().isEmpty() ? player.getOffhandItem() : player.getMainHandItem();
+        var food = hand.get(net.minecraft.core.component.DataComponents.FOOD);
+        return food != null && player.canEat(food.canAlwaysEat());
+    }
 
     /** Right click has been held since Easy Place last placed something. */
     private boolean holding;
