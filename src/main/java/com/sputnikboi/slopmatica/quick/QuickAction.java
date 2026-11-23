@@ -104,6 +104,38 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
         }
     }
 
+    /** The group each built-in action is listed under in the Quick Menu editor. */
+    private static final Map<String, String> CATEGORY = new java.util.HashMap<>();
+
+    static {
+        for (String id : List.of("build_view", "easy_place", "replace_block", "paste", "undo", "hologram", "load", "placements", "materials", "plan", "plan_screen")) {
+            CATEGORY.put(id, "build");
+        }
+        for (String id : List.of("corner", "selection_tools", "next_selection_tool", "selection_mode", "copy", "save_selection", "fit_selection", "clear_selection",
+            "mark_removal", "unmark_removal", "clear_removal")) {
+            CATEGORY.put(id, "selection");
+        }
+        for (String id : List.of("layer_mode", "layer_up", "layer_down", "spawn_check")) {
+            CATEGORY.put(id, "view");
+        }
+        for (String id : List.of("menu", "options", "keybinds")) {
+            CATEGORY.put(id, "menus");
+        }
+        for (String id : List.of("cloud_browser", "cloud", "board_browser", "bug_report")) {
+            CATEGORY.put(id, "online");
+        }
+    }
+
+    /** Its group in the editor ("build", "selection"...; "custom" for your own setting toggles). */
+    public String category() {
+        return id.startsWith(SettingToggle.PREFIX) ? "custom" : CATEGORY.getOrDefault(id, "other");
+    }
+
+    /** The built-in actions (no setting toggles). */
+    public static List<QuickAction> builtIn() {
+        return List.copyOf(BUILT_IN.values());
+    }
+
     private static void add(String id, net.minecraft.world.item.Item icon, Consumer<Minecraft> run, boolean standard,
                             @Nullable Predicate<Minecraft> available, @Nullable Supplier<Boolean> state) {
         BUILT_IN.put(id, new QuickAction(id, () -> Component.translatable("slopmatica.quick." + id), () -> new ItemStack(icon), run, standard, available, state));

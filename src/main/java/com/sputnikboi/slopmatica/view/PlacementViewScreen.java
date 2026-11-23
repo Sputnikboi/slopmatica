@@ -28,8 +28,8 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The placement view with a free cursor (right click while flying). The world stays in view, no
- * blur. On the left: the tool dropdown (move, select, modify selection, crop; keys 1-4), layer
- * view and the list of builds (click a name to show or hide it, ☰ for its material panel, → to
+ * blur. Along the top: a tab per tool (move, select, modify selection, crop; keys 1-4). On the
+ * left: the tool's own buttons (one per selection tool), layer view and the list of builds (click a name to show or hide it, ☰ for its material panel, → to
  * work on it). Bottom right: rotate, mirror, nudge (Shift-click: 5 blocks), reset and paste.
  * Right click or Esc goes back to flying.
  */
@@ -37,9 +37,12 @@ public class PlacementViewScreen extends Screen {
     private static final int B = 20;
     private static final int GAP = 2;
     private static final int LEFT_W = 124;
-    private static final int TOP = 62;
+    /** The tabs along the top (Blender-style): one per tool, keys 1-4. */
+    private static final int TABS_Y = 4;
+    private static final int PANEL_Y = TABS_Y + B + 4;
 
-    private static boolean toolsOpen;
+    /** Buttons drawn as chosen (an underline): the current tab, selection tool and mode. */
+    private final List<Button> chosen = new java.util.ArrayList<>();
 
     /** Move tool: the height of the plane the build slides on, and origin minus grabbed block. */
     private double dragPlaneY;
@@ -52,6 +55,12 @@ public class PlacementViewScreen extends Screen {
     private @Nullable BlockPos dragStart;
     private Selection.@Nullable State dragSelection;
     private @Nullable BoundingBox dragCrop;
+    /** Modify tool: the selection's parts and frame as a stretch or move began. */
+    private @Nullable List<com.sputnikboi.slopmatica.build.SelectionShape.Part> reshapeParts;
+    private @Nullable BoundingBox reshapeFrame;
+    /** Modify tool, dragging the origin: the plane it slides on, and frame offset from the grabbed block. */
+    private boolean originDrag;
+    private int originDy;
 
     public PlacementViewScreen() {
         super(Component.translatable("slopmatica.view.title"));
@@ -60,6 +69,9 @@ public class PlacementViewScreen extends Screen {
     @Override
     protected void init() {
         PlacementView view = PlacementView.INSTANCE;
+        chosen.clear();
+        icons.clear();
+        initTabs(view);
         initLeft(view);
 
         // Top right, where the flying HUD draws it too: the main menu, coming back here when closed.
@@ -99,14 +111,45 @@ public class PlacementViewScreen extends Screen {
         addRenderableWidget(button("slopmatica.view.mirror.label", right - w, row0, w, b -> view.mirror(minecraft), "slopmatica.view.mirror"));
     }
 
-    /** The left column: tools, tool actions, layers, builds. Rebuilt whenever one of them changes. */
+    /** Move, Select, Modify, Crop along the top. */
+    private void initTabs(PlacementView view) {
+        int x = 4;
+        for (Tool t : Tool.values()) {
+            Component label = t.label();
+            int w = font.width(label) + 14;
+            Button tab = addRenderableWidget(Button.builder(t == view.tool() ? label.copy().withStyle(ChatFormatting.YELLOW) : label, b -> pickTool(t))
+                .bounds(x, TABS_Y, w, B).tooltip(Tooltip.create(Component.translatable("slopmatica.tool.tab.tooltip", t.tooltip(), t.ordinal() + 1))).build());
+            if (t == view.tool()) {
+                chosen.add(tab);
+            }
+            x += w + GAP;
+        }
+    }
+
+    /** Lines in the help panel under the tabs (the left column starts below it). */
+    private List<String> panelLines(@Nullable Placement p) {
+        List<String> lines = new java.util.ArrayList<>();
+        lines.add(p == null ? "Build view: no build selected" : "Build view: " + p.name() + "  (" + p.worldOriginPoint().toShortString() + ")");
+        if (p != null) {
+            Recommendations.of(minecraft, p).forEach(w -> lines.add("⚠ " + w.text().getString()));
+        }
+        lines.add(switch (PlacementView.INSTANCE.tool()) {
+            case MOVE -> "Drag the build to move it   Scroll: up/down";
+            case SELECT -> Component.translatable("slopmatica.seltool." + com.sputnikboi.slopmatica.config.SlopmaticaConfig.get().selectionTool.name().toLowerCase(Locale.ROOT) + ".hint").getString();
+            case MODIFY -> Component.translatable("slopmatica.tool.modify.hint").getString();
+            case CROP -> "Drag a face of the orange box to crop the build";
+        });
+        lines.add("Right click/Esc: fly   Shift: 5 blocks   " + PlacementView.key(SlopmaticaKeys.PLACEMENT_VIEW) + ": done");
+        return lines;
+    }
+
+    /** The left column: tool options, layers, builds. Rebuilt whenever one of them changes. */
     private void initLeft(PlacementView view) {
-        int x = 6, y = TOP;
+        int x = 6, y = PANEL_Y + 4 + panelLines(view.placement()).size() * 11 + 6;
         Placement onBuild = view.placement();
         if (onBuild != null) {
             Placement current = onBuild;
             List<Recommendations.Warning> warnings = Recommendations.of(minecraft, current);
-            y += warnings.size() * 11;
             for (Recommendations.Warning w : warnings) {
                 if (w.fix() != null) {
                     addRenderableWidget(Button.builder(w.fixLabel(), b -> {
@@ -130,22 +173,6 @@ public class PlacementViewScreen extends Screen {
             y += B + GAP + 4;
         }
         Tool tool = view.tool();
-        addRenderableWidget(Button.builder(Component.translatable("slopmatica.tool.dropdown", tool.label(), toolsOpen ? "▴" : "▾"), b -> {
-            toolsOpen = !toolsOpen;
-            rebuildWidgets();
-        }).bounds(x, y, LEFT_W, B).tooltip(Tooltip.create(tool.tooltip())).build());
-        y += B + GAP;
-        if (toolsOpen) {
-            for (Tool t : Tool.values()) {
-                Component label = Component.literal((t.ordinal() + 1) + "  ").append(t.label());
-                addRenderableWidget(Button.builder(t == tool ? label.copy().withStyle(ChatFormatting.YELLOW) : label, b -> pickTool(t))
-                    .bounds(x + 8, y, LEFT_W - 8, B).tooltip(Tooltip.create(t.tooltip())).build());
-                y += B;
-            }
-            y += GAP;
-        }
-
-        // Tool actions.
         if (tool == Tool.CROP) {
             Placement p = view.placement();
             Button reset = addRenderableWidget(Button.builder(Component.translatable("slopmatica.tool.crop.reset"), b -> {
@@ -158,31 +185,38 @@ public class PlacementViewScreen extends Screen {
             reset.active = p != null && p.crop() != null;
             y += B + GAP;
         } else if (tool == Tool.SELECT || tool == Tool.MODIFY) {
-            int half = (LEFT_W - GAP) / 2;
-            addRenderableWidget(Button.builder(Component.translatable("slopmatica.tool.selection.copy"), b -> Clipboard.INSTANCE.copy(minecraft))
-                .bounds(x, y, half, B).tooltip(Tooltip.create(Component.translatable("slopmatica.tool.selection.copy.tooltip"))).build());
-            addRenderableWidget(Button.builder(Component.translatable("slopmatica.tool.selection.clear"), b -> Selection.INSTANCE.clear())
-                .bounds(x + half + GAP, y, half, B).build());
-            y += B + GAP;
             if (tool == Tool.SELECT) {
-                var c = com.sputnikboi.slopmatica.config.SlopmaticaConfig.get();
-                addRenderableWidget(Button.builder(Component.translatable("slopmatica.seltools.button", c.selectionTool.label(), c.selectionMode.label()),
-                        b -> minecraft.gui.setScreen(new com.sputnikboi.slopmatica.gui.SelectionToolsScreen(this)))
-                    .bounds(x, y, LEFT_W, B).tooltip(Tooltip.create(Component.translatable("slopmatica.seltools.button.tooltip"))).build());
-                y += B + GAP;
+                y = initSelectTools(x, y);
             }
+            boolean any = Selection.INSTANCE.box() != null;
+            int third = (LEFT_W - 2 * GAP) / 3;
+            Button copy = addRenderableWidget(Button.builder(Component.translatable("slopmatica.tool.selection.copy"), b -> Clipboard.INSTANCE.copy(minecraft))
+                .bounds(x, y, third, B).tooltip(Tooltip.create(Component.translatable("slopmatica.tool.selection.copy.tooltip"))).build());
+            Button clear = addRenderableWidget(Button.builder(Component.translatable("slopmatica.tool.selection.clear"), b -> {
+                UndoStack.INSTANCE.saveSelection();
+                Selection.INSTANCE.clear();
+                rebuildWidgets();
+            }).bounds(x + third + GAP, y, third, B).build());
+            copy.active = clear.active = any;
+            addRenderableWidget(Button.builder(Component.translatable("slopmatica.seltools.more"), b -> minecraft.gui.setScreen(new com.sputnikboi.slopmatica.gui.SelectionToolsScreen(this)))
+                .bounds(x + 2 * (third + GAP), y, LEFT_W - 2 * (third + GAP), B).tooltip(Tooltip.create(Component.translatable("slopmatica.seltools.more.tooltip"))).build());
+            y += B + GAP;
         }
 
         // Undo, for every tool.
-        int third = (LEFT_W - 2 * GAP) / 2;
-        Button undo = addRenderableWidget(Button.builder(Component.translatable("slopmatica.view.undo"), b -> view.undo(minecraft))
-            .bounds(x, y, third, B).tooltip(Tooltip.create(Component.translatable("slopmatica.view.undo.tooltip"))).build());
-        undo.active = !UndoStack.INSTANCE.isEmpty();
-        addRenderableWidget(Button.builder(Component.translatable("slopmatica.view.fit"), b -> {
-            view.fitSelection(minecraft);
+        int half = (LEFT_W - GAP) / 2;
+        Button undo = addRenderableWidget(Button.builder(Component.translatable("slopmatica.view.undo"), b -> {
+            view.undo(minecraft);
             rebuildWidgets();
-        }).bounds(x + third + GAP, y, LEFT_W - third - GAP, B).tooltip(Tooltip.create(Component.translatable("slopmatica.view.fit.tooltip"))).build())
-            .active = Selection.INSTANCE.plainBox() != null;
+        }).bounds(x, y, half, B).tooltip(Tooltip.create(Component.translatable("slopmatica.view.undo.tooltip"))).build());
+        undo.active = !UndoStack.INSTANCE.isEmpty();
+        if (tool == Tool.SELECT || tool == Tool.MODIFY) {
+            addRenderableWidget(Button.builder(Component.translatable("slopmatica.view.fit"), b -> {
+                view.fitSelection(minecraft);
+                rebuildWidgets();
+            }).bounds(x + half + GAP, y, LEFT_W - half - GAP, B).tooltip(Tooltip.create(Component.translatable("slopmatica.view.fit.tooltip"))).build())
+                .active = Selection.INSTANCE.plainBox() != null;
+        }
         y += B + GAP;
 
         // Layers.
@@ -255,6 +289,116 @@ public class PlacementViewScreen extends Screen {
         }
     }
 
+    /** 11x11 icons on the tool buttons, in {@link com.sputnikboi.slopmatica.build.SelectionTool} order ('#' is a pixel). */
+    private static final String[][] TOOL_ICONS = {
+        {"...#######.", "..#.....##.", ".#.....#.#.", "#######..#.", "#.....#..#.", "#.....#..#.", "#.....#..#.", "#.....#.#..", "#.....##...", "#######....", "..........."},
+        {"...#####...", ".##.....##.", ".#.......#.", "#.........#", "#.........#", "#.........#", "#.........#", "#.........#", ".#.......#.", ".##.....##.", "...#####..."},
+        {".#########.", "#.........#", ".#########.", "#.........#", "#.........#", "#.........#", "#.........#", "#.........#", "#.........#", "#.........#", ".#########."},
+        {"#####......", "#...#......", "#...#......", "#...#......", "#...######.", "#........#.", "#........#.", "#........#.", "##########.", "...........", "..........."},
+        {".........##", "........###", ".......###.", "......###..", ".....###...", "....##.....", "..###......", ".####......", "#####......", "####.......", "##........."},
+        {"..#......#.", ".###....###", "..#......#.", ".......##..", "......##...", ".....##....", "....##.....", "...##......", "..##.......", ".##........", "##........."},
+    };
+    private static final String[] BALL_ICON = {"..###..", ".#####.", "#######", "#######", "#######", ".#####.", "..###.."};
+    private static final String[] CUBE_ICON = {"#######", "#######", "#######", "#######", "#######", "#######", "#######"};
+    /** Buttons that show a pixel icon instead of text. */
+    private final java.util.Map<Button, String[]> icons = new java.util.HashMap<>();
+
+    /**
+     * The Select tab's own buttons: one per selection tool (Blender's toolbar), how new shapes
+     * combine (replace, add, cut), and the chosen tool's options. Returns the next free row.
+     */
+    private int initSelectTools(int x, int y) {
+        var c = com.sputnikboi.slopmatica.config.SlopmaticaConfig.get();
+        var tools = com.sputnikboi.slopmatica.build.SelectionTool.values();
+        int w = (LEFT_W - (tools.length - 1) * GAP) / tools.length;
+        for (int i = 0; i < tools.length; i++) {
+            var t = tools[i];
+            int bx = x + i * (w + GAP), bw = i == tools.length - 1 ? LEFT_W - i * (w + GAP) : w;
+            Button button = addRenderableWidget(Button.builder(Component.empty(), b -> {
+                    Selection.INSTANCE.endStroke();
+                    c.selectionTool = t;
+                    c.save();
+                    rebuildWidgets();
+                }).bounds(bx, y, bw, B)
+                .tooltip(Tooltip.create(t.label().copy().withStyle(ChatFormatting.YELLOW).append("\n").append(t.tooltip()))).build());
+            icons.put(button, TOOL_ICONS[i]);
+            if (t == c.selectionTool) {
+                chosen.add(button);
+            }
+        }
+        y += B + GAP;
+
+        var modes = com.sputnikboi.slopmatica.build.SelectionTool.Mode.values();
+        // Wide enough for each word: Replace is longer than Add and Cut.
+        int[] mw = new int[modes.length];
+        int total = 0;
+        for (int i = 0; i < modes.length; i++) {
+            mw[i] = font.width(modes[i].label()) + 8;
+            total += mw[i];
+        }
+        int spare = LEFT_W - (modes.length - 1) * GAP - total;
+        for (int i = 0, bx = x; i < modes.length; i++) {
+            var m = modes[i];
+            int bw = mw[i] + (i == modes.length - 1 ? spare - spare / modes.length * (modes.length - 1) : spare / modes.length);
+            Button button = addRenderableWidget(Button.builder(m == c.selectionMode ? m.label().copy().withStyle(ChatFormatting.YELLOW) : m.label(), b -> {
+                    c.selectionMode = m;
+                    c.save();
+                    rebuildWidgets();
+                }).bounds(bx, y, bw, B)
+                .tooltip(Tooltip.create(Component.translatable("slopmatica.selmode." + m.name().toLowerCase(Locale.ROOT) + ".tooltip"))).build());
+            if (m == c.selectionMode) {
+                chosen.add(button);
+            }
+            bx += bw + GAP;
+        }
+        y += B + GAP;
+
+        // The tool's options: surface only (every tool), brush size and shape, magic's exact match.
+        var tool = c.selectionTool;
+        boolean surface = c.surfaceTools.contains(tool.name());
+        boolean brush = tool == com.sputnikboi.slopmatica.build.SelectionTool.BRUSH, magic = tool == com.sputnikboi.slopmatica.build.SelectionTool.MAGIC;
+        int sw = brush || magic ? 56 : LEFT_W;
+        addRenderableWidget(Button.builder(Component.translatable(surface ? "slopmatica.seltools.surface.on" : "slopmatica.seltools.surface.off"), b -> {
+                if (c.surfaceTools.contains(tool.name())) {
+                    c.surfaceTools.remove(tool.name());
+                } else {
+                    c.surfaceTools.add(tool.name());
+                }
+                c.save();
+                rebuildWidgets();
+            }).bounds(x, y, sw, B).tooltip(Tooltip.create(Component.translatable("slopmatica.seltools.surface.tooltip"))).build());
+        if (brush) {
+            int rx = x + sw + GAP;
+            addRenderableWidget(button("-", rx, y, 14, b -> brushSize(-1), "slopmatica.seltools.brush_smaller"));
+            addRenderableWidget(Button.builder(Component.literal(String.valueOf(c.brushRadius)), b -> { }).bounds(rx + 14, y, 18, B)
+                .tooltip(Tooltip.create(Component.translatable("slopmatica.seltools.brush_radius.tooltip"))).build()).active = false;
+            addRenderableWidget(button("+", rx + 32, y, 14, b -> brushSize(1), "slopmatica.seltools.brush_bigger"));
+            int shx = rx + 46 + GAP;
+            boolean sphere = c.brushShape == com.sputnikboi.slopmatica.build.SelectionTool.BrushShape.SPHERE;
+            icons.put(addRenderableWidget(Button.builder(Component.empty(), b -> {
+                    c.brushShape = sphere ? com.sputnikboi.slopmatica.build.SelectionTool.BrushShape.CUBE : com.sputnikboi.slopmatica.build.SelectionTool.BrushShape.SPHERE;
+                    c.save();
+                    rebuildWidgets();
+                }).bounds(shx, y, x + LEFT_W - shx, B)
+                .tooltip(Tooltip.create(Component.translatable("slopmatica.seltools.brush_shape." + c.brushShape.name().toLowerCase(Locale.ROOT) + ".tooltip"))).build()),
+                sphere ? BALL_ICON : CUBE_ICON);
+        } else if (magic) {
+            addRenderableWidget(Button.builder(Component.translatable(c.magicExact ? "slopmatica.seltools.exact.on" : "slopmatica.seltools.exact.off"), b -> {
+                    c.magicExact = !c.magicExact;
+                    c.save();
+                    rebuildWidgets();
+                }).bounds(x + sw + GAP, y, LEFT_W - sw - GAP, B).tooltip(Tooltip.create(Component.translatable("slopmatica.seltools.magic_exact.tooltip"))).build());
+        }
+        return y + B + GAP;
+    }
+
+    private void brushSize(int by) {
+        var c = com.sputnikboi.slopmatica.config.SlopmaticaConfig.get();
+        c.brushRadius = Math.clamp(c.brushRadius + (minecraft.hasShiftDown() ? by * 4 : by), 0, 16);
+        c.save();
+        rebuildWidgets();
+    }
+
     /** Right click during a drag: everything back to how it was when the drag started. */
     private boolean cancelDrag() {
         Placement p = PlacementView.INSTANCE.placement();
@@ -262,8 +406,10 @@ public class PlacementViewScreen extends Screen {
             dragOffset = null;
             p.setOrigin(dragStart);
             PlacementManager.INSTANCE.changed();
-        } else if (boxDrag != null) {
+        } else if (boxDrag != null || originDrag) {
             boxDrag = null;
+            originDrag = false;
+            reshapeParts = null;
             if (PlacementView.INSTANCE.tool() == Tool.MODIFY && dragSelection != null) {
                 Selection.INSTANCE.restore(dragSelection);
             } else if (p != null) {
@@ -279,7 +425,6 @@ public class PlacementViewScreen extends Screen {
 
     private void pickTool(Tool tool) {
         PlacementView.INSTANCE.setTool(tool);
-        toolsOpen = false;
         rebuildWidgets();
     }
 
@@ -300,32 +445,43 @@ public class PlacementViewScreen extends Screen {
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float a) {
         super.extractRenderState(graphics, mouseX, mouseY, a);
-        Placement p = PlacementView.INSTANCE.placement();
-        if (p == null) {
-            PlacementView.drawPanel(graphics, minecraft, List.of(
-                "Build view: no build selected",
-                "Select: click two blocks   Modify: drag a face",
-                PlacementView.key(SlopmaticaKeys.VIEW_SAVE) + ": save the selection   Ctrl+Z: undo",
-                "Right click or Esc: back to flying   " + PlacementView.key(SlopmaticaKeys.PLACEMENT_VIEW) + ": done"
-            ), 4, 4);
-            graphics.text(font, Component.translatable("slopmatica.builds.title").withStyle(ChatFormatting.BOLD), 6, buildsTop - 11, 0xFFFFFFFF);
-            MaterialPanels.INSTANCE.draw(graphics, minecraft, mouseX, mouseY, true);
-            return;
+        for (Button b : chosen) {
+            graphics.fill(b.getX() + 2, b.getY() + b.getHeight() - 2, b.getX() + b.getWidth() - 2, b.getY() + b.getHeight(), SlopmaticaActions.ACCENT);
         }
-        String hint = switch (PlacementView.INSTANCE.tool()) {
-            case MOVE -> "Drag the build to move it   Scroll: up/down";
-            case SELECT -> Component.translatable("slopmatica.seltool." + com.sputnikboi.slopmatica.config.SlopmaticaConfig.get().selectionTool.name().toLowerCase(Locale.ROOT) + ".hint").getString();
-            case MODIFY -> "Drag a face of the selection to resize it";
-            case CROP -> "Drag a face of the orange box to crop the build";
-        };
-        List<String> lines = new java.util.ArrayList<>();
-        lines.add("Build view: " + p.name() + "  (" + p.worldOriginPoint().toShortString() + ")");
-        List<Recommendations.Warning> warnings = Recommendations.of(minecraft, p);
-        warnings.forEach(w -> lines.add("⚠ " + w.text().getString()));
-        lines.add(hint);
-        lines.add("Shift: buttons and keys move 5 blocks");
-        lines.add("Right click or Esc: back to flying   " + PlacementView.key(SlopmaticaKeys.PLACEMENT_VIEW) + ": done");
-        PlacementView.drawPanel(graphics, minecraft, lines, 4, 4, warnings.size());
+        icons.forEach((b, icon) -> {
+            int color = chosen.contains(b) ? 0xFFFFFF55 : b.isHoveredOrFocused() ? 0xFFFFFFFF : 0xFFD0D0D0;
+            int ix = b.getX() + (b.getWidth() - icon[0].length()) / 2, iy = b.getY() + (b.getHeight() - icon.length) / 2 - (chosen.contains(b) ? 1 : 0);
+            for (int r = 0; r < icon.length; r++) {
+                for (int col = 0; col < icon[r].length(); col++) {
+                    if (icon[r].charAt(col) == '#') {
+                        graphics.fill(ix + col, iy + r, ix + col + 1, iy + r + 1, color);
+                    }
+                }
+            }
+        });
+        double[] o = originOnScreen();
+        if (o != null) {
+            // The origin as a handle on screen: visible even inside blocks, and easy to grab.
+            int ox = (int) Math.round(o[0]), oy = (int) Math.round(o[1]);
+            boolean hot = originDrag || Math.hypot(mouseX - o[0], mouseY - o[1]) <= ORIGIN_GRAB;
+            int color = hot ? 0xFFFFFFFF : 0xFFFFD040;
+            for (int r = 0; r <= 5; r++) {
+                int half = 5 - r;
+                graphics.fill(ox - half - 1, oy - r - 1, ox + half + 2, oy - r, 0xC0000000);
+                graphics.fill(ox - half - 1, oy + r, ox + half + 2, oy + r + 1, 0xC0000000);
+            }
+            for (int r = 0; r <= 4; r++) {
+                int half = 4 - r;
+                graphics.fill(ox - half, oy - r, ox + half + 1, oy - r + 1, color);
+                graphics.fill(ox - half, oy + r, ox + half + 1, oy + r + 1, color);
+            }
+            if (hot && !originDrag) {
+                graphics.text(font, Component.translatable("slopmatica.tool.modify.origin"), ox + 8, oy - 4, 0xFFFFD040);
+            }
+        }
+        Placement p = PlacementView.INSTANCE.placement();
+        List<String> lines = panelLines(p);
+        PlacementView.drawPanel(graphics, minecraft, lines, 4, PANEL_Y, p == null ? 0 : Recommendations.of(minecraft, p).size());
         graphics.text(font, Component.translatable("slopmatica.builds.title").withStyle(ChatFormatting.BOLD), 6, buildsTop - 11, 0xFFFFFFFF);
         MaterialPanels.INSTANCE.draw(graphics, minecraft, mouseX, mouseY, true);
     }
@@ -391,21 +547,30 @@ public class PlacementViewScreen extends Screen {
                 rebuildWidgets(); // Fit and Undo may have become available.
             }
             case MODIFY -> {
-                BoundingBox box = dim.equals(Selection.INSTANCE.dimension()) ? Selection.INSTANCE.plainBox() : null;
-                if (box == null && Selection.INSTANCE.box() != null && dim.equals(Selection.INSTANCE.dimension())) {
-                    SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.modify.not_box").withColor(SlopmaticaActions.ERROR));
-                    return true;
-                }
-                if (box == null) {
+                BoundingBox frame = dim.equals(Selection.INSTANCE.dimension()) ? Selection.INSTANCE.frame() : null;
+                if (frame == null) {
                     SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.modify.none").withColor(SlopmaticaActions.ERROR));
                     return true;
                 }
-                boxDrag = BoxDrag.grab(box, from, dir);
-                lastBox = box;
-                if (boxDrag != null) {
-                    UndoStack.INSTANCE.saveSelection();
-                    dragSelection = Selection.INSTANCE.state();
+                BlockPos origin = Selection.originOf(frame);
+                double[] onScreen = originOnScreen();
+                if (onScreen != null && Math.hypot(event.x() - onScreen[0], event.y() - onScreen[1]) <= ORIGIN_GRAB || Selection.hitsOrigin(origin, from, dir)) {
+                    // The origin: drag it to move the whole selection along its floor.
+                    originDrag = true;
+                    dragPlaneY = origin.getY() + 0.5;
+                    Vec3 hit = planeHit(from, dir, dragPlaneY);
+                    dragOffset = hit == null ? BlockPos.ZERO : origin.subtract(BlockPos.containing(hit.x, dragPlaneY, hit.z));
+                } else {
+                    boxDrag = BoxDrag.grab(frame, from, dir);
+                    if (boxDrag == null) {
+                        return true;
+                    }
                 }
+                lastBox = frame;
+                reshapeFrame = frame;
+                reshapeParts = Selection.INSTANCE.parts();
+                UndoStack.INSTANCE.saveSelection();
+                dragSelection = Selection.INSTANCE.state();
             }
             case CROP -> {
                 boxDrag = BoxDrag.grab(p.transform().worldBounds(), from, dir);
@@ -433,17 +598,30 @@ public class PlacementViewScreen extends Screen {
             }
             return true;
         }
-        if (minecraft.level == null || (p == null && boxDrag == null)) {
+        if (minecraft.level == null || (p == null && boxDrag == null && !originDrag)) {
             return super.mouseDragged(event, dx, dy);
         }
         Vec3 from = view.eye();
         Vec3 dir = view.rayThrough(minecraft, event.x(), event.y(), width, height);
+        if (originDrag) {
+            Vec3 hit = planeHit(from, dir, dragPlaneY);
+            if (hit != null && reshapeFrame != null && reshapeParts != null && dragOffset != null) {
+                BlockPos to = BlockPos.containing(hit.x, dragPlaneY, hit.z).offset(dragOffset);
+                BlockPos start = Selection.originOf(reshapeFrame);
+                BoundingBox moved = reshapeFrame.moved(to.getX() - start.getX(), originDy, to.getZ() - start.getZ());
+                if (!moved.equals(lastBox)) {
+                    lastBox = moved;
+                    Selection.INSTANCE.reshape(reshapeParts, reshapeFrame, moved);
+                }
+            }
+            return true;
+        }
         if (boxDrag != null) {
             BoundingBox box = boxDrag.follow(from, dir);
             if (!box.equals(lastBox)) {
                 lastBox = box;
-                if (view.tool() == Tool.MODIFY) {
-                    Selection.INSTANCE.set(box, minecraft.level.dimension().identifier().toString());
+                if (view.tool() == Tool.MODIFY && reshapeParts != null && reshapeFrame != null) {
+                    Selection.INSTANCE.reshape(reshapeParts, reshapeFrame, box);
                 } else if (p != null) {
                     Placement.Transform t = p.transform();
                     p.setCrop(BoundingBox.fromCorners(t.toLocal(box.minX(), box.minY(), box.minZ()), t.toLocal(box.maxX(), box.maxY(), box.maxZ())));
@@ -455,14 +633,10 @@ public class PlacementViewScreen extends Screen {
         if (dragOffset == null || p == null) {
             return super.mouseDragged(event, dx, dy);
         }
-        if (Math.abs(dir.y) < 1.0E-4) {
-            return true;
-        }
-        double t = (dragPlaneY - from.y) / dir.y;
-        if (t <= 0 || t > 1024) {
+        Vec3 point = planeHit(from, dir, dragPlaneY);
+        if (point == null) {
             return true; // Looking away from the plane (at the sky, say): nowhere to put it.
         }
-        Vec3 point = from.add(dir.scale(t));
         BlockPos grabbed = BlockPos.containing(point.x, dragPlaneY, point.z);
         BlockPos origin = grabbed.offset(dragOffset);
         BlockPos current = p.transform().origin();
@@ -471,6 +645,28 @@ public class PlacementViewScreen extends Screen {
             PlacementManager.INSTANCE.changed();
         }
         return true;
+    }
+
+    /** How near (GUI pixels) a click must be to the origin's handle to grab it. */
+    private static final int ORIGIN_GRAB = 7;
+
+    /** The selection's origin on screen while the Modify tab is open; null otherwise or off screen. */
+    private double @Nullable [] originOnScreen() {
+        if (PlacementView.INSTANCE.tool() != Tool.MODIFY || minecraft.level == null
+            || !minecraft.level.dimension().identifier().toString().equals(Selection.INSTANCE.dimension())) {
+            return null;
+        }
+        BlockPos o = Selection.INSTANCE.origin();
+        return o == null ? null : PlacementView.INSTANCE.project(minecraft, Vec3.atCenterOf(o), width, height);
+    }
+
+    /** Where a ray meets the flat plane at height {@code y}; null if it never does (nearby). */
+    private static @Nullable Vec3 planeHit(Vec3 from, Vec3 dir, double y) {
+        if (Math.abs(dir.y) < 1.0E-4) {
+            return null;
+        }
+        double t = (y - from.y) / dir.y;
+        return t <= 0 || t > 1024 ? null : from.add(dir.scale(t));
     }
 
     @Override
@@ -487,8 +683,25 @@ public class PlacementViewScreen extends Screen {
             return true;
         }
         Placement p = PlacementView.INSTANCE.placement();
+        if (originDrag) {
+            originDrag = false;
+            dragOffset = null;
+            originDy = 0;
+            reshapeParts = null;
+            Selection.INSTANCE.finishReshape();
+            BlockPos o = Selection.INSTANCE.origin();
+            if (o != null) {
+                SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.modify.moved", o.toShortString()).withColor(SlopmaticaActions.ACCENT));
+            }
+            rebuildWidgets();
+            return true;
+        }
         if (boxDrag != null) {
             boxDrag = null;
+            if (reshapeParts != null) {
+                reshapeParts = null;
+                Selection.INSTANCE.finishReshape();
+            }
             if (lastBox != null) {
                 String what = PlacementView.INSTANCE.tool() == Tool.CROP ? "Showing" : "Selection";
                 SlopmaticaActions.actionBar(Component.literal(String.format("%s %d x %d x %d", what, lastBox.getXSpan(), lastBox.getYSpan(), lastBox.getZSpan()))
@@ -513,6 +726,22 @@ public class PlacementViewScreen extends Screen {
     @Override
     public boolean mouseScrolled(double x, double y, double scrollX, double scrollY) {
         if (MaterialPanels.INSTANCE.mouseScrolled(minecraft, x, y, scrollY, width, height)) {
+            return true;
+        }
+        if (PlacementView.INSTANCE.tool() == Tool.MODIFY && Selection.INSTANCE.frame() != null) {
+            int by = (int) Math.signum(scrollY) * (minecraft.hasShiftDown() ? 5 : 1);
+            if (originDrag) {
+                originDy += by; // Up and down while sliding it about.
+                if (reshapeFrame != null && reshapeParts != null && lastBox != null) {
+                    BoundingBox moved = new BoundingBox(lastBox.minX(), reshapeFrame.minY() + originDy, lastBox.minZ(),
+                        lastBox.maxX(), reshapeFrame.maxY() + originDy, lastBox.maxZ());
+                    lastBox = moved;
+                    Selection.INSTANCE.reshape(reshapeParts, reshapeFrame, moved);
+                }
+            } else if (by != 0) {
+                UndoStack.INSTANCE.saveSelection();
+                Selection.INSTANCE.move(0, by, 0);
+            }
             return true;
         }
         PlacementView.INSTANCE.scroll(minecraft, scrollY);

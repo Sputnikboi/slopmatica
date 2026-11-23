@@ -4,10 +4,13 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.List;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import org.jspecify.annotations.Nullable;
 
 /**
  * One piece of a selection: a box, a ball, an upright cylinder, a prism over a floor outline, or a
  * set of single blocks (brush strokes, magic select, and any shape cut down to surface blocks).
+ * Every one can be moved and stretched into another box ({@link #fit}): balls become ellipsoids,
+ * cylinders ovals, and single blocks are resampled.
  * Immutable once made, except a {@link Cells} still being painted by the brush.
  */
 public sealed interface SelectionShape {
@@ -20,6 +23,30 @@ public sealed interface SelectionShape {
         return this;
     }
 
+    /** The same shape moved and stretched so its bounds become {@code to}. */
+    SelectionShape fit(BoundingBox to);
+
+    /**
+     * Where a box goes when the frame around it goes from {@code from} to {@code to}: each side keeps
+     * its place along the frame, never thinner than one block.
+     */
+    static BoundingBox map(BoundingBox b, BoundingBox from, BoundingBox to) {
+        int[] x = mapAxis(b.minX(), b.maxX(), from.minX(), from.getXSpan(), to.minX(), to.getXSpan());
+        int[] y = mapAxis(b.minY(), b.maxY(), from.minY(), from.getYSpan(), to.minY(), to.getYSpan());
+        int[] z = mapAxis(b.minZ(), b.maxZ(), from.minZ(), from.getZSpan(), to.minZ(), to.getZSpan());
+        return new BoundingBox(x[0], y[0], z[0], x[1], y[1], z[1]);
+    }
+
+    private static int[] mapAxis(int min, int max, int fromMin, int fromSpan, int toMin, int toSpan) {
+        if (fromSpan == toSpan) {
+            return new int[] {min - fromMin + toMin, max - fromMin + toMin};
+        }
+        double k = (double) toSpan / fromSpan;
+        int lo = toMin + (int) Math.round((min - fromMin) * k);
+        int hi = toMin + (int) Math.round((max + 1 - fromMin) * k) - 1;
+        return new int[] {lo, Math.max(lo, hi)};
+    }
+
     record Box(BoundingBox box) implements SelectionShape {
         @Override
         public BoundingBox bounds() {
@@ -29,6 +56,11 @@ public sealed interface SelectionShape {
         @Override
         public boolean contains(int x, int y, int z) {
             return box.isInside(x, y, z);
+        }
+
+        @Override
+        public SelectionShape fit(BoundingBox to) {
+            return new Box(to);
         }
     }
 
@@ -46,6 +78,33 @@ public sealed interface SelectionShape {
             double r = radius + 0.5;
             return dx * dx + dy * dy + dz * dz <= r * r;
         }
+
+        @Override
+        public SelectionShape fit(BoundingBox to) {
+            return new Ellipsoid(to);
+        }
+    }
+
+    /** The ball (or egg) that fills a box: a stretched sphere. */
+    record Ellipsoid(BoundingBox bounds) implements SelectionShape {
+        @Override
+        public boolean contains(int x, int y, int z) {
+            if (!bounds.isInside(x, y, z)) {
+                return false;
+            }
+            double dx = along(x, bounds.minX(), bounds.getXSpan()), dy = along(y, bounds.minY(), bounds.getYSpan()), dz = along(z, bounds.minZ(), bounds.getZSpan());
+            return dx * dx + dy * dy + dz * dz <= 1;
+        }
+
+        @Override
+        public SelectionShape fit(BoundingBox to) {
+            return new Ellipsoid(to);
+        }
+    }
+
+    /** How far a block's centre is from the middle of a span, in half-spans (-1 to 1 at the ends). */
+    private static double along(int v, int min, int span) {
+        return (v + 0.5 - min - span / 2.0) / (span / 2.0);
     }
 
     /** An upright cylinder around {@code center}'s column, from minY to maxY. */
@@ -64,6 +123,28 @@ public sealed interface SelectionShape {
             double dx = x - center.getX(), dz = z - center.getZ();
             double r = radius + 0.5;
             return dx * dx + dz * dz <= r * r;
+        }
+
+        @Override
+        public SelectionShape fit(BoundingBox to) {
+            return new Tube(to);
+        }
+    }
+
+    /** The upright cylinder (round or oval) that fills a box. */
+    record Tube(BoundingBox bounds) implements SelectionShape {
+        @Override
+        public boolean contains(int x, int y, int z) {
+            if (!bounds.isInside(x, y, z)) {
+                return false;
+            }
+            double dx = along(x, bounds.minX(), bounds.getXSpan()), dz = along(z, bounds.minZ(), bounds.getZSpan());
+            return dx * dx + dz * dz <= 1;
+        }
+
+        @Override
+        public SelectionShape fit(BoundingBox to) {
+            return new Tube(to);
         }
     }
 
@@ -104,6 +185,27 @@ public sealed interface SelectionShape {
                 }
             }
             return inside;
+        }
+
+        @Override
+        public SelectionShape fit(BoundingBox to) {
+            List<BlockPos> moved = new java.util.ArrayList<>(points.size());
+            int minX = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+            for (BlockPos p : points) {
+                int x = scale(p.getX(), bounds.minX(), bounds.maxX(), to.minX(), to.maxX());
+                int z = scale(p.getZ(), bounds.minZ(), bounds.maxZ(), to.minZ(), to.maxZ());
+                moved.add(new BlockPos(x, to.minY(), z));
+                minX = Math.min(minX, x);
+                minZ = Math.min(minZ, z);
+                maxX = Math.max(maxX, x);
+                maxZ = Math.max(maxZ, z);
+            }
+            return new Prism(List.copyOf(moved), to.minY(), to.maxY(), new BoundingBox(minX, to.minY(), minZ, maxX, to.maxY(), maxZ));
+        }
+
+        /** A point's place from one min..max to another (both ends kept). */
+        private static int scale(int v, int fromMin, int fromMax, int toMin, int toMax) {
+            return fromMax == fromMin ? toMin : toMin + (int) Math.round((double) (v - fromMin) * (toMax - toMin) / (fromMax - fromMin));
         }
 
         /** Whether the outline from (ax, az) to (bx, bz) passes through the block at (x, z). */
@@ -173,9 +275,57 @@ public sealed interface SelectionShape {
         public SelectionShape snapshot() {
             return new Cells(this);
         }
+
+        @Override
+        public SelectionShape fit(BoundingBox to) {
+            return new Stretched(this, to);
+        }
     }
 
-    /** A shape added to the selection, or cut out of it. Later parts win over earlier ones. */
-    record Part(SelectionShape shape, boolean subtract) {
+    /**
+     * Blocks stretched or moved into another box: each block of it is the nearest one of the source
+     * (so moving is exact, and growing repeats blocks). Always from the original, never compounding.
+     */
+    record Stretched(SelectionShape source, BoundingBox bounds) implements SelectionShape {
+        @Override
+        public boolean contains(int x, int y, int z) {
+            if (!bounds.isInside(x, y, z)) {
+                return false;
+            }
+            BoundingBox s = source.bounds();
+            return source.contains(back(x, bounds.minX(), bounds.getXSpan(), s.minX(), s.getXSpan()),
+                back(y, bounds.minY(), bounds.getYSpan(), s.minY(), s.getYSpan()), back(z, bounds.minZ(), bounds.getZSpan(), s.minZ(), s.getZSpan()));
+        }
+
+        private static int back(int v, int min, int span, int srcMin, int srcSpan) {
+            return span == srcSpan ? v - min + srcMin : srcMin + (int) Math.floor((v - min + 0.5) * srcSpan / span);
+        }
+
+        @Override
+        public SelectionShape snapshot() {
+            SelectionShape s = source.snapshot();
+            return s == source ? this : new Stretched(s, bounds);
+        }
+
+        @Override
+        public SelectionShape fit(BoundingBox to) {
+            return new Stretched(source, to);
+        }
+    }
+
+    /**
+     * A shape added to the selection, or cut out of it. Later parts win over earlier ones.
+     * {@code whole}: when the shape was cut down to surface blocks, the shape before that (what
+     * stretching and moving work on, cutting it down again where it lands); else null.
+     */
+    record Part(SelectionShape shape, boolean subtract, @Nullable SelectionShape whole) {
+        public Part(SelectionShape shape, boolean subtract) {
+            this(shape, subtract, null);
+        }
+
+        /** The shape as made: before any cut down to surface blocks. */
+        public SelectionShape base() {
+            return whole != null ? whole : shape;
+        }
     }
 }

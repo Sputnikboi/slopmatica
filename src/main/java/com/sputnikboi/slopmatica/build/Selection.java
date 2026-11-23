@@ -42,6 +42,11 @@ public final class Selection {
     private static final int CORNER1_COLOR = 0xFFFF5050;
     private static final int CORNER2_COLOR = 0xFF5090FF;
     private static final int POINT_COLOR = 0xFFFFD040;
+    private static final int ORIGIN_COLOR = 0xFFFFD040;
+    private static final int FRAME_COLOR = 0x90FFD040;
+    private static final int HANDLE_COLOR = 0xFFFFE080;
+    /** The size of the frame's face handles, in blocks. */
+    private static final double HANDLE = 0.8;
     /** Bigger shapes can't be cut down to surface blocks, or outlined block by block. */
     public static final long MAX_SCAN = 8_000_000;
     /** Magic select stops after this many blocks. */
@@ -192,8 +197,9 @@ public final class Selection {
             }
             nextIsFirst = !nextIsFirst;
             if (first != null && second != null) {
-                SelectionShape shape = surfaceOnly(new SelectionShape.Box(BoundingBox.fromCorners(first, second)), SelectionTool.BOX);
-                parts = shape == null ? List.of() : List.of(new Part(shape, false));
+                SelectionShape whole = new SelectionShape.Box(BoundingBox.fromCorners(first, second));
+                SelectionShape shape = surfaceOnly(whole, SelectionTool.BOX);
+                parts = shape == null ? List.of() : List.of(new Part(shape, false, shape != whole ? whole : null));
             }
             changed();
             BoundingBox box = box();
@@ -222,7 +228,7 @@ public final class Selection {
             changed();
             return;
         }
-        Part part = new Part(s, mode == SelectionTool.Mode.SUBTRACT);
+        Part part = new Part(s, mode == SelectionTool.Mode.SUBTRACT, s != shape ? shape : null);
         if (mode == SelectionTool.Mode.REPLACE) {
             parts = List.of(part);
         } else {
@@ -402,6 +408,11 @@ public final class Selection {
         if (!SlopmaticaConfig.get().surfaceTools.contains(tool.name()) || mc.level == null) {
             return shape;
         }
+        return surfaceCut(mc.level, shape);
+    }
+
+    /** Just the shape's surface blocks; null (and a message) if it's too big to look through. */
+    private static SelectionShape.@Nullable Cells surfaceCut(Level level, SelectionShape shape) {
         BoundingBox b = shape.bounds();
         long volume = (long) b.getXSpan() * b.getYSpan() * b.getZSpan();
         if (volume > MAX_SCAN) {
@@ -413,7 +424,7 @@ public final class Selection {
         for (int y = b.minY(); y <= b.maxY(); y++) {
             for (int z = b.minZ(); z <= b.maxZ(); z++) {
                 for (int x = b.minX(); x <= b.maxX(); x++) {
-                    if (shape.contains(x, y, z) && isSurface(mc.level, p.set(x, y, z))) {
+                    if (shape.contains(x, y, z) && isSurface(level, p.set(x, y, z))) {
                         cells.add(x, y, z);
                     }
                 }
@@ -470,6 +481,93 @@ public final class Selection {
 
     public List<Part> parts() {
         return parts;
+    }
+
+    /**
+     * The box the whole selection is stretched and moved by: around everything added, taking shapes
+     * as made (a surface-only sphere's frame is the sphere's box). Null if nothing is selected.
+     */
+    public @Nullable BoundingBox frame() {
+        return frameOf(parts);
+    }
+
+    private static @Nullable BoundingBox frameOf(List<Part> parts) {
+        BoundingBox all = null;
+        for (Part part : parts) {
+            SelectionShape base = part.base();
+            if (part.subtract() || base instanceof SelectionShape.Cells cells && cells.isEmpty()) {
+                continue;
+            }
+            all = all == null ? base.bounds() : BoundingBox.encapsulating(all, base.bounds());
+        }
+        return all;
+    }
+
+    /** The selection's origin: the block in the middle of its frame's floor. What you grab to move it. */
+    public @Nullable BlockPos origin() {
+        BoundingBox f = frame();
+        return f == null ? null : originOf(f);
+    }
+
+    public static BlockPos originOf(BoundingBox f) {
+        return new BlockPos(Math.floorDiv(f.minX() + f.maxX(), 2), f.minY(), Math.floorDiv(f.minZ() + f.maxZ(), 2));
+    }
+
+    /**
+     * Stretches and moves {@code start} (the parts as a drag began) so the frame goes from
+     * {@code from} to {@code to}. Surface-only shapes show whole until {@link #finishReshape()} cuts
+     * them down again where they are now.
+     */
+    public void reshape(List<Part> start, BoundingBox from, BoundingBox to) {
+        endStroke();
+        List<Part> moved = new ArrayList<>(start.size());
+        for (Part part : start) {
+            SelectionShape base = part.base();
+            SelectionShape fitted = base.fit(SelectionShape.map(base.bounds(), from, to));
+            moved.add(new Part(fitted, part.subtract(), part.whole() != null ? fitted : null));
+        }
+        parts = List.copyOf(moved);
+        BoundingBox plain = plainBox();
+        if (plain != null) {
+            first = new BlockPos(plain.minX(), plain.minY(), plain.minZ());
+            second = new BlockPos(plain.maxX(), plain.maxY(), plain.maxZ());
+        } else {
+            first = second = null;
+        }
+        nextIsFirst = true;
+        center = null;
+        points = List.of();
+        changed();
+    }
+
+    /** After {@link #reshape}: surface-only shapes cut down to the surface where they landed. */
+    public void finishReshape() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || parts.stream().noneMatch(p -> p.whole() != null && p.shape() == p.whole())) {
+            return;
+        }
+        List<Part> cut = new ArrayList<>(parts.size());
+        for (Part part : parts) {
+            if (part.whole() != null && part.shape() == part.whole()) {
+                SelectionShape.Cells cells = surfaceCut(mc.level, part.whole());
+                cut.add(cells == null ? new Part(part.whole(), part.subtract()) : new Part(cells, part.subtract(), part.whole()));
+            } else {
+                cut.add(part);
+            }
+        }
+        parts = List.copyOf(cut);
+        first = second = null;
+        changed();
+    }
+
+    /** Moves the whole selection (undo saved by the caller). */
+    public void move(int dx, int dy, int dz) {
+        BoundingBox f = frame();
+        if (f == null) {
+            return;
+        }
+        reshape(parts, f, f.moved(dx, dy, dz));
+        finishReshape();
     }
 
     public @Nullable String dimension() {
@@ -646,6 +744,8 @@ public final class Selection {
         BoundingBox plain = plainBox();
         VoxelOutline shape = plain == null ? outline.get() : null;
         BoundingBox all = box();
+        BoundingBox frame = frame();
+        boolean editing = PlacementView.INSTANCE.active() && PlacementView.INSTANCE.tool() == com.sputnikboi.slopmatica.view.Tool.MODIFY;
         context.submitNodeCollector().submitCustomGeometry(poseStack, RenderTypes.lines(), (pose, buffer) -> {
             if (plain != null) {
                 box(buffer, pose, cam, plain.minX(), plain.minY(), plain.minZ(), plain.maxX() + 1, plain.maxY() + 1, plain.maxZ() + 1, 0.002, BOX_COLOR, width);
@@ -664,6 +764,14 @@ public final class Selection {
             if (center != null) {
                 cube(buffer, pose, cam, center, CORNER1_COLOR, width);
             }
+            if (frame != null) {
+                if (editing) {
+                    // The frame you stretch, with a handle on each face, and its middle.
+                    box(buffer, pose, cam, frame.minX(), frame.minY(), frame.minZ(), frame.maxX() + 1, frame.maxY() + 1, frame.maxZ() + 1, 0.02, FRAME_COLOR, width);
+                    handles(buffer, pose, cam, frame, width);
+                }
+                originMarker(buffer, pose, cam, originOf(frame), editing, width);
+            }
             BlockPos prev = null;
             for (BlockPos p : points) {
                 cube(buffer, pose, cam, p, POINT_COLOR, width);
@@ -673,6 +781,42 @@ public final class Selection {
                 prev = p;
             }
         });
+    }
+
+    /** A small square on the middle of each face of the frame: what to drag to stretch it. */
+    private static void handles(VertexConsumer b, PoseStack.Pose pose, Vec3 cam, BoundingBox f, float width) {
+        double cx = (f.minX() + f.maxX() + 1) / 2.0, cy = (f.minY() + f.maxY() + 1) / 2.0, cz = (f.minZ() + f.maxZ() + 1) / 2.0;
+        double h = HANDLE / 2, g = 0.03;
+        double x0 = f.minX() - g, x1 = f.maxX() + 1 + g, y0 = f.minY() - g, y1 = f.maxY() + 1 + g, z0 = f.minZ() - g, z1 = f.maxZ() + 1 + g;
+        box(b, pose, cam, x0, cy - h, cz - h, x0, cy + h, cz + h, 0, HANDLE_COLOR, width * 2);
+        box(b, pose, cam, x1, cy - h, cz - h, x1, cy + h, cz + h, 0, HANDLE_COLOR, width * 2);
+        box(b, pose, cam, cx - h, y0, cz - h, cx + h, y0, cz + h, 0, HANDLE_COLOR, width * 2);
+        box(b, pose, cam, cx - h, y1, cz - h, cx + h, y1, cz + h, 0, HANDLE_COLOR, width * 2);
+        box(b, pose, cam, cx - h, cy - h, z0, cx + h, cy + h, z0, 0, HANDLE_COLOR, width * 2);
+        box(b, pose, cam, cx - h, cy - h, z1, cx + h, cy + h, z1, 0, HANDLE_COLOR, width * 2);
+    }
+
+    /** The origin: a yellow block with an axis cross through it (thicker while it can be dragged). */
+    private static void originMarker(VertexConsumer b, PoseStack.Pose pose, Vec3 cam, BlockPos o, boolean grabbable, float width) {
+        float w = grabbable ? width * 2.5F : width * 1.5F;
+        box(b, pose, cam, o.getX() + 0.2, o.getY() + 0.2, o.getZ() + 0.2, o.getX() + 0.8, o.getY() + 0.8, o.getZ() + 0.8, 0, ORIGIN_COLOR, w);
+        double cx = o.getX() + 0.5, cy = o.getY() + 0.5, cz = o.getZ() + 0.5, r = 0.9;
+        segment(b, pose, cam, cx - r, cy, cz, cx + r, cy, cz, 0xFFFF5050, w);
+        segment(b, pose, cam, cx, cy - r, cz, cx, cy + r, cz, 0xFF50FF50, w);
+        segment(b, pose, cam, cx, cy, cz - r, cx, cy, cz + r, 0xFF5090FF, w);
+    }
+
+    /** Whether a ray from {@code from} along {@code dir} passes through the origin's grab box. */
+    public static boolean hitsOrigin(BlockPos o, Vec3 from, Vec3 dir) {
+        net.minecraft.world.phys.AABB grab = new net.minecraft.world.phys.AABB(o).inflate(0.35);
+        return grab.contains(from) || grab.clip(from, from.add(dir.scale(512))).isPresent();
+    }
+
+    private static void segment(VertexConsumer b, PoseStack.Pose pose, Vec3 cam, double x0, double y0, double z0, double x1, double y1, double z1, int color, float width) {
+        float nx = (float) (x1 - x0), ny = (float) (y1 - y0), nz = (float) (z1 - z0);
+        float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
+        b.addVertex(pose, (float) (x0 - cam.x), (float) (y0 - cam.y), (float) (z0 - cam.z)).setColor(color).setNormal(pose, nx / len, ny / len, nz / len).setLineWidth(width);
+        b.addVertex(pose, (float) (x1 - cam.x), (float) (y1 - cam.y), (float) (z1 - cam.z)).setColor(color).setNormal(pose, nx / len, ny / len, nz / len).setLineWidth(width);
     }
 
     private static void cube(VertexConsumer b, PoseStack.Pose pose, Vec3 cam, BlockPos p, int color, float width) {

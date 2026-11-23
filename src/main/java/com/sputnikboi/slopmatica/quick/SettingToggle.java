@@ -54,6 +54,45 @@ public record SettingToggle(String setting, List<String> values) {
         SETTINGS.put("planSideList", "slopmatica.plan.side");
     }
 
+    /** Which group each setting is listed under in the Quick Menu editor. */
+    public static final Map<String, String> CATEGORY = new LinkedHashMap<>();
+    /** Steps for number settings, so they can be added with one click (right click there picks your own). */
+    private static final Map<String, List<String>> DEFAULT_STEPS = Map.of(
+        "ghostOpacity", List.of("30", "65", "100"),
+        "outlineWidth", List.of("50", "100", "200"),
+        "outlineDistance", List.of("50", "100", "200"),
+        "brushRadius", List.of("1", "2", "4", "8"));
+
+    static {
+        for (String s : List.of("showGhosts", "solidGhosts", "ghostOpacity", "showOutlines", "outlineWidth", "outlineDistance", "fadeOutlines", "blockInfo")) {
+            CATEGORY.put(s, "set_display");
+        }
+        for (String s : List.of("easyPlaceOrder", "easyPlaceRestrict", "easyPlaceAngel", "includeNbt", "pasteReplace", "copyFormat", "viewFreecam", "viewCollision")) {
+            CATEGORY.put(s, "set_building");
+        }
+        for (String s : List.of("cornerMode", "selectionTool", "selectionMode", "brushRadius", "brushShape", "magicExact")) {
+            CATEGORY.put(s, "set_selection");
+        }
+        for (String s : List.of("planScope", "planShowInInventory", "planSideList")) {
+            CATEGORY.put(s, "set_plan");
+        }
+    }
+
+    /** The ready-made toggle for a setting: on/off, every choice, or a few useful numbers. */
+    public static SettingToggle standard(String setting) {
+        return new SettingToggle(setting, DEFAULT_STEPS.getOrDefault(setting, List.of()));
+    }
+
+    /** "on / off", "sphere / cube", "1 / 2 / 4 / 8"... */
+    public String stepsText() {
+        Field f = field(setting);
+        boolean percent = f != null && (f.getType() == float.class || setting.equals("outlineDistance"));
+        if (f != null && f.getType() == boolean.class && values.isEmpty()) {
+            return Component.translatable("options.on").getString() + " / " + Component.translatable("options.off").getString();
+        }
+        return String.join(" / ", steps().stream().map(v -> v.toLowerCase(Locale.ROOT).replace('_', ' ') + (percent ? "%" : "")).toList());
+    }
+
     public String id() {
         return PREFIX + setting + ":" + String.join("|", values);
     }

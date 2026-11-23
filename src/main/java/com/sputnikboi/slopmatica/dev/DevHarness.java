@@ -99,6 +99,7 @@ public final class DevHarness {
                     case "color" -> new com.sputnikboi.slopmatica.gui.ColorPickerScreen(null, com.sputnikboi.slopmatica.verify.BlockStatus.MISSING);
                     case "action-keys" -> new com.sputnikboi.slopmatica.gui.ActionKeysScreen(null);
                     case "seltools" -> new com.sputnikboi.slopmatica.gui.SelectionToolsScreen(null);
+                    case "quickedit" -> new com.sputnikboi.slopmatica.gui.QuickMenuEditScreen(null, false);
                     case "controls-keys" -> new com.sputnikboi.slopmatica.gui.ControlsKeysScreen(null);
                     case "welcome" -> new com.sputnikboi.slopmatica.gui.WelcomeScreen(null);
                     case "import" -> new com.sputnikboi.slopmatica.gui.LitematicaImportScreen(null);
@@ -148,6 +149,22 @@ public final class DevHarness {
                     screen.mouseDragged(new net.minecraft.client.input.MouseButtonEvent(x, y, info), (x2 - x1) / 10, (y2 - y1) / 10);
                 }
                 screen.mouseReleased(new net.minecraft.client.input.MouseButtonEvent(x2, y2, info));
+            } else if (step.startsWith("dragworld ") && mc.gui.screen() != null) {
+                // dragworld <x1> <y1> <z1> <x2> <y2> <z2>: a drag between where two world points show on screen.
+                String[] parts = step.split(" ");
+                Screen screen = mc.gui.screen();
+                var view = com.sputnikboi.slopmatica.view.PlacementView.INSTANCE;
+                double[] a = view.project(mc, new net.minecraft.world.phys.Vec3(Double.parseDouble(parts[1]), Double.parseDouble(parts[2]), Double.parseDouble(parts[3])), screen.width, screen.height);
+                double[] b = view.project(mc, new net.minecraft.world.phys.Vec3(Double.parseDouble(parts[4]), Double.parseDouble(parts[5]), Double.parseDouble(parts[6])), screen.width, screen.height);
+                LOGGER.info("dev dragworld {} -> {}", a == null ? null : java.util.Arrays.toString(a), b == null ? null : java.util.Arrays.toString(b));
+                if (a != null && b != null) {
+                    var info = new net.minecraft.client.input.MouseButtonInfo(1, 0);
+                    screen.mouseClicked(new net.minecraft.client.input.MouseButtonEvent(a[0], a[1], info), false);
+                    for (int i = 1; i <= 10; i++) {
+                        screen.mouseDragged(new net.minecraft.client.input.MouseButtonEvent(a[0] + (b[0] - a[0]) * i / 10, a[1] + (b[1] - a[1]) * i / 10, info), 0, 0);
+                    }
+                    screen.mouseReleased(new net.minecraft.client.input.MouseButtonEvent(b[0], b[1], info));
+                }
             } else if (step.startsWith("thumbs ")) {
                 // thumbs <schematic dir> <png dir>: the preview icon of every schematic in a folder.
                 String[] parts = step.split(" ");

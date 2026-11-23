@@ -25,13 +25,37 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Customising the Quick Menu (E while it is open, or Options → Quick Actions): the hotbar's nine
- * slots or the wheel's pages on top, every action below.
- * Click an action and then a slot to put it there (or a slot first, then the action); click two
- * slots to swap them; right click a slot to empty it. New setting toggles are made at the bottom.
+ * slots or the wheel's pages on top; below, everything that can go in them, searchable and grouped
+ * (actions by what they're for, then every setting as a ready-made toggle). Click one to put it in
+ * the chosen slot (or the first empty one), or drag it onto a slot. Click two slots to swap them;
+ * right click a slot to empty it; right click a setting to choose its own steps.
  */
 public class QuickMenuEditScreen extends Screen {
     private static final int SLOT = 22;
     private static final int ENTRY_W = 150, ENTRY_H = 20;
+    private static final int HEADER_H = 14;
+    /** The editor's groups, in order. */
+    private static final List<String> CATEGORIES = List.of("build", "selection", "view", "menus", "online", "other",
+        "set_display", "set_building", "set_selection", "set_plan", "custom");
+
+    /** One thing in the list: an action, or a setting's ready-made toggle. */
+    private record Entry(String id, QuickAction action, String category, @Nullable String setting, Component tooltip) {
+    }
+
+    /** One drawn row piece: a group heading (entry null) or an entry, at list coordinates. */
+    private record Placed(int x, int y, @Nullable Entry entry, @Nullable String heading) {
+    }
+
+    private @Nullable EditBox search;
+    private String query = "";
+    private double scroll;
+    private int listTop, listBottom;
+    /** Pressed on an entry: it, where, and whether it has been dragged off. */
+    private @Nullable Entry pressed;
+    private double pressX, pressY;
+    private boolean dragging;
+    private @Nullable Component notice;
+    private long noticeUntil;
 
     private final @Nullable Screen parent;
     private int selectedSlot = -1;
@@ -88,7 +112,16 @@ public class QuickMenuEditScreen extends Screen {
         barY = 34;
         columns = Math.max(1, Math.min(4, (width - 20) / (ENTRY_W + 4)));
         gridX = width / 2 - columns * (ENTRY_W + 4) / 2;
-        gridY = barY + SLOT + 22;
+        gridY = barY + SLOT + 16;
+        search = addRenderableWidget(new EditBox(font, gridX, gridY, Math.min(200, columns * (ENTRY_W + 4) - 4), 18, Component.translatable("slopmatica.quick.edit.search")));
+        search.setValue(query);
+        search.setHint(Component.translatable("slopmatica.quick.edit.search.hint").withStyle(EditBox.SEARCH_HINT_STYLE));
+        search.setResponder(v -> {
+            query = v;
+            scroll = 0;
+        });
+        listTop = gridY + 22;
+        listBottom = height - (addingToggle ? 64 : 56);
         SlopmaticaConfig c = SlopmaticaConfig.get();
         int by = height - 28;
         // Which layout: tabs left of the slots; the wheel's page controls on the right.
@@ -190,10 +223,6 @@ public class QuickMenuEditScreen extends Screen {
                 c.quickStyle = v;
                 c.save();
             }));
-        addRenderableWidget(Button.builder(Component.translatable("slopmatica.quick.edit.new_toggle"), b -> {
-            addingToggle = true;
-            rebuildWidgets();
-        }).bounds(bx + 114, by, 90, 20).tooltip(Tooltip.create(Component.translatable("slopmatica.quick.edit.new_toggle.tooltip"))).build());
         addRenderableWidget(Button.builder(Component.translatable("slopmatica.quick.edit.reset"), b -> {
             if (wheel) {
                 List<String> defaults = page < QuickLayout.WHEEL_DEFAULT.size() ? QuickLayout.WHEEL_DEFAULT.get(page) : java.util.Collections.nCopies(QuickLayout.WHEEL_SLOTS, "");
@@ -201,8 +230,8 @@ public class QuickMenuEditScreen extends Screen {
             } else {
                 saveSlots(new ArrayList<>(QuickAction.DEFAULT_LAYOUT));
             }
-        }).bounds(bx + 208, by, 90, 20).build());
-        addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> onClose()).bounds(bx + 302, by, 90, 20).build());
+        }).bounds(bx + 114, by, 90, 20).build());
+        addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> onClose()).bounds(bx + 208, by, 90, 20).build());
     }
 
     private void addToggle() {
@@ -223,14 +252,132 @@ public class QuickMenuEditScreen extends Screen {
             c.quickToggles.add(toggle.id());
         }
         c.save();
-        pending = toggle.id();
         addingToggle = false;
         toggleValues = "";
         rebuildWidgets();
+        QuickAction action = toggle.action();
+        place(new Entry(toggle.id(), action, "custom", null, action.label().get()));
     }
 
-    private List<QuickAction> actions() {
-        return QuickAction.all();
+    /** Everything that can go in a slot, in group order, filtered by the search. */
+    private List<Entry> entries() {
+        List<Entry> out = new ArrayList<>();
+        for (QuickAction a : QuickAction.all()) {
+            Component tip = a.label().get();
+            if (a.id().startsWith(SettingToggle.PREFIX)) {
+                SettingToggle t = SettingToggle.parse(a.id());
+                tip = Component.translatable("slopmatica.quick.edit.custom.tooltip", t == null ? "" : t.stepsText());
+            } else if (!a.standard()) {
+                tip = tip.copy().append(Component.literal("  (optional)").withStyle(ChatFormatting.GRAY));
+            }
+            out.add(new Entry(a.id(), a, a.category(), null, tip));
+        }
+        for (String setting : SettingToggle.SETTINGS.keySet()) {
+            SettingToggle t = SettingToggle.standard(setting);
+            if (SettingToggle.parse(t.id()) == null) {
+                continue;
+            }
+            out.add(new Entry(t.id(), t.action(), SettingToggle.CATEGORY.getOrDefault(setting, "set_display"), setting,
+                Component.translatable("slopmatica.quick.edit.setting.tooltip", Component.translatable(SettingToggle.SETTINGS.get(setting)), t.stepsText())));
+        }
+        String q = query.trim().toLowerCase(Locale.ROOT);
+        if (!q.isEmpty()) {
+            out.removeIf(e -> !(label(e).getString() + " " + Component.translatable("slopmatica.quick.cat." + e.category()).getString())
+                .toLowerCase(Locale.ROOT).contains(q));
+        }
+        out.sort(java.util.Comparator.comparingInt(e -> CATEGORIES.indexOf(e.category())));
+        return out;
+    }
+
+    /** A setting entry shows the setting's name; anything else its own label. */
+    private static Component label(Entry e) {
+        return e.setting() != null ? Component.translatable(SettingToggle.SETTINGS.get(e.setting())) : e.action().label().get();
+    }
+
+    /** Where every heading and entry goes, before scrolling (y from the list's top). */
+    private List<Placed> layoutList() {
+        List<Placed> out = new ArrayList<>();
+        String category = null;
+        int y = 0, col = 0;
+        for (Entry e : entries()) {
+            if (!e.category().equals(category)) {
+                if (col > 0) {
+                    y += ENTRY_H + 2;
+                }
+                col = 0;
+                category = e.category();
+                out.add(new Placed(gridX, y + (out.isEmpty() ? 0 : 4), null, category));
+                y += HEADER_H + (out.size() == 1 ? 0 : 4);
+            }
+            out.add(new Placed(gridX + col * (ENTRY_W + 4), y, e, null));
+            if (++col == columns) {
+                col = 0;
+                y += ENTRY_H + 2;
+            }
+        }
+        return out;
+    }
+
+    private int contentHeight(List<Placed> placed) {
+        int h = 0;
+        for (Placed p : placed) {
+            h = Math.max(h, p.y() + (p.entry() == null ? HEADER_H : ENTRY_H));
+        }
+        return h;
+    }
+
+    private @Nullable Entry entryAt(double mx, double my) {
+        if (my < listTop || my >= listBottom) {
+            return null;
+        }
+        for (Placed p : layoutList()) {
+            int y = listTop + p.y() - (int) scroll;
+            if (p.entry() != null && mx >= p.x() && mx < p.x() + ENTRY_W && my >= y && my < y + ENTRY_H) {
+                return p.entry();
+            }
+        }
+        return null;
+    }
+
+    private int slotAt(double mx, double my) {
+        int count = slots().size();
+        for (int i = 0; i < count; i++) {
+            int x = barX + i * SLOT;
+            if (mx >= x && mx < x + SLOT && my >= barY && my < barY + SLOT) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void notice(Component text) {
+        notice = text;
+        noticeUntil = net.minecraft.util.Util.getMillis() + 3000;
+    }
+
+    /** Clicked in the list: into the chosen slot (then the next one is chosen), else the first empty one. */
+    private void place(Entry e) {
+        List<String> layout = slots();
+        int slot = selectedSlot;
+        if (slot < 0) {
+            slot = layout.indexOf("");
+        }
+        if (slot < 0) {
+            pending = e.id();
+            notice(Component.translatable("slopmatica.quick.edit.full"));
+            return;
+        }
+        put(slot, e.id());
+    }
+
+    private void put(int slot, String id) {
+        List<String> layout = slots();
+        layout.set(slot, id);
+        saveSlots(layout);
+        pending = null;
+        selectedSlot = selectedSlot >= 0 && slot + 1 < layout.size() ? slot + 1 : -1;
+        QuickAction a = QuickAction.get(id);
+        notice(Component.translatable("slopmatica.quick.edit.placed", a == null ? id : a.label().get(), slot + 1));
     }
 
     @Override
@@ -240,38 +387,71 @@ public class QuickMenuEditScreen extends Screen {
         g.centeredText(font, Component.translatable("slopmatica.quick.edit.help"), width / 2, 21, 0xFFA0A0A0);
         List<String> layout = slots();
         Component hovered = null;
-        if (wheel) {
-            g.centeredText(font, Component.translatable("slopmatica.quick.edit.page", page + 1, ActionWheel.pages().size()), width / 2, barY + SLOT + 4, 0xFFA0A0A0);
-        }
+        int dropSlot = dragging ? slotAt(mouseX, mouseY) : -1;
         for (int i = 0; i < layout.size(); i++) {
             int x = barX + i * SLOT, y = barY;
             boolean over = mouseX >= x && mouseX < x + SLOT && mouseY >= y && mouseY < y + SLOT;
-            g.fill(x, y, x + SLOT - 2, y + SLOT - 2, i == selectedSlot ? 0xFF3A6FD0 : over ? 0xFF505050 : 0xFF303030);
+            g.fill(x, y, x + SLOT - 2, y + SLOT - 2, i == selectedSlot || i == dropSlot ? 0xFF3A6FD0 : over ? 0xFF505050 : 0xFF303030);
             g.text(font, String.valueOf(i + 1), x + 1, y + 1, 0xFF808080);
             QuickAction action = QuickAction.get(layout.get(i));
             if (action != null) {
                 action.drawIcon(g, x + 2, y + 2);
-                if (over) {
+                if (over && !dragging) {
                     hovered = action.label().get();
                 }
             }
         }
-        List<QuickAction> all = actions();
-        for (int i = 0; i < all.size(); i++) {
-            QuickAction action = all.get(i);
-            int x = gridX + (i % columns) * (ENTRY_W + 4), y = gridY + (i / columns) * (ENTRY_H + 2);
-            if (y + ENTRY_H > height - 56) {
-                break;
+        if (wheel) {
+            g.centeredText(font, Component.translatable("slopmatica.quick.edit.page", page + 1, ActionWheel.pages().size()), width / 2, barY + SLOT + 2, 0xFFA0A0A0);
+        }
+        if (notice != null && net.minecraft.util.Util.getMillis() < noticeUntil && search != null) {
+            g.text(font, notice, search.getX() + search.getWidth() + 8, gridY + 5, 0xFF80C0FF);
+        } else if (search != null) {
+            g.text(font, Component.translatable(selectedSlot >= 0 ? "slopmatica.quick.edit.hint_slot" : "slopmatica.quick.edit.hint", selectedSlot + 1),
+                search.getX() + search.getWidth() + 8, gridY + 5, 0xFF808080);
+        }
+
+        List<Placed> placed = layoutList();
+        scroll = Math.clamp(scroll, 0, Math.max(0, contentHeight(placed) - (listBottom - listTop)));
+        g.enableScissor(0, listTop, width, listBottom);
+        for (Placed p : placed) {
+            int y = listTop + p.y() - (int) scroll;
+            if (y + ENTRY_H < listTop || y > listBottom) {
+                continue;
             }
-            boolean over = mouseX >= x && mouseX < x + ENTRY_W && mouseY >= y && mouseY < y + ENTRY_H;
-            boolean inUse = layout.contains(action.id());
-            g.fill(x, y, x + ENTRY_W, y + ENTRY_H, action.id().equals(pending) ? 0xFF3A6FD0 : over ? 0x60FFFFFF : 0x40000000);
-            action.drawIcon(g, x + 2, y + 2);
-            Component label = action.label().get();
-            g.text(font, font.plainSubstrByWidth(label.getString(), ENTRY_W - 24), x + 21, y + 6, inUse ? 0xFF80C080 : 0xFFFFFFFF);
+            if (p.entry() == null) {
+                g.text(font, Component.translatable("slopmatica.quick.cat." + p.heading()).withStyle(ChatFormatting.BOLD), p.x(), y + 3, 0xFFFFD040);
+                g.fill(p.x(), y + HEADER_H - 2, gridX + columns * (ENTRY_W + 4) - 4, y + HEADER_H - 1, 0x40FFFFFF);
+                continue;
+            }
+            Entry e = p.entry();
+            boolean over = !dragging && mouseX >= p.x() && mouseX < p.x() + ENTRY_W && mouseY >= y && mouseY < y + ENTRY_H && mouseY >= listTop && mouseY < listBottom;
+            boolean inUse = layout.contains(e.id());
+            g.fill(p.x(), y, p.x() + ENTRY_W, y + ENTRY_H, e.id().equals(pending) ? 0xFF3A6FD0 : over ? 0x60FFFFFF : 0x40000000);
+            e.action().drawIcon(g, p.x() + 2, y + 2);
+            String text = label(e).getString();
+            g.text(font, font.plainSubstrByWidth(text, ENTRY_W - 24 - (inUse ? 10 : 0)), p.x() + 21, y + 6, inUse ? 0xFF80C080 : 0xFFFFFFFF);
+            if (inUse) {
+                g.text(font, "✔", p.x() + ENTRY_W - 10, y + 6, 0xFF80C080);
+            }
             if (over) {
-                hovered = Component.empty().append(label).append(Component.literal(action.standard() ? "" : "  (optional)").withStyle(ChatFormatting.GRAY));
+                hovered = e.tooltip();
             }
+        }
+        g.disableScissor();
+        int content = contentHeight(placed), shown = listBottom - listTop;
+        if (content > shown) {
+            // A scrollbar: there's more below (or above).
+            int bx = gridX + columns * (ENTRY_W + 4), thumb = Math.max(12, shown * shown / content);
+            int ty = listTop + (int) ((shown - thumb) * scroll / (content - shown));
+            g.fill(bx, listTop, bx + 3, listBottom, 0x40FFFFFF);
+            g.fill(bx, ty, bx + 3, ty + thumb, 0xC0FFFFFF);
+        }
+        if (placed.isEmpty()) {
+            g.centeredText(font, Component.translatable("slopmatica.quick.edit.nothing"), width / 2, listTop + 10, 0xFF808080);
+        }
+        if (dragging && pressed != null) {
+            pressed.action().drawIcon(g, mouseX - 8, mouseY - 8);
         }
         if (hovered != null) {
             g.setTooltipForNextFrame(font, hovered, mouseX, mouseY);
@@ -282,6 +462,15 @@ public class QuickMenuEditScreen extends Screen {
     }
 
     @Override
+    public boolean mouseScrolled(double x, double y, double scrollX, double scrollY) {
+        if (y >= listTop && y < listBottom) {
+            scroll -= scrollY * (ENTRY_H + 2) * 2;
+            return true;
+        }
+        return super.mouseScrolled(x, y, scrollX, scrollY);
+    }
+
+    @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         if (super.mouseClicked(event, doubleClick)) {
             return true;
@@ -289,48 +478,81 @@ public class QuickMenuEditScreen extends Screen {
         double mx = event.x(), my = event.y();
         SlopmaticaConfig c = SlopmaticaConfig.get();
         List<String> layout = slots();
-        for (int i = 0; i < layout.size(); i++) {
-            int x = barX + i * SLOT;
-            if (mx >= x && mx < x + SLOT && my >= barY && my < barY + SLOT) {
-                if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
-                    layout.set(i, "");
-                } else if (pending != null) {
-                    layout.set(i, pending);
-                    pending = null;
-                    selectedSlot = i;
-                } else if (selectedSlot >= 0 && selectedSlot != i) {
-                    String moved = layout.get(selectedSlot);
-                    layout.set(selectedSlot, layout.get(i));
-                    layout.set(i, moved);
-                    selectedSlot = -1;
-                } else {
-                    selectedSlot = selectedSlot == i ? -1 : i;
-                }
+        int i = slotAt(mx, my);
+        if (i >= 0) {
+            if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
+                layout.set(i, "");
                 saveSlots(layout);
-                return true;
+            } else if (pending != null) {
+                put(i, pending);
+            } else if (selectedSlot >= 0 && selectedSlot != i) {
+                String moved = layout.get(selectedSlot);
+                layout.set(selectedSlot, layout.get(i));
+                layout.set(i, moved);
+                selectedSlot = -1;
+                saveSlots(layout);
+            } else {
+                selectedSlot = selectedSlot == i ? -1 : i;
             }
+            return true;
         }
-        List<QuickAction> all = actions();
-        for (int i = 0; i < all.size(); i++) {
-            int x = gridX + (i % columns) * (ENTRY_W + 4), y = gridY + (i / columns) * (ENTRY_H + 2);
-            if (mx >= x && mx < x + ENTRY_W && my >= y && my < y + ENTRY_H) {
-                String id = all.get(i).id();
-                if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT && id.startsWith(SettingToggle.PREFIX)) {
-                    // Right click a made toggle: forget it (and take it off the bar).
-                    c.quickToggles.remove(id);
-                    c.quickMenu.replaceAll(s -> s.equals(id) ? "" : s);
-                    c.wheelPages.forEach(p -> p.replaceAll(s -> s.equals(id) ? "" : s));
-                } else if (selectedSlot >= 0) {
-                    layout.set(selectedSlot, id);
-                    saveSlots(layout);
-                } else {
-                    pending = id.equals(pending) ? null : id;
-                }
+        Entry e = entryAt(mx, my);
+        if (e == null) {
+            return false;
+        }
+        if (event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
+            if (e.id().startsWith(SettingToggle.PREFIX) && e.setting() == null) {
+                // Right click your own toggle: forget it (and take it off the bar).
+                String id = e.id();
+                c.quickToggles.remove(id);
+                c.quickMenu.replaceAll(s -> s.equals(id) ? "" : s);
+                c.wheelPages.forEach(p -> p.replaceAll(s -> s.equals(id) ? "" : s));
                 c.save();
-                return true;
+            } else if (e.setting() != null) {
+                // Right click a setting: choose its own steps.
+                toggleSetting = e.setting();
+                toggleValues = "";
+                addingToggle = true;
+                rebuildWidgets();
             }
+            return true;
         }
-        return false;
+        pressed = e;
+        pressX = mx;
+        pressY = my;
+        dragging = false;
+        return true;
+    }
+
+    @Override
+    public boolean mouseDragged(MouseButtonEvent event, double dx, double dy) {
+        if (pressed != null) {
+            if (!dragging && Math.hypot(event.x() - pressX, event.y() - pressY) > 4) {
+                dragging = true;
+            }
+            return true;
+        }
+        return super.mouseDragged(event, dx, dy);
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        Entry e = pressed;
+        if (e == null) {
+            return super.mouseReleased(event);
+        }
+        pressed = null;
+        if (dragging) {
+            dragging = false;
+            int slot = slotAt(event.x(), event.y());
+            if (slot >= 0) {
+                selectedSlot = -1;
+                put(slot, e.id());
+            }
+        } else if (e.equals(entryAt(event.x(), event.y()))) {
+            place(e);
+        }
+        return true;
     }
 
     @Override

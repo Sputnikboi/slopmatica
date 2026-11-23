@@ -123,4 +123,42 @@ class SelectionShapeTest {
         assertNotNull(o);
         assertEquals(6 + 6 + 6, o.lines());
     }
+
+    @Test
+    void shapesStretchIntoTheirNewBox() {
+        // A ball of radius 2 made twice as tall: an egg, filling its new box.
+        SelectionShape egg = new SelectionShape.Ball(BlockPos.ZERO, 2).fit(new BoundingBox(-2, -2, -2, 2, 7, 2));
+        assertEquals(new BoundingBox(-2, -2, -2, 2, 7, 2), egg.bounds());
+        assertTrue(egg.contains(0, 7, 0));
+        assertTrue(egg.contains(0, -2, 0));
+        assertFalse(egg.contains(2, 7, 2));
+        // Fitted to its own box, a ball is the same ball.
+        assertEquals(count(new SelectionShape.Ball(BlockPos.ZERO, 2)), count(new SelectionShape.Ball(BlockPos.ZERO, 2).fit(new BoundingBox(-2, -2, -2, 2, 2, 2))));
+        // A cylinder made wider in x only: an oval.
+        SelectionShape oval = new SelectionShape.Cylinder(BlockPos.ZERO, 1, 0, 3).fit(new BoundingBox(-4, 0, -1, 4, 5, 1));
+        assertTrue(oval.contains(-4, 5, 0));
+        assertFalse(oval.contains(0, 5, 2));
+        // Single blocks moved stay the same blocks; doubled, each one becomes two.
+        SelectionShape.Cells l = new SelectionShape.Cells();
+        l.add(0, 0, 0);
+        l.add(1, 0, 0);
+        l.add(0, 0, 1);
+        assertEquals(3, count(l.fit(new BoundingBox(10, 5, 10, 11, 5, 11))));
+        assertTrue(l.fit(new BoundingBox(10, 5, 10, 11, 5, 11)).contains(11, 5, 10));
+        assertEquals(3 * 4, count(l.fit(new BoundingBox(0, 0, 0, 3, 0, 3))));
+        // A polygon keeps its corners at the frame's sides.
+        var prism = SelectionShape.Prism.of(List.of(new BlockPos(0, 0, 0), new BlockPos(4, 0, 0), new BlockPos(0, 2, 4)));
+        SelectionShape big = prism.fit(new BoundingBox(0, 0, 0, 8, 5, 8));
+        assertEquals(new BoundingBox(0, 0, 0, 8, 5, 8), big.bounds());
+        assertTrue(big.contains(8, 5, 0));
+    }
+
+    @Test
+    void framesMapPartsAlong() {
+        BoundingBox from = new BoundingBox(0, 0, 0, 9, 9, 9);
+        // Moving: everything shifts.
+        assertEquals(new BoundingBox(5, 0, 2, 7, 1, 4), SelectionShape.map(new BoundingBox(2, 0, 2, 4, 1, 4), from, from.moved(3, 0, 0)));
+        // Doubling: a part in the far half stays in the far half, twice as big.
+        assertEquals(new BoundingBox(10, 0, 0, 19, 9, 9), SelectionShape.map(new BoundingBox(5, 0, 0, 9, 9, 9), from, new BoundingBox(0, 0, 0, 19, 9, 9)));
+    }
 }

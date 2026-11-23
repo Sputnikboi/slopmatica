@@ -479,6 +479,20 @@ public final class PlacementView {
         return new Vec3(f.x() - l.x() * nx + u.x() * ny, f.y() - l.y() * nx + u.y() * ny, f.z() - l.z() * nx + u.z() * ny).normalize();
     }
 
+    /** Where a world point shows on a {@code w x h} GUI screen (the reverse of {@link #rayThrough}); null if behind the camera. */
+    public double @Nullable [] project(Minecraft mc, Vec3 point, int w, int h) {
+        Camera camera = mc.gameRenderer.mainCamera();
+        double tan = Math.tan(Math.toRadians(camera.getFov()) / 2);
+        Vector3fc f = camera.forwardVector(), u = camera.upVector(), l = camera.leftVector();
+        Vec3 d = point.subtract(eye());
+        double fwd = d.x * f.x() + d.y * f.y() + d.z * f.z();
+        if (fwd <= 0) {
+            return null;
+        }
+        double nx = -(d.x * l.x() + d.y * l.y() + d.z * l.z()) / fwd, ny = (d.x * u.x() + d.y * u.y() + d.z * u.z()) / fwd;
+        return new double[] {(nx / (tan * w / h) + 1) * w / 2, (1 - ny / tan) * h / 2};
+    }
+
     public Vec3 eye() {
         return new Vec3(x, y, z);
     }
