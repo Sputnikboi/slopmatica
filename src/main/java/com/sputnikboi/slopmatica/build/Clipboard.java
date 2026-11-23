@@ -80,6 +80,11 @@ public final class Clipboard {
      * The copy key and the build view's save screen (V) both come here.
      */
     public void save(Minecraft mc, @Nullable String chosenName, SchematicFormats format, Path dir) {
+        save(mc, chosenName, format, dir, null);
+    }
+
+    /** As above, with the schematic's settings (biome, origin point...) written into the file too. */
+    public void save(Minecraft mc, @Nullable String chosenName, SchematicFormats format, Path dir, com.sputnikboi.slopmatica.schematic.@Nullable SchematicMeta meta) {
         ClientLevel level = mc.level;
         BoundingBox box = Selection.INSTANCE.box();
         if (level == null || mc.player == null) {
@@ -144,6 +149,9 @@ public final class Clipboard {
         CompletableFuture.runAsync(() -> {
             try {
                 format.write(file, blocks);
+                if (meta != null && !meta.isEmpty()) {
+                    meta.write(file);
+                }
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }

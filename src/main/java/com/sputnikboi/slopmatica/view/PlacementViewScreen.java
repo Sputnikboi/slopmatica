@@ -200,17 +200,20 @@ public class PlacementViewScreen extends Screen {
         } else if (tool == Tool.SELECT) {
             y = initSelectTools(x, y);
             boolean any = Selection.INSTANCE.box() != null;
-            int third = (LEFT_W - 2 * GAP) / 3;
+            int quarter = (LEFT_W - 3 * GAP) / 4;
             Button copy = addRenderableWidget(Button.builder(Component.translatable("slopmatica.tool.selection.copy"), b -> Clipboard.INSTANCE.copy(minecraft))
-                .bounds(x, y, third, B).tooltip(Tooltip.create(Component.translatable("slopmatica.tool.selection.copy.tooltip"))).build());
+                .bounds(x, y, quarter, B).tooltip(Tooltip.create(Component.translatable("slopmatica.tool.selection.copy.tooltip"))).build());
+            Button save = addRenderableWidget(Button.builder(Component.translatable("slopmatica.tool.selection.save"),
+                    b -> minecraft.gui.setScreen(new com.sputnikboi.slopmatica.gui.SaveSelectionScreen(this)))
+                .bounds(x + quarter + GAP, y, quarter, B).tooltip(Tooltip.create(Component.translatable("slopmatica.tool.selection.save.tooltip"))).build());
             Button clear = addRenderableWidget(Button.builder(Component.translatable("slopmatica.tool.selection.clear"), b -> {
                 UndoStack.INSTANCE.saveSelection();
                 Selection.INSTANCE.clear();
                 rebuildWidgets();
-            }).bounds(x + third + GAP, y, third, B).build());
-            copy.active = clear.active = any;
+            }).bounds(x + 2 * (quarter + GAP), y, quarter, B).build());
+            copy.active = save.active = clear.active = any;
             addRenderableWidget(Button.builder(Component.translatable("slopmatica.seltools.more"), b -> minecraft.gui.setScreen(new com.sputnikboi.slopmatica.gui.SelectionToolsScreen(this)))
-                .bounds(x + 2 * (third + GAP), y, LEFT_W - 2 * (third + GAP), B).tooltip(Tooltip.create(Component.translatable("slopmatica.seltools.more.tooltip"))).build());
+                .bounds(x + 3 * (quarter + GAP), y, LEFT_W - 3 * (quarter + GAP), B).tooltip(Tooltip.create(Component.translatable("slopmatica.seltools.more.tooltip"))).build());
             y += B + GAP;
         }
 

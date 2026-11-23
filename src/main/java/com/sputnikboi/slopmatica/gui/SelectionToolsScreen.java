@@ -96,8 +96,10 @@ public class SelectionToolsScreen extends OptionsSubScreen {
             Selection.INSTANCE.clear();
             rebuildWidgets();
         });
-        copy.active = clear.active = any;
-        list.addSmall(copy, clear);
+        Button save = button("slopmatica.tool.selection.save", b -> minecraft.gui.setScreen(new SaveSelectionScreen(this)));
+        copy.active = clear.active = save.active = any;
+        list.addSmall(copy, save);
+        list.addSmall(clear, null);
         list.addSmall(OptionInstance.createBoolean("slopmatica.lock.option",
             OptionInstance.cachedConstantTooltip(Component.translatable("slopmatica.lock.tooltip")), c.lockToSelection, v -> c.lockToSelection = v),
             null);

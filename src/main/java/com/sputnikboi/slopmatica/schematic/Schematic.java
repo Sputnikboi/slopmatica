@@ -68,6 +68,11 @@ public final class Schematic {
         if (m.origin != null) {
             return m.origin;
         }
+        return defaultOriginPoint();
+    }
+
+    /** Where the origin point is when the file sets none: the middle of the bottom layer. */
+    public net.minecraft.core.BlockPos defaultOriginPoint() {
         return new net.minecraft.core.BlockPos(Math.floorDiv(bounds.minX() + bounds.maxX(), 2), bounds.minY(), Math.floorDiv(bounds.minZ() + bounds.maxZ(), 2));
     }
 

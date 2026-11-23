@@ -101,6 +101,8 @@ public final class DevHarness {
                     case "seltools" -> new com.sputnikboi.slopmatica.gui.SelectionToolsScreen(null);
                     case "quickedit" -> new com.sputnikboi.slopmatica.gui.QuickMenuEditScreen(null, false);
                     case "pause" -> new net.minecraft.client.gui.screens.PauseScreen(true);
+                    case "savesel" -> new com.sputnikboi.slopmatica.gui.SaveSelectionScreen(null);
+                    case "info" -> new com.sputnikboi.slopmatica.gui.SchematicInfoScreen(null, PlacementManager.INSTANCE.selected().orElseThrow().schematic().source(), PlacementManager.INSTANCE.selected().orElseThrow());
                     case "controls-keys" -> new com.sputnikboi.slopmatica.gui.ControlsKeysScreen(null);
                     case "welcome" -> new com.sputnikboi.slopmatica.gui.WelcomeScreen(null);
                     case "import" -> new com.sputnikboi.slopmatica.gui.LitematicaImportScreen(null);
