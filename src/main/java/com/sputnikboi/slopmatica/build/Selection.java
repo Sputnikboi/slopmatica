@@ -757,11 +757,17 @@ public final class Selection {
         BoundingBox all = box();
         BoundingBox frame = frame();
         boolean editing = PlacementView.INSTANCE.editingSelection();
-        // Twice: faint through blocks, stronger where nothing is in front.
-        context.submitNodeCollector().submitCustomGeometry(poseStack, com.sputnikboi.slopmatica.render.SeeThroughLines.HIDDEN,
-            (pose, buffer) -> drawAll(buffer, pose, cam, width, plain, shape, all, frame, editing, com.sputnikboi.slopmatica.render.SeeThroughLines.HIDDEN_ALPHA));
-        context.submitNodeCollector().submitCustomGeometry(poseStack, com.sputnikboi.slopmatica.render.SeeThroughLines.VISIBLE,
-            (pose, buffer) -> drawAll(buffer, pose, cam, width, plain, shape, all, frame, editing, com.sputnikboi.slopmatica.render.SeeThroughLines.VISIBLE_ALPHA));
+        if (PlacementView.INSTANCE.active()) {
+            // In the build view: twice, faint through blocks, stronger where nothing is in front.
+            context.submitNodeCollector().submitCustomGeometry(poseStack, com.sputnikboi.slopmatica.render.SeeThroughLines.HIDDEN,
+                (pose, buffer) -> drawAll(buffer, pose, cam, width, plain, shape, all, frame, editing, com.sputnikboi.slopmatica.render.SeeThroughLines.HIDDEN_ALPHA));
+            context.submitNodeCollector().submitCustomGeometry(poseStack, com.sputnikboi.slopmatica.render.SeeThroughLines.VISIBLE,
+                (pose, buffer) -> drawAll(buffer, pose, cam, width, plain, shape, all, frame, editing, com.sputnikboi.slopmatica.render.SeeThroughLines.VISIBLE_ALPHA));
+        } else {
+            // Out playing: solid lines, only where you can see them.
+            context.submitNodeCollector().submitCustomGeometry(poseStack, RenderTypes.lines(),
+                (pose, buffer) -> drawAll(buffer, pose, cam, width, plain, shape, all, frame, editing, 1));
+        }
     }
 
     /** How strongly the pass being built draws (a share of each colour's alpha). Render thread. */
