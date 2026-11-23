@@ -827,5 +827,14 @@
   "slopmatica.seltool.cursor.centre": "Centre %s, %s, %s",
   "slopmatica.view.selection_picked": "Selection picked: %s for the cursor to move or stretch it",
   "slopmatica.view.selection_let_go": "Selection let go: %s for the cursor to make a new one",
-  "slopmatica.view.select_needs_cursor": "Click the selection to pick it out; %s for the cursor to make one"
+  "slopmatica.view.select_needs_cursor": "Click the selection to pick it out; %s for the cursor to make one",
+  "slopmatica.lock.option": "Lock to Selection",
+  "slopmatica.lock.tooltip": "While on, you can only break, place and use blocks inside the selection: nothing outside it can be dug out by accident. Does nothing while there is no selection.",
+  "slopmatica.lock.on": "Locked to the selection: blocks outside it can't be broken, placed or used",
+  "slopmatica.lock.on_no_selection": "Lock to Selection is on: it starts working once there is a selection",
+  "slopmatica.lock.off": "Lock to Selection off",
+  "slopmatica.lock.blocked": "Outside the selection (Lock to Selection is on)",
+  "slopmatica.quick.lock_selection": "Lock to Selection",
+  "key.slopmatica.lock_selection": "Lock to Selection",
+  "slopmatica.lock.hud": "Locked to selection"
 }

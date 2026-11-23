@@ -94,6 +94,8 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
         add("selection_tools", Items.BRUSH, mc -> mc.gui.setScreen(new com.sputnikboi.slopmatica.gui.SelectionToolsScreen(null)), false, null, null);
         add("next_selection_tool", Items.SPYGLASS, mc -> com.sputnikboi.slopmatica.gui.SelectionToolsScreen.nextTool(), false, null, null);
         add("selection_mode", Items.SHEARS, mc -> com.sputnikboi.slopmatica.gui.SelectionToolsScreen.nextMode(), false, null, null);
+        add("lock_selection", Items.IRON_BARS, mc -> com.sputnikboi.slopmatica.build.SelectionLock.toggle(), false, null,
+            com.sputnikboi.slopmatica.build.SelectionLock::enabled);
         add("mark_removal", Items.IRON_PICKAXE, mc -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.markSelection(mc), false,
             mc -> Selection.INSTANCE.box() != null, null);
         add("unmark_removal", Items.WOODEN_PICKAXE, mc -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.unmarkSelection(mc), false,
@@ -116,7 +118,7 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
             CATEGORY.put(id, "build");
         }
         for (String id : List.of("corner", "selection_tools", "next_selection_tool", "selection_mode", "copy", "save_selection", "fit_selection", "clear_selection",
-            "mark_removal", "unmark_removal", "clear_removal")) {
+            "mark_removal", "unmark_removal", "clear_removal", "lock_selection")) {
             CATEGORY.put(id, "selection");
         }
         for (String id : List.of("layer_mode", "layer_up", "layer_down", "layer_here", "spawn_check")) {

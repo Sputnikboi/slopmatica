@@ -88,6 +88,7 @@ public final class SlopmaticaKeys {
     private static final KeyMapping NEXT_SELECTION_TOOL = register(COPY, "next_selection_tool");
     private static final KeyMapping SELECTION_MODE = register(COPY, "selection_mode");
     private static final KeyMapping MARK_REMOVAL = register(COPY, "mark_removal");
+    private static final KeyMapping LOCK_SELECTION = register(COPY, "lock_selection");
 
     private static final KeyMapping LAYER_MODE = register(LAYERS, "layer_mode");
     private static final KeyMapping LAYER_UP = register(LAYERS, "layer_up");
@@ -263,6 +264,9 @@ public final class SlopmaticaKeys {
         }
         while (pressed(MARK_REMOVAL)) {
             com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.markSelection(mc);
+        }
+        while (pressed(LOCK_SELECTION)) {
+            com.sputnikboi.slopmatica.build.SelectionLock.toggle();
         }
         while (pressed(COPY_SELECTION)) {
             Clipboard.INSTANCE.copy(mc);

@@ -133,6 +133,8 @@ public final class SlopmaticaConfig {
     /** The tools (by name) that only take surface blocks: solid ones with a side open to air. */
     public java.util.Set<String> surfaceTools = new java.util.LinkedHashSet<>(java.util.List.of("BRUSH"));
     /** The brush's radius in blocks (0 is one block). */
+    /** Lock to Selection: only break, place and use blocks inside the selection. */
+    public boolean lockToSelection = false;
     public int brushRadius = 2;
     public com.sputnikboi.slopmatica.build.SelectionTool.BrushShape brushShape = com.sputnikboi.slopmatica.build.SelectionTool.BrushShape.SPHERE;
     /** Magic select only takes blocks in exactly the same state (stairs facing the same way...), not just the same block. */

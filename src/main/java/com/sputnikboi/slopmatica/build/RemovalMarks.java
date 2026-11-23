@@ -276,17 +276,29 @@ public final class RemovalMarks implements BlockChanges.Listener {
             (pose, buffer) -> shape.draw(buffer, pose, cam, com.sputnikboi.slopmatica.render.SeeThroughLines.fade(COLOR, com.sputnikboi.slopmatica.render.SeeThroughLines.VISIBLE_ALPHA), width, 0.006));
     }
 
-    /** HUD, bottom left (above Replace Block's box): how many marked blocks are left. */
+    /** HUD, bottom left (above Replace Block's box): how many marked blocks are left, and whether the lock is on. */
     public void extractHud(GuiGraphicsExtractor g) {
         Minecraft mc = Minecraft.getInstance();
-        int n = count();
-        if (n == 0 || mc.player == null || mc.gui.screen() != null) {
+        if (mc.player == null || mc.gui.screen() != null) {
             return;
         }
-        String text = Component.translatable("slopmatica.marks.hud", String.format("%,d", n)).getString();
-        int x = 4, y = g.guiHeight() - 24 - (ReplaceBlock.INSTANCE.enabled() ? 24 : 0), w = 20 + mc.font.width(text) + 6;
+        int y = g.guiHeight() - 24 - (ReplaceBlock.INSTANCE.enabled() ? 24 : 0);
+        int n = count();
+        if (n > 0) {
+            box(g, mc, y, new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.IRON_PICKAXE),
+                Component.translatable("slopmatica.marks.hud", String.format("%,d", n)).getString(), 0xFFFF9090);
+            y -= 24;
+        }
+        if (SelectionLock.active()) {
+            box(g, mc, y, new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.IRON_BARS),
+                Component.translatable("slopmatica.lock.hud").getString(), 0xFFFFE080);
+        }
+    }
+
+    private static void box(GuiGraphicsExtractor g, Minecraft mc, int y, net.minecraft.world.item.ItemStack icon, String text, int color) {
+        int x = 4, w = 20 + mc.font.width(text) + 6;
         g.fill(x, y, x + w, y + 20, 0x90000000);
-        g.item(new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.IRON_PICKAXE), x + 2, y + 2);
-        g.text(mc.font, text, x + 21, y + 6, 0xFFFF9090);
+        g.item(icon, x + 2, y + 2);
+        g.text(mc.font, text, x + 21, y + 6, color);
     }
 }

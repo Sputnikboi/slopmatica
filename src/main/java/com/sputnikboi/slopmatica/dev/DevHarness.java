@@ -168,6 +168,15 @@ public final class DevHarness {
             } else if (step.startsWith("wheelpoint ")) {
                 String[] parts = step.split(" ");
                 com.sputnikboi.slopmatica.quick.ActionWheel.INSTANCE.point(Double.parseDouble(parts[1]), Double.parseDouble(parts[2]));
+            } else if ((step.startsWith("break ") || step.startsWith("placeon ")) && mc.gameMode != null && mc.player != null) {
+                // break <x> <y> <z> / placeon <x> <y> <z>: what a click on that block does (placeon: the held item on its top).
+                String[] parts = step.split(" ");
+                net.minecraft.core.BlockPos pos = new net.minecraft.core.BlockPos(Integer.parseInt(parts[1]), Integer.parseInt(parts[2]), Integer.parseInt(parts[3]));
+                Object result = step.startsWith("break ")
+                    ? mc.gameMode.startDestroyBlock(pos, net.minecraft.core.Direction.UP)
+                    : mc.gameMode.useItemOn(mc.player, net.minecraft.world.InteractionHand.MAIN_HAND,
+                        new net.minecraft.world.phys.BlockHitResult(net.minecraft.world.phys.Vec3.atCenterOf(pos).add(0, 0.5, 0), net.minecraft.core.Direction.UP, pos, false));
+                LOGGER.info("dev {} -> {}", step, result);
             } else if (step.startsWith("thumbs ")) {
                 // thumbs <schematic dir> <png dir>: the preview icon of every schematic in a folder.
                 String[] parts = step.split(" ");

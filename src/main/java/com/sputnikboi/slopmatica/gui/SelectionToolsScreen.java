@@ -98,6 +98,8 @@ public class SelectionToolsScreen extends OptionsSubScreen {
         });
         copy.active = clear.active = any;
         list.addSmall(copy, clear);
+        list.addSmall(OptionInstance.createBoolean("slopmatica.lock.option",
+            OptionInstance.cachedConstantTooltip(Component.translatable("slopmatica.lock.tooltip")), c.lockToSelection, v -> c.lockToSelection = v), null);
 
         list.addHeader(Component.translatable("slopmatica.seltools.marks", String.format("%,d", RemovalMarks.INSTANCE.count())));
         Button mark = button("slopmatica.seltools.mark", b -> {
