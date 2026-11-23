@@ -46,7 +46,7 @@ public final class Selection {
     private static final int FRAME_COLOR = 0x90FFD040;
     private static final int HANDLE_COLOR = 0xFFFFE080;
     /** The size of the frame's face handles, in blocks. */
-    private static final double HANDLE = 0.8;
+    private static final double HANDLE = 0.9;
     /** Bigger shapes can't be cut down to surface blocks, or outlined block by block. */
     public static final long MAX_SCAN = 8_000_000;
     /** Magic select stops after this many blocks. */
@@ -768,7 +768,9 @@ public final class Selection {
     private void drawAll(VertexConsumer buffer, PoseStack.Pose pose, Vec3 cam, float width, @Nullable BoundingBox plain, @Nullable VoxelOutline shape,
                          @Nullable BoundingBox all, @Nullable BoundingBox frame, boolean editing, float strength) {
         alpha = strength;
-        if (plain != null) {
+        if (editing && plain != null) {
+            // The Cursor: a plain box is its frame (drawn below), not a second box beside it.
+        } else if (plain != null) {
             box(buffer, pose, cam, plain.minX(), plain.minY(), plain.minZ(), plain.maxX() + 1, plain.maxY() + 1, plain.maxZ() + 1, 0.002, c(BOX_COLOR), width);
         } else if (shape != null) {
             shape.draw(buffer, pose, cam, c(BOX_COLOR), width, 0.003);
@@ -776,22 +778,19 @@ public final class Selection {
             // Too big to outline block by block (or not outlined yet): its box, dimmed.
             box(buffer, pose, cam, all.minX(), all.minY(), all.minZ(), all.maxX() + 1, all.maxY() + 1, all.maxZ() + 1, 0.002, c(0x80FFFFFF), width);
         }
-        if (first != null) {
+        if (first != null && !editing) {
             cube(buffer, pose, cam, first, c(CORNER1_COLOR), width);
         }
-        if (second != null) {
+        if (second != null && !editing) {
             cube(buffer, pose, cam, second, c(CORNER2_COLOR), width);
         }
-        if (center != null) {
+        if (center != null && !editing) {
             cube(buffer, pose, cam, center, c(CORNER1_COLOR), width);
         }
-        if (frame != null) {
-            if (editing) {
-                // The frame you stretch, with a handle on each face, and its middle.
-                box(buffer, pose, cam, frame.minX(), frame.minY(), frame.minZ(), frame.maxX() + 1, frame.maxY() + 1, frame.maxZ() + 1, 0.02, c(FRAME_COLOR), width);
-                handles(buffer, pose, cam, frame, width);
-            }
-            originMarker(buffer, pose, cam, originOf(frame), editing, width);
+        if (frame != null && editing) {
+            // The frame you stretch or drag, with a handle on each face (the one under the mouse lit).
+            box(buffer, pose, cam, frame.minX(), frame.minY(), frame.minZ(), frame.maxX() + 1, frame.maxY() + 1, frame.maxZ() + 1, 0.003, c(FRAME_COLOR), width);
+            handles(buffer, pose, cam, frame, width);
         }
         BlockPos prev = null;
         for (BlockPos p : points) {
@@ -805,31 +804,47 @@ public final class Selection {
 
     /** A small square on the middle of each face of the frame: what to drag to stretch it. */
     private static void handles(VertexConsumer b, PoseStack.Pose pose, Vec3 cam, BoundingBox f, float width) {
-        double cx = (f.minX() + f.maxX() + 1) / 2.0, cy = (f.minY() + f.maxY() + 1) / 2.0, cz = (f.minZ() + f.maxZ() + 1) / 2.0;
-        double h = HANDLE / 2, g = 0.03;
-        double x0 = f.minX() - g, x1 = f.maxX() + 1 + g, y0 = f.minY() - g, y1 = f.maxY() + 1 + g, z0 = f.minZ() - g, z1 = f.maxZ() + 1 + g;
-        box(b, pose, cam, x0, cy - h, cz - h, x0, cy + h, cz + h, 0, c(HANDLE_COLOR), width * 2);
-        box(b, pose, cam, x1, cy - h, cz - h, x1, cy + h, cz + h, 0, c(HANDLE_COLOR), width * 2);
-        box(b, pose, cam, cx - h, y0, cz - h, cx + h, y0, cz + h, 0, c(HANDLE_COLOR), width * 2);
-        box(b, pose, cam, cx - h, y1, cz - h, cx + h, y1, cz + h, 0, c(HANDLE_COLOR), width * 2);
-        box(b, pose, cam, cx - h, cy - h, z0, cx + h, cy + h, z0, 0, c(HANDLE_COLOR), width * 2);
-        box(b, pose, cam, cx - h, cy - h, z1, cx + h, cy + h, z1, 0, c(HANDLE_COLOR), width * 2);
+        for (net.minecraft.core.Direction face : net.minecraft.core.Direction.values()) {
+            double[] q = handle(f, face);
+            boolean lit = face == hoveredHandle;
+            box(b, pose, cam, q[0], q[1], q[2], q[3], q[4], q[5], 0, c(lit ? 0xFFFFFFFF : HANDLE_COLOR), width * (lit ? 3 : 2));
+        }
     }
 
-    /** The origin: a yellow block with an axis cross through it (thicker while it can be dragged). */
-    private static void originMarker(VertexConsumer b, PoseStack.Pose pose, Vec3 cam, BlockPos o, boolean grabbable, float width) {
-        float w = grabbable ? width * 2.5F : width * 1.5F;
-        box(b, pose, cam, o.getX() + 0.2, o.getY() + 0.2, o.getZ() + 0.2, o.getX() + 0.8, o.getY() + 0.8, o.getZ() + 0.8, 0, c(ORIGIN_COLOR), w);
-        double cx = o.getX() + 0.5, cy = o.getY() + 0.5, cz = o.getZ() + 0.5, r = 0.9;
-        segment(b, pose, cam, cx - r, cy, cz, cx + r, cy, cz, c(0xFFFF5050), w);
-        segment(b, pose, cam, cx, cy - r, cz, cx, cy + r, cz, c(0xFF50FF50), w);
-        segment(b, pose, cam, cx, cy, cz - r, cx, cy, cz + r, c(0xFF5090FF), w);
+    /** The face handle under the mouse (the build view sets it every frame), lit when drawn. */
+    public static net.minecraft.core.@Nullable Direction hoveredHandle;
+
+    /**
+     * A face's handle: a flat square in the middle of it, a third of the face's smaller side
+     * (between one and four blocks), just outside the frame. As min x, y, z, max x, y, z.
+     */
+    public static double[] handle(BoundingBox f, net.minecraft.core.Direction face) {
+        double[] lo = {f.minX(), f.minY(), f.minZ()}, hi = {f.maxX() + 1, f.maxY() + 1, f.maxZ() + 1};
+        int axis = face.getAxis().ordinal();
+        int u = (axis + 1) % 3, v = (axis + 2) % 3;
+        double size = Math.clamp(Math.min(hi[u] - lo[u], hi[v] - lo[v]) / 3, 1, 4) * HANDLE;
+        double[] out = new double[6];
+        double at = face.getAxisDirection() == net.minecraft.core.Direction.AxisDirection.POSITIVE ? hi[axis] + 0.03 : lo[axis] - 0.03;
+        out[axis] = out[axis + 3] = at;
+        for (int k : new int[] {u, v}) {
+            double mid = (lo[k] + hi[k]) / 2;
+            out[k] = mid - size / 2;
+            out[k + 3] = mid + size / 2;
+        }
+        return out;
     }
 
-    /** Whether a ray from {@code from} along {@code dir} passes through the origin's grab box. */
-    public static boolean hitsOrigin(BlockPos o, Vec3 from, Vec3 dir) {
-        net.minecraft.world.phys.AABB grab = new net.minecraft.world.phys.AABB(o).inflate(0.35);
-        return grab.contains(from) || grab.clip(from, from.add(dir.scale(512))).isPresent();
+    /** Whether a point on the frame's {@code face} is on (or right by) its handle. */
+    public static boolean onHandle(BoundingBox f, net.minecraft.core.Direction face, Vec3 p) {
+        double[] q = handle(f, face);
+        double[] at = {p.x, p.y, p.z};
+        int axis = face.getAxis().ordinal();
+        for (int k = 0; k < 3; k++) {
+            if (k != axis && (at[k] < q[k] - 0.3 || at[k] > q[k + 3] + 0.3)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static void segment(VertexConsumer b, PoseStack.Pose pose, Vec3 cam, double x0, double y0, double z0, double x1, double y1, double z1, int color, float width) {

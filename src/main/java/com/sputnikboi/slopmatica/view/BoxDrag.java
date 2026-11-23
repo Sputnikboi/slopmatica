@@ -58,6 +58,11 @@ public final class BoxDrag {
         return face;
     }
 
+    /** Where on the face it was grabbed. */
+    public Vec3 anchor() {
+        return anchor;
+    }
+
     /** The box with the grabbed face moved to follow the ray; never thinner than one block. */
     public BoundingBox follow(Vec3 from, Vec3 dir) {
         Vec3 n = Vec3.atLowerCornerOf(face.getUnitVec3i());

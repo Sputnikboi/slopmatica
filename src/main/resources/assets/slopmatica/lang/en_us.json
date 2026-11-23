@@ -779,7 +779,7 @@
   "slopmatica.marks.cleared": "Break list cleared",
   "slopmatica.marks.hud": "%s to break",
   "slopmatica.view.fit_not_box": "Fit works on box selections only",
-  "slopmatica.tool.modify.moved": "Selection moved: origin at %s",
+  "slopmatica.tool.modify.moved": "Selection moved: corner at %s",
   "slopmatica.tool.tab.tooltip": "%s\n\nKey: %s",
   "slopmatica.seltools.more": "More…",
   "slopmatica.seltools.more.tooltip": "All selection options, and the break list: mark the selection's blocks to be dug out.",
@@ -789,7 +789,6 @@
   "slopmatica.seltools.exact.off": "✖ Exact",
   "slopmatica.seltools.brush_smaller": "Smaller brush (Shift: by 4)",
   "slopmatica.seltools.brush_bigger": "Bigger brush (Shift: by 4)",
-  "slopmatica.tool.modify.origin": "Origin: drag to move",
   "slopmatica.quick.edit.search": "Search",
   "slopmatica.quick.edit.search.hint": "Search actions and settings…",
   "slopmatica.quick.edit.hint": "Click to add to the first empty slot",
@@ -812,8 +811,8 @@
   "slopmatica.quick.cat.custom": "Your toggles",
   "slopmatica.quick.layer_here": "Layer to My Height",
   "slopmatica.seltool.cursor": "Cursor",
-  "slopmatica.seltool.cursor.tooltip": "Change the selection you have: drag a yellow handle on its frame to stretch it (taller, wider, longer, any shape), drag the yellow diamond (its origin) to move it, scroll to move it up or down.",
-  "slopmatica.seltool.cursor.hint": "Cursor: drag a handle to stretch, the diamond to move   Scroll: up/down",
+  "slopmatica.seltool.cursor.tooltip": "Change the selection you have: drag a yellow handle on its frame to stretch that side (taller, wider, longer, any shape); drag anywhere else on it to move it; scroll to move it up or down.",
+  "slopmatica.seltool.cursor.hint": "Cursor: drag a handle to stretch, anywhere else to move   Scroll: up/down",
   "slopmatica.view.nudge_target.selection": "Moves: Selection",
   "slopmatica.view.nudge_target.build": "Moves: Build",
   "slopmatica.view.nudge_target.tooltip": "What the arrow buttons and nudge keys move: the selection (while there is one) or the build. Rotate and Mirror always turn the build.",
@@ -822,5 +821,7 @@
   "slopmatica.menu.check_updates.checking": "Checking for updates…",
   "slopmatica.menu.check_updates.latest": "Up to date: %s is the newest",
   "slopmatica.menu.check_updates.found": "%s is out: click ⬇ to update",
-  "slopmatica.menu.check_updates.offline": "Couldn't reach the update server"
+  "slopmatica.menu.check_updates.offline": "Couldn't reach the update server",
+  "slopmatica.seltool.cursor.stretch": "⇔ stretch",
+  "slopmatica.seltool.cursor.move": "✥ move"
 }

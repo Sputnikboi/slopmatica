@@ -103,6 +103,12 @@ public final class ActionWheel {
         return Math.floorMod((int) Math.round(angle / (2 * Math.PI / wedges)), wedges);
     }
 
+    /** Puts the pointer somewhere (the dev harness, for screenshots). */
+    public void point(double x, double y) {
+        px = x;
+        py = y;
+    }
+
     /** The page slot the pointer is on; -1 in the middle. */
     public int hovered() {
         List<Integer> active = active();
@@ -185,10 +191,9 @@ public final class ActionWheel {
         if (wedge < 0) {
             shapes.ring(cx, cy, 0, hole - t, 0x50FFFFFF); // The middle lit: no action (a click goes back a page).
         } else {
-            // The hovered wedge, kept a pixel off the dividers.
-            double inset = n > 1 ? 1.5 * scale / ((hole + outer) / 2) : 0;
+            // The hovered wedge, exactly between its dividers (they're drawn over its edges).
             double mid = sector * wedge;
-            shapes.sector(cx, cy, hole + t + 0.5F, outer - t - 0.5F, n > 1 ? mid - sector / 2 + inset : 0, n > 1 ? mid + sector / 2 - inset : 2 * Math.PI, 0xA03A6FD0);
+            shapes.sector(cx, cy, hole + t, outer - t, n > 1 ? mid - sector / 2 : 0, n > 1 ? mid + sector / 2 : 2 * Math.PI, 0xA03A6FD0);
         }
         shapes.ring(cx, cy, outer - t, outer, 0xB0FFFFFF);
         shapes.ring(cx, cy, hole - t, hole + t, 0xB8FFFFFF);

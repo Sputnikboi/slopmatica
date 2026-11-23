@@ -485,25 +485,24 @@ public class PlacementViewScreen extends Screen {
             }
             graphics.pose().popMatrix();
         });
-        double[] o = originOnScreen();
-        if (o != null) {
-            // The origin as a handle on screen: visible even inside blocks, and easy to grab.
-            int ox = (int) Math.round(o[0]), oy = (int) Math.round(o[1]);
-            boolean hot = originDrag || Math.hypot(mouseX - o[0], mouseY - o[1]) <= ORIGIN_GRAB;
-            int color = hot ? 0xFFFFFFFF : 0xFFFFD040;
-            for (int r = 0; r <= 5; r++) {
-                int half = 5 - r;
-                graphics.fill(ox - half - 1, oy - r - 1, ox + half + 2, oy - r, 0xC0000000);
-                graphics.fill(ox - half - 1, oy + r, ox + half + 2, oy + r + 1, 0xC0000000);
+        // The Cursor: what a press here would do (stretch at a handle, move anywhere else on the selection).
+        Selection.hoveredHandle = null;
+        Component cursorHint = null;
+        if (PlacementView.INSTANCE.editingSelection() && boxDrag == null && !originDrag && minecraft.level != null
+            && minecraft.level.dimension().identifier().toString().equals(Selection.INSTANCE.dimension())) {
+            BoundingBox frame = Selection.INSTANCE.frame();
+            BoxDrag over = frame == null ? null : BoxDrag.grab(frame, PlacementView.INSTANCE.eye(),
+                PlacementView.INSTANCE.rayThrough(minecraft, mouseX, mouseY, width, height));
+            if (over != null && super.getChildAt(mouseX, mouseY).isEmpty()) {
+                boolean handle = Selection.onHandle(frame, over.face(), over.anchor());
+                Selection.hoveredHandle = handle ? over.face() : null;
+                cursorHint = Component.translatable(handle ? "slopmatica.seltool.cursor.stretch" : "slopmatica.seltool.cursor.move");
             }
-            for (int r = 0; r <= 4; r++) {
-                int half = 4 - r;
-                graphics.fill(ox - half, oy - r, ox + half + 1, oy - r + 1, color);
-                graphics.fill(ox - half, oy + r, ox + half + 1, oy + r + 1, color);
-            }
-            if (hot && !originDrag) {
-                graphics.text(font, Component.translatable("slopmatica.tool.modify.origin"), ox + 8, oy - 4, 0xFFFFD040);
-            }
+        } else if (boxDrag != null && PlacementView.INSTANCE.editingSelection()) {
+            Selection.hoveredHandle = boxDrag.face();
+        }
+        if (cursorHint != null) {
+            graphics.text(font, cursorHint, mouseX + 10, mouseY + 2, 0xFFFFE080);
         }
         Placement p = PlacementView.INSTANCE.placement();
         List<String> lines = panelLines(p);
@@ -657,20 +656,17 @@ public class PlacementViewScreen extends Screen {
             SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.modify.none").withColor(SlopmaticaActions.ERROR));
             return true;
         }
-        BlockPos origin = Selection.originOf(frame);
-        double[] onScreen = originOnScreen();
-        // Only its on-screen diamond grabs the origin: it sits inside the frame, so a ray test would beat every face.
-        if (onScreen != null && Math.hypot(mx - onScreen[0], my - onScreen[1]) <= ORIGIN_GRAB) {
-            // The origin: drag it to move the whole selection along its floor.
-            originDrag = true;
-            dragPlaneY = origin.getY() + 0.5;
-            Vec3 hit = planeHit(from, dir, dragPlaneY);
-            dragOffset = hit == null ? BlockPos.ZERO : origin.subtract(BlockPos.containing(hit.x, dragPlaneY, hit.z));
+        BoxDrag grab = BoxDrag.grab(frame, from, dir);
+        if (grab == null) {
+            return true; // Not on the selection.
+        }
+        if (Selection.onHandle(frame, grab.face(), grab.anchor())) {
+            boxDrag = grab; // A handle: stretch that side.
         } else {
-            boxDrag = BoxDrag.grab(frame, from, dir);
-            if (boxDrag == null) {
-                return true;
-            }
+            // Anywhere else on it: slide the whole selection along the height it was grabbed at.
+            originDrag = true;
+            dragPlaneY = grab.anchor().y;
+            dragOffset = Selection.originOf(frame).subtract(BlockPos.containing(grab.anchor().x, dragPlaneY, grab.anchor().z));
         }
         lastBox = frame;
         reshapeFrame = frame;
@@ -678,19 +674,6 @@ public class PlacementViewScreen extends Screen {
         UndoStack.INSTANCE.saveSelection();
         dragSelection = Selection.INSTANCE.state();
         return true;
-    }
-
-    /** How near (GUI pixels) a click must be to the origin's handle to grab it. */
-    private static final int ORIGIN_GRAB = 7;
-
-    /** The selection's origin on screen while the Cursor tool is chosen; null otherwise or off screen. */
-    private double @Nullable [] originOnScreen() {
-        if (!PlacementView.INSTANCE.editingSelection() || minecraft.level == null
-            || !minecraft.level.dimension().identifier().toString().equals(Selection.INSTANCE.dimension())) {
-            return null;
-        }
-        BlockPos o = Selection.INSTANCE.origin();
-        return o == null ? null : PlacementView.INSTANCE.project(minecraft, Vec3.atCenterOf(o), width, height);
     }
 
     /** Where a ray meets the flat plane at height {@code y}; null if it never does (nearby). */
@@ -722,9 +705,9 @@ public class PlacementViewScreen extends Screen {
             originDy = 0;
             reshapeParts = null;
             Selection.INSTANCE.finishReshape();
-            BlockPos o = Selection.INSTANCE.origin();
-            if (o != null) {
-                SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.modify.moved", o.toShortString()).withColor(SlopmaticaActions.ACCENT));
+            BoundingBox f = Selection.INSTANCE.frame();
+            if (f != null) {
+                SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.modify.moved", f.minX() + " " + f.minY() + " " + f.minZ()).withColor(SlopmaticaActions.ACCENT));
             }
             rebuildWidgets();
             return true;

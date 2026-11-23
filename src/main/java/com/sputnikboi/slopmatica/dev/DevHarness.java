@@ -165,6 +165,9 @@ public final class DevHarness {
                     }
                     screen.mouseReleased(new net.minecraft.client.input.MouseButtonEvent(b[0], b[1], info));
                 }
+            } else if (step.startsWith("wheelpoint ")) {
+                String[] parts = step.split(" ");
+                com.sputnikboi.slopmatica.quick.ActionWheel.INSTANCE.point(Double.parseDouble(parts[1]), Double.parseDouble(parts[2]));
             } else if (step.startsWith("thumbs ")) {
                 // thumbs <schematic dir> <png dir>: the preview icon of every schematic in a folder.
                 String[] parts = step.split(" ");
