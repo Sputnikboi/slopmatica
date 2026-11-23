@@ -118,6 +118,14 @@ public final class PlacementView {
         SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.now", tool.label()).withColor(SlopmaticaActions.ACCENT));
     }
 
+    /** A placement was unloaded: if it's the one being worked on, the view lets go of it. */
+    public void forget(Placement p) {
+        if (placement == p) {
+            carryOffset = null;
+            placement = null;
+        }
+    }
+
     /** Switches the view to another placement, keeping the camera where it is. */
     public void switchTo(Placement target) {
         if (target == placement) {

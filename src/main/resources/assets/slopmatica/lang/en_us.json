@@ -326,8 +326,8 @@
   "slopmatica.welcome.key.quick": "Quick Menu",
   "slopmatica.welcome.key.view": "Build view",
   "slopmatica.welcome.key.tooltip": "%s. Click, then press a key or mouse button. Escape cancels.",
-  "slopmatica.tool.move": "Move",
-  "slopmatica.tool.move.tooltip": "Drag the build to slide it along the ground. While flying, left click picks it up and puts it down.",
+  "slopmatica.tool.move": "Schematics",
+  "slopmatica.tool.move.tooltip": "Your loaded schematics: drag one to slide it along the ground, turn, mirror and nudge it with the buttons bottom right. While flying, left click picks it up and puts it down.",
   "slopmatica.tool.select": "Select",
   "slopmatica.tool.select.tooltip": "Make or change a selection with the tools below: the cursor (move and stretch), box, sphere, cylinder, polygon, brush or magic select. Ghost blocks count, so you can select parts that aren't built yet.",
   "slopmatica.tool.crop": "Crop",
@@ -844,5 +844,7 @@
   "slopmatica.lock.interactables": "Lock Interactables",
   "slopmatica.lock.interactables.tooltip": "With Lock to Selection on, also stop doors, trapdoors, fence gates, levers, buttons, repeaters, comparators, daylight detectors and note blocks outside the selection from being used.",
   "slopmatica.lock.containers": "Lock Containers",
-  "slopmatica.lock.containers.tooltip": "With Lock to Selection on, also stop chests, barrels, furnaces, crafting tables, anvils and other containers and tool stations outside the selection from opening."
+  "slopmatica.lock.containers.tooltip": "With Lock to Selection on, also stop chests, barrels, furnaces, crafting tables, anvils and other containers and tool stations outside the selection from opening.",
+  "slopmatica.builds.unload": "Unload %s (click twice)",
+  "slopmatica.builds.unload.confirm": "Click again to unload %s"
 }

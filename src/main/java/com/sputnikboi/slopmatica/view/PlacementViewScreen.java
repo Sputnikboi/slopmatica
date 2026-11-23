@@ -36,7 +36,7 @@ import org.jspecify.annotations.Nullable;
 public class PlacementViewScreen extends Screen {
     private static final int B = 20;
     private static final int GAP = 2;
-    private static final int LEFT_W = 124;
+    private static final int LEFT_W = 164;
     /** The tabs along the top (Blender-style): one per tool, keys 1-3. */
     private static final int TABS_Y = 4;
     private static final int PANEL_Y = TABS_Y + B + 4;
@@ -51,6 +51,8 @@ public class PlacementViewScreen extends Screen {
     private @Nullable BoxDrag boxDrag;
     private @Nullable BoundingBox lastBox;
     private int buildsTop;
+    /** The schematic whose ✖ was clicked once: a second click unloads it. */
+    private @Nullable Placement confirmUnload;
     /** What a drag started from, so right click can put it back. */
     private @Nullable BlockPos dragStart;
     private Selection.@Nullable State dragSelection;
@@ -249,7 +251,7 @@ public class PlacementViewScreen extends Screen {
         // Builds in this dimension.
         y += 14; // Room for the heading drawn in extractRenderState.
         buildsTop = y;
-        int nameW = LEFT_W - 2 * (16 + GAP);
+        int nameW = LEFT_W - 3 * (16 + GAP);
         for (Placement p : PlacementManager.INSTANCE.placements()) {
             if (minecraft.level == null || !p.inDimension(minecraft.level) || y + B > height - 6) {
                 continue;
@@ -280,6 +282,19 @@ public class PlacementViewScreen extends Screen {
                 rebuildWidgets();
             }).bounds(x + nameW + 16 + 2 * GAP, y, 16, B).tooltip(Tooltip.create(Component.translatable("slopmatica.builds.switch"))).build());
             go.active = !current && p.visible();
+            // Unload: two clicks, so a slip of the mouse doesn't throw a build away.
+            boolean confirming = p == confirmUnload;
+            addRenderableWidget(Button.builder(Component.literal(confirming ? "?" : "✖").withStyle(confirming ? ChatFormatting.RED : ChatFormatting.GRAY), b -> {
+                if (confirmUnload == p) {
+                    confirmUnload = null;
+                    view.forget(p);
+                    SlopmaticaActions.unload(p, SlopmaticaActions::actionBar);
+                    MaterialPanels.INSTANCE.invalidate();
+                } else {
+                    confirmUnload = p;
+                }
+                rebuildWidgets();
+            }).bounds(x + nameW + 2 * (16 + GAP), y, 16, B).tooltip(Tooltip.create(Component.translatable(confirming ? "slopmatica.builds.unload.confirm" : "slopmatica.builds.unload", p.name()))).build());
             y += B;
         }
         // Load another build: it lands where the camera looks, and the view switches to it.
@@ -527,7 +542,13 @@ public class PlacementViewScreen extends Screen {
         if (MaterialPanels.INSTANCE.mouseClicked(minecraft, event.x(), event.y(), event.button(), width, height)) {
             return true;
         }
-        if (super.mouseClicked(event, doubleClick)) {
+        Placement waiting = confirmUnload;
+        boolean handled = super.mouseClicked(event, doubleClick);
+        if (waiting != null && confirmUnload == waiting) {
+            confirmUnload = null; // Clicked somewhere else: the unload is called off.
+            rebuildWidgets();
+        }
+        if (handled) {
             return true;
         }
         // 26.3 numbers mouse buttons the SDL way: left 1, middle 2, right 3.
