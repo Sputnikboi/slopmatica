@@ -50,7 +50,8 @@ public record SettingToggle(String setting, List<String> values) {
         SETTINGS.put("brushShape", "slopmatica.seltools.brush_shape");
         SETTINGS.put("magicExact", "slopmatica.seltools.magic_exact");
         SETTINGS.put("lockToSelection", "slopmatica.lock.option");
-        SETTINGS.put("lockRedstone", "slopmatica.lock.redstone");
+        SETTINGS.put("lockInteractables", "slopmatica.lock.interactables");
+        SETTINGS.put("lockContainers", "slopmatica.lock.containers");
         SETTINGS.put("planScope", "slopmatica.plan.scope");
         SETTINGS.put("planShowInInventory", "slopmatica.plan.show");
         SETTINGS.put("planSideList", "slopmatica.plan.side");
@@ -72,7 +73,7 @@ public record SettingToggle(String setting, List<String> values) {
         for (String s : List.of("easyPlaceOrder", "easyPlaceRestrict", "easyPlaceAngel", "includeNbt", "pasteReplace", "copyFormat", "viewFreecam", "viewCollision")) {
             CATEGORY.put(s, "set_building");
         }
-        for (String s : List.of("cornerMode", "selectionTool", "selectionMode", "brushRadius", "brushShape", "magicExact", "lockToSelection", "lockRedstone")) {
+        for (String s : List.of("cornerMode", "selectionTool", "selectionMode", "brushRadius", "brushShape", "magicExact", "lockToSelection", "lockInteractables", "lockContainers")) {
             CATEGORY.put(s, "set_selection");
         }
         for (String s : List.of("planScope", "planShowInInventory", "planSideList")) {

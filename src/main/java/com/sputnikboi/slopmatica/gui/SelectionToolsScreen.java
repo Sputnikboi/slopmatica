@@ -100,8 +100,11 @@ public class SelectionToolsScreen extends OptionsSubScreen {
         list.addSmall(copy, clear);
         list.addSmall(OptionInstance.createBoolean("slopmatica.lock.option",
             OptionInstance.cachedConstantTooltip(Component.translatable("slopmatica.lock.tooltip")), c.lockToSelection, v -> c.lockToSelection = v),
-            OptionInstance.createBoolean("slopmatica.lock.redstone",
-                OptionInstance.cachedConstantTooltip(Component.translatable("slopmatica.lock.redstone.tooltip")), c.lockRedstone, v -> c.lockRedstone = v));
+            null);
+        list.addSmall(OptionInstance.createBoolean("slopmatica.lock.interactables",
+                OptionInstance.cachedConstantTooltip(Component.translatable("slopmatica.lock.interactables.tooltip")), c.lockInteractables, v -> c.lockInteractables = v),
+            OptionInstance.createBoolean("slopmatica.lock.containers",
+                OptionInstance.cachedConstantTooltip(Component.translatable("slopmatica.lock.containers.tooltip")), c.lockContainers, v -> c.lockContainers = v));
 
         list.addHeader(Component.translatable("slopmatica.seltools.marks", String.format("%,d", RemovalMarks.INSTANCE.count())));
         // One toggle: on the list already (every block of it), it takes them off.

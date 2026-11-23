@@ -13,8 +13,8 @@ import net.minecraft.world.phys.BlockHitResult;
 /**
  * Lock to Selection: while it's on and there is a selection here, you can only break, place and
  * use blocks inside it, so digging out an area marked for removal never takes a block too many.
- * Containers and tool stations, doors, trapdoors and fence gates still work anywhere, and redstone
- * controls (levers, buttons...) too unless {@code lockRedstone} is on.
+ * Doors, gates and redstone controls ({@code lockInteractables}) and containers and tool stations
+ * ({@code lockContainers}) still work anywhere unless their own lock is switched on as well.
  * Checked on the client before anything is sent to the server.
  */
 public final class SelectionLock {
@@ -60,9 +60,10 @@ public final class SelectionLock {
         BlockPos target = hit.getBlockPos();
         if (!mc.player.isSecondaryUseActive()) {
             net.minecraft.world.level.block.Block block = mc.level.getBlockState(target).getBlock();
-            // Chests, furnaces, crafting tables, doors and gates: fine anywhere. Levers, buttons
-            // and the like too, unless the redstone lock is on.
-            if (opensMenu(mc, target) || passage(block) || redstone(block) && !SlopmaticaConfig.get().lockRedstone) {
+            // Containers and stations, doors, gates and redstone controls work anywhere unless
+            // their own lock is on too.
+            SlopmaticaConfig c = SlopmaticaConfig.get();
+            if (opensMenu(mc, target) && !c.lockContainers || (passage(block) || redstone(block)) && !c.lockInteractables) {
                 return false;
             }
         }

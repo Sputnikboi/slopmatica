@@ -828,7 +828,7 @@
   "slopmatica.view.selection_let_go": "Selection let go: %s for the cursor to make a new one",
   "slopmatica.view.select_needs_cursor": "Click the selection to pick it out; %s for the cursor to make one",
   "slopmatica.lock.option": "Lock to Selection",
-  "slopmatica.lock.tooltip": "While on, you can only break and place blocks inside the selection, and use items on blocks inside it: nothing outside it can be dug out by accident. Containers, tool stations, doors, trapdoors and fence gates still work anywhere (and levers, buttons and other redstone controls unless Lock Redstone Too is on). Does nothing while there is no selection.",
+  "slopmatica.lock.tooltip": "While on, you can only break and place blocks inside the selection, and use items on blocks inside it: nothing outside it can be dug out by accident. Doors, levers and other interactables, and containers and tool stations, still work anywhere unless their own lock below is on. Does nothing while there is no selection.",
   "slopmatica.lock.on": "Locked to the selection: blocks outside it can't be broken, placed or used",
   "slopmatica.lock.on_no_selection": "Lock to Selection is on: it starts working once there is a selection",
   "slopmatica.lock.off": "Lock to Selection off",
@@ -841,6 +841,8 @@
   "slopmatica.reload_outlines.done": "Outlines and holograms reloaded",
   "slopmatica.quick.reload_outlines": "Reload Outlines",
   "key.slopmatica.reload_outlines": "Reload outlines and holograms",
-  "slopmatica.lock.redstone": "Lock Redstone Too",
-  "slopmatica.lock.redstone.tooltip": "With Lock to Selection on, also stop levers, buttons, repeaters, comparators, daylight detectors and note blocks outside the selection from being clicked."
+  "slopmatica.lock.interactables": "Lock Interactables",
+  "slopmatica.lock.interactables.tooltip": "With Lock to Selection on, also stop doors, trapdoors, fence gates, levers, buttons, repeaters, comparators, daylight detectors and note blocks outside the selection from being used.",
+  "slopmatica.lock.containers": "Lock Containers",
+  "slopmatica.lock.containers.tooltip": "With Lock to Selection on, also stop chests, barrels, furnaces, crafting tables, anvils and other containers and tool stations outside the selection from opening."
 }
