@@ -307,13 +307,7 @@ public final class PlacementView {
                         putDown(p);
                     }
                 }
-                case SELECT -> {
-                    BlockPos block = pointedBlock(mc, eye(), look());
-                    if (block != null) {
-                        UndoStack.INSTANCE.saveSelection();
-                        Selection.INSTANCE.use(block, mc.level.dimension().identifier().toString(), mc.player != null && mc.player.isShiftKeyDown());
-                    }
-                }
+                case SELECT -> highlightSelection(mc);
                 default -> SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.needs_cursor", tool.label()).withColor(SlopmaticaActions.ERROR));
             }
         }
@@ -334,6 +328,36 @@ public final class PlacementView {
                 p.setOrigin(target.offset(carryOffset));
                 PlacementManager.INSTANCE.changed();
             }
+        }
+    }
+
+    /** The tool chosen before a flying click picked out the selection (the Cursor took over), to go back to. */
+    private com.sputnikboi.slopmatica.build.@Nullable SelectionTool beforeHighlight;
+
+    /**
+     * A click while flying never makes a selection (that's the cursor screen's job): on the
+     * selection it picks it out, switching to the Cursor so its frame and handles show; anywhere
+     * else it lets go again, back to the tool you had.
+     */
+    private void highlightSelection(Minecraft mc) {
+        SlopmaticaConfig c = SlopmaticaConfig.get();
+        BoundingBox frame = mc.level != null && mc.level.dimension().identifier().toString().equals(Selection.INSTANCE.dimension())
+            ? Selection.INSTANCE.frame() : null;
+        boolean onIt = frame != null && BoxDrag.grab(frame, eye(), look()) != null;
+        if (onIt) {
+            if (c.selectionTool != com.sputnikboi.slopmatica.build.SelectionTool.CURSOR) {
+                beforeHighlight = c.selectionTool;
+                c.selectionTool = com.sputnikboi.slopmatica.build.SelectionTool.CURSOR;
+                c.save();
+            }
+            SlopmaticaActions.actionBar(Component.translatable("slopmatica.view.selection_picked", key(mc.options.keyUse)).withColor(SlopmaticaActions.ACCENT));
+        } else if (c.selectionTool == com.sputnikboi.slopmatica.build.SelectionTool.CURSOR && beforeHighlight != null) {
+            c.selectionTool = beforeHighlight;
+            beforeHighlight = null;
+            c.save();
+            SlopmaticaActions.actionBar(Component.translatable("slopmatica.view.selection_let_go", key(mc.options.keyUse)).withColor(SlopmaticaActions.ACCENT));
+        } else {
+            SlopmaticaActions.actionBar(Component.translatable("slopmatica.view.select_needs_cursor", key(mc.options.keyUse)).withColor(SlopmaticaActions.ACCENT));
         }
     }
 

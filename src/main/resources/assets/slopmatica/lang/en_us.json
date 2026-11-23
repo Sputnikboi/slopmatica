@@ -779,7 +779,7 @@
   "slopmatica.marks.cleared": "Break list cleared",
   "slopmatica.marks.hud": "%s to break",
   "slopmatica.view.fit_not_box": "Fit works on box selections only",
-  "slopmatica.tool.modify.moved": "Selection moved: corner at %s",
+  "slopmatica.tool.modify.moved": "Selection moved: centre at %s",
   "slopmatica.tool.tab.tooltip": "%s\n\nKey: %s",
   "slopmatica.seltools.more": "More…",
   "slopmatica.seltools.more.tooltip": "All selection options, and the break list: mark the selection's blocks to be dug out.",
@@ -823,5 +823,9 @@
   "slopmatica.menu.check_updates.found": "%s is out: click ⬇ to update",
   "slopmatica.menu.check_updates.offline": "Couldn't reach the update server",
   "slopmatica.seltool.cursor.stretch": "⇔ stretch",
-  "slopmatica.seltool.cursor.move": "✥ move"
+  "slopmatica.seltool.cursor.move": "✥ move",
+  "slopmatica.seltool.cursor.centre": "Centre %s, %s, %s",
+  "slopmatica.view.selection_picked": "Selection picked: %s for the cursor to move or stretch it",
+  "slopmatica.view.selection_let_go": "Selection let go: %s for the cursor to make a new one",
+  "slopmatica.view.select_needs_cursor": "Click the selection to pick it out; %s for the cursor to make one"
 }

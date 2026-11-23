@@ -60,6 +60,9 @@ public class PlacementViewScreen extends Screen {
     private @Nullable BoundingBox reshapeFrame;
     /** Modify tool, dragging the origin: the plane it slides on, and frame offset from the grabbed block. */
     private boolean originDrag;
+    /** Moving the selection: where it was grabbed, and the plane it slides in (null: flat, at the grab's height). */
+    private @Nullable Vec3 moveAnchor;
+    private @Nullable Vec3 movePlaneNormal;
     private int originDy;
 
     public PlacementViewScreen() {
@@ -504,6 +507,7 @@ public class PlacementViewScreen extends Screen {
         if (cursorHint != null) {
             graphics.text(font, cursorHint, mouseX + 10, mouseY + 2, 0xFFFFE080);
         }
+        drawSelectionCentre(graphics);
         Placement p = PlacementView.INSTANCE.placement();
         List<String> lines = panelLines(p);
         PlacementView.drawPanel(graphics, minecraft, lines, 4, PANEL_Y, p == null ? 0 : Recommendations.of(minecraft, p).size());
@@ -606,11 +610,15 @@ public class PlacementViewScreen extends Screen {
         Vec3 from = view.eye();
         Vec3 dir = view.rayThrough(minecraft, event.x(), event.y(), width, height);
         if (originDrag) {
-            Vec3 hit = planeHit(from, dir, dragPlaneY);
-            if (hit != null && reshapeFrame != null && reshapeParts != null && dragOffset != null) {
-                BlockPos to = BlockPos.containing(hit.x, dragPlaneY, hit.z).offset(dragOffset);
-                BlockPos start = Selection.originOf(reshapeFrame);
-                BoundingBox moved = reshapeFrame.moved(to.getX() - start.getX(), originDy, to.getZ() - start.getZ());
+            Vec3 a = moveAnchor;
+            Vec3 hit = a == null ? null : movePlaneNormal == null ? planeHit(from, dir, a.y) : planeHit(from, dir, a, movePlaneNormal);
+            // Never further in one drag than a few times as far as it is from the camera.
+            if (hit != null && hit.distanceTo(a) > 3 * a.distanceTo(from) + 16) {
+                hit = null;
+            }
+            if (hit != null && reshapeFrame != null && reshapeParts != null) {
+                int dyDrag = movePlaneNormal == null ? 0 : (int) Math.round(hit.y - a.y);
+                BoundingBox moved = reshapeFrame.moved((int) Math.round(hit.x - a.x), dyDrag + originDy, (int) Math.round(hit.z - a.z));
                 if (!moved.equals(lastBox)) {
                     lastBox = moved;
                     Selection.INSTANCE.reshape(reshapeParts, reshapeFrame, moved);
@@ -665,8 +673,11 @@ public class PlacementViewScreen extends Screen {
         } else {
             // Anywhere else on it: slide the whole selection along the height it was grabbed at.
             originDrag = true;
-            dragPlaneY = grab.anchor().y;
-            dragOffset = Selection.originOf(frame).subtract(BlockPos.containing(grab.anchor().x, dragPlaneY, grab.anchor().z));
+            moveAnchor = grab.anchor();
+            // Looking across the floor at a low angle, a flat plane would fling it off with every
+            // small movement: then it slides in an upright plane facing the camera instead.
+            Vec3 flat = new Vec3(dir.x, 0, dir.z);
+            movePlaneNormal = Math.abs(dir.y) < 0.35 && flat.lengthSqr() > 1.0E-6 ? flat.normalize() : null;
         }
         lastBox = frame;
         reshapeFrame = frame;
@@ -674,6 +685,45 @@ public class PlacementViewScreen extends Screen {
         UndoStack.INSTANCE.saveSelection();
         dragSelection = Selection.INSTANCE.state();
         return true;
+    }
+
+    /** The Cursor: the selection's centre and size, labelled where the centre shows on screen. */
+    private void drawSelectionCentre(GuiGraphicsExtractor graphics) {
+        if (!PlacementView.INSTANCE.editingSelection() || minecraft.level == null
+            || !minecraft.level.dimension().identifier().toString().equals(Selection.INSTANCE.dimension())) {
+            return;
+        }
+        BoundingBox f = Selection.INSTANCE.frame();
+        if (f == null) {
+            return;
+        }
+        double cx = (f.minX() + f.maxX() + 1) / 2.0, cy = (f.minY() + f.maxY() + 1) / 2.0, cz = (f.minZ() + f.maxZ() + 1) / 2.0;
+        double[] at = PlacementView.INSTANCE.project(minecraft, new Vec3(cx, cy, cz), width, height);
+        if (at == null || at[0] < 0 || at[1] < 0 || at[0] > width || at[1] > height) {
+            return;
+        }
+        String centre = Component.translatable("slopmatica.seltool.cursor.centre", num(cx), num(cy), num(cz)).getString();
+        String size = f.getXSpan() + " × " + f.getYSpan() + " × " + f.getZSpan();
+        int w = Math.max(font.width(centre), font.width(size)) + 8;
+        int x = (int) at[0] - w / 2, y = (int) at[1] - 12;
+        graphics.fill(x, y, x + w, y + 24, 0xA0000000);
+        graphics.centeredText(font, centre, (int) at[0], y + 3, 0xFFFFE080);
+        graphics.centeredText(font, size, (int) at[0], y + 13, 0xFFD0D0D0);
+    }
+
+    /** A block coordinate as text: whole, or with its half. */
+    private static String num(double v) {
+        return v == Math.rint(v) ? String.valueOf((long) v) : String.valueOf(v);
+    }
+
+    /** Where a ray meets the plane through {@code at} with normal {@code n}; null if never (nearby). */
+    private static @Nullable Vec3 planeHit(Vec3 from, Vec3 dir, Vec3 at, Vec3 n) {
+        double d = dir.dot(n);
+        if (Math.abs(d) < 1.0E-4) {
+            return null;
+        }
+        double t = at.subtract(from).dot(n) / d;
+        return t <= 0 || t > 1024 ? null : from.add(dir.scale(t));
     }
 
     /** Where a ray meets the flat plane at height {@code y}; null if it never does (nearby). */
@@ -701,13 +751,15 @@ public class PlacementViewScreen extends Screen {
         Placement p = PlacementView.INSTANCE.placement();
         if (originDrag) {
             originDrag = false;
-            dragOffset = null;
+            moveAnchor = null;
+            movePlaneNormal = null;
             originDy = 0;
             reshapeParts = null;
             Selection.INSTANCE.finishReshape();
             BoundingBox f = Selection.INSTANCE.frame();
             if (f != null) {
-                SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.modify.moved", f.minX() + " " + f.minY() + " " + f.minZ()).withColor(SlopmaticaActions.ACCENT));
+                SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.modify.moved",
+                    num((f.minX() + f.maxX() + 1) / 2.0) + ", " + num((f.minY() + f.maxY() + 1) / 2.0) + ", " + num((f.minZ() + f.maxZ() + 1) / 2.0)).withColor(SlopmaticaActions.ACCENT));
             }
             rebuildWidgets();
             return true;
