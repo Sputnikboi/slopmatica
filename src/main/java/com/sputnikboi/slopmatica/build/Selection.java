@@ -840,6 +840,39 @@ public final class Selection {
         return out;
     }
 
+    /** A handle under the mouse: its face, and where the ray meets it. */
+    public record HandleHit(net.minecraft.core.Direction face, Vec3 at) {
+    }
+
+    /**
+     * The handle under a ray, wherever it is (a handle on the far side, seen through the selection,
+     * counts too): the nearest one hit, or null. Returns the face and where the ray meets it.
+     */
+    public static @Nullable HandleHit handleUnder(BoundingBox f, Vec3 from, Vec3 dir) {
+        net.minecraft.core.Direction best = null;
+        Vec3 bestAt = null;
+        double bestT = Double.MAX_VALUE;
+        double[] o = {from.x, from.y, from.z}, d = {dir.x, dir.y, dir.z};
+        for (net.minecraft.core.Direction face : net.minecraft.core.Direction.values()) {
+            double[] q = handle(f, face);
+            int axis = face.getAxis().ordinal();
+            if (Math.abs(d[axis]) < 1.0E-6) {
+                continue;
+            }
+            double t = (q[axis] - o[axis]) / d[axis];
+            if (t <= 0 || t >= bestT) {
+                continue;
+            }
+            Vec3 at = from.add(dir.scale(t));
+            if (onHandle(f, face, at)) {
+                best = face;
+                bestAt = at;
+                bestT = t;
+            }
+        }
+        return best == null ? null : new HandleHit(best, bestAt);
+    }
+
     /** Whether a point on the frame's {@code face} is on (or right by) its handle. */
     public static boolean onHandle(BoundingBox f, net.minecraft.core.Direction face, Vec3 p) {
         double[] q = handle(f, face);

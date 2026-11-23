@@ -39,6 +39,11 @@ public final class BoxDrag {
         return new BoxDrag(box, faceAt(aabb, hit), hit);
     }
 
+    /** Starts a drag on a given face, grabbed at {@code at} (a handle, found some other way). */
+    public static BoxDrag of(BoundingBox box, Direction face, Vec3 at) {
+        return new BoxDrag(box, face, at);
+    }
+
     private static Direction faceAt(AABB box, Vec3 p) {
         double[] dist = {
             Math.abs(p.y - box.minY), Math.abs(p.y - box.maxY), Math.abs(p.z - box.minZ),

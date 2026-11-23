@@ -496,9 +496,11 @@ public class PlacementViewScreen extends Screen {
             BoundingBox frame = Selection.INSTANCE.frame();
             BoxDrag over = frame == null ? null : BoxDrag.grab(frame, PlacementView.INSTANCE.eye(),
                 PlacementView.INSTANCE.rayThrough(minecraft, mouseX, mouseY, width, height));
-            if (over != null && super.getChildAt(mouseX, mouseY).isEmpty()) {
-                boolean handle = Selection.onHandle(frame, over.face(), over.anchor());
-                Selection.hoveredHandle = handle ? over.face() : null;
+            Selection.HandleHit handleUnder = frame == null ? null : Selection.handleUnder(frame, PlacementView.INSTANCE.eye(),
+                PlacementView.INSTANCE.rayThrough(minecraft, mouseX, mouseY, width, height));
+            if ((over != null || handleUnder != null) && super.getChildAt(mouseX, mouseY).isEmpty()) {
+                boolean handle = handleUnder != null;
+                Selection.hoveredHandle = handle ? handleUnder.face() : null;
                 cursorHint = Component.translatable(handle ? "slopmatica.seltool.cursor.stretch" : "slopmatica.seltool.cursor.move");
             }
         } else if (boxDrag != null && PlacementView.INSTANCE.editingSelection()) {
@@ -664,12 +666,13 @@ public class PlacementViewScreen extends Screen {
             SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.modify.none").withColor(SlopmaticaActions.ERROR));
             return true;
         }
+        // A handle anywhere under the mouse comes first, even one seen through the selection.
+        var handle = Selection.handleUnder(frame, from, dir);
         BoxDrag grab = BoxDrag.grab(frame, from, dir);
-        if (grab == null) {
+        if (handle != null) {
+            boxDrag = BoxDrag.of(frame, handle.face(), handle.at()); // Stretch that side.
+        } else if (grab == null) {
             return true; // Not on the selection.
-        }
-        if (Selection.onHandle(frame, grab.face(), grab.anchor())) {
-            boxDrag = grab; // A handle: stretch that side.
         } else {
             // Anywhere else on it: slide the whole selection along the height it was grabbed at.
             originDrag = true;
