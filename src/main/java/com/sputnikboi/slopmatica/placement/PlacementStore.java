@@ -268,6 +268,11 @@ public final class PlacementStore {
     }
 
     private static @Nullable Path storeFile(Minecraft mc) {
+        return storeFile(mc, "placements");
+    }
+
+    /** This world's or server's file in {@code slopmatica/<folder>/}, or null when in neither. */
+    public static @Nullable Path storeFile(Minecraft mc, String folder) {
         String key;
         IntegratedServer server = mc.getSingleplayerServer();
         ServerData data = mc.getCurrentServer();
@@ -280,6 +285,6 @@ public final class PlacementStore {
             return null;
         }
         String safe = key.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9._-]+", "_");
-        return mc.gameDirectory.toPath().resolve("slopmatica").resolve("placements").resolve(safe + ".json");
+        return mc.gameDirectory.toPath().resolve("slopmatica").resolve(folder).resolve(safe + ".json");
     }
 }

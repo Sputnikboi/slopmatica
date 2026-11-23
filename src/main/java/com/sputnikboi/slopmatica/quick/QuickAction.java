@@ -87,6 +87,15 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
         add("copy", Items.WRITABLE_BOOK, mc -> Clipboard.INSTANCE.copy(mc), false, mc -> Selection.INSTANCE.box() != null, null);
         add("save_selection", Items.WRITTEN_BOOK, mc -> mc.gui.setScreen(new SaveSelectionScreen(null)), false, mc -> Selection.INSTANCE.box() != null, null);
         add("paste", Items.SLIME_BALL, mc -> Clipboard.INSTANCE.paste(mc), false, null, null);
+        add("selection_tools", Items.BRUSH, mc -> mc.gui.setScreen(new com.sputnikboi.slopmatica.gui.SelectionToolsScreen(null)), false, null, null);
+        add("next_selection_tool", Items.SPYGLASS, mc -> com.sputnikboi.slopmatica.gui.SelectionToolsScreen.nextTool(), false, null, null);
+        add("selection_mode", Items.SHEARS, mc -> com.sputnikboi.slopmatica.gui.SelectionToolsScreen.nextMode(), false, null, null);
+        add("mark_removal", Items.IRON_PICKAXE, mc -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.markSelection(mc), false,
+            mc -> Selection.INSTANCE.box() != null, null);
+        add("unmark_removal", Items.WOODEN_PICKAXE, mc -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.unmarkSelection(mc), false,
+            mc -> Selection.INSTANCE.box() != null && com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.count() > 0, null);
+        add("clear_removal", Items.MILK_BUCKET, mc -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.clear(), false,
+            mc -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.count() > 0, null);
         if (Online.available()) {
             add("cloud_browser", Items.FILLED_MAP, mc -> mc.gui.setScreen(new SchematicBrowserScreen(null, true)), false, null, null);
             add("cloud", Items.PHANTOM_MEMBRANE, mc -> mc.gui.setScreen(Online.cloudScreen(null)), false, null, null);

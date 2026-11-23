@@ -84,6 +84,10 @@ public final class SlopmaticaKeys {
     public static final KeyMapping COPY_SELECTION = register(COPY, "copy_selection");
     public static final KeyMapping PASTE = register(COPY, "paste");
     public static final KeyMapping CLEAR_SELECTION = register(COPY, "clear_selection");
+    private static final KeyMapping SELECTION_TOOLS = register(COPY, "selection_tools");
+    private static final KeyMapping NEXT_SELECTION_TOOL = register(COPY, "next_selection_tool");
+    private static final KeyMapping SELECTION_MODE = register(COPY, "selection_mode");
+    private static final KeyMapping MARK_REMOVAL = register(COPY, "mark_removal");
 
     private static final KeyMapping LAYER_MODE = register(LAYERS, "layer_mode");
     private static final KeyMapping LAYER_UP = register(LAYERS, "layer_up");
@@ -239,8 +243,26 @@ public final class SlopmaticaKeys {
             layers.setLayer(here);
             feedback.accept(layersMessage());
         }
+        boolean brush = com.sputnikboi.slopmatica.config.SlopmaticaConfig.get().selectionTool == com.sputnikboi.slopmatica.build.SelectionTool.BRUSH
+            && !PlacementView.INSTANCE.freecam();
         while (pressed(SELECT_CORNER)) {
-            Selection.INSTANCE.setCorner(mc);
+            if (!brush) {
+                Selection.INSTANCE.setCorner(mc);
+            }
+        }
+        // The brush paints for as long as the key is held.
+        Selection.INSTANCE.tickBrush(mc, brush && SELECT_CORNER.isDown() && mc.gui.screen() == null);
+        while (pressed(SELECTION_TOOLS)) {
+            mc.gui.setScreen(new com.sputnikboi.slopmatica.gui.SelectionToolsScreen(null));
+        }
+        while (pressed(NEXT_SELECTION_TOOL)) {
+            com.sputnikboi.slopmatica.gui.SelectionToolsScreen.nextTool();
+        }
+        while (pressed(SELECTION_MODE)) {
+            com.sputnikboi.slopmatica.gui.SelectionToolsScreen.nextMode();
+        }
+        while (pressed(MARK_REMOVAL)) {
+            com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.markSelection(mc);
         }
         while (pressed(COPY_SELECTION)) {
             Clipboard.INSTANCE.copy(mc);

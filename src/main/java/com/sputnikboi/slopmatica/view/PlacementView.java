@@ -306,7 +306,7 @@ public final class PlacementView {
                     BlockPos block = pointedBlock(mc, eye(), look());
                     if (block != null) {
                         UndoStack.INSTANCE.saveSelection();
-                        Selection.INSTANCE.setCorner(block, mc.level.dimension().identifier().toString());
+                        Selection.INSTANCE.use(block, mc.level.dimension().identifier().toString(), mc.player != null && mc.player.isShiftKeyDown());
                     }
                 }
                 default -> SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.needs_cursor", tool.label()).withColor(SlopmaticaActions.ERROR));
@@ -583,6 +583,10 @@ public final class PlacementView {
     /** Shrinks the selection to the blocks in it. */
     public void fitSelection(Minecraft mc) {
         if (mc.level == null) {
+            return;
+        }
+        if (Selection.INSTANCE.plainBox() == null && Selection.INSTANCE.box() != null) {
+            SlopmaticaActions.actionBar(Component.translatable("slopmatica.view.fit_not_box").withColor(SlopmaticaActions.ERROR));
             return;
         }
         Selection.State before = Selection.INSTANCE.state();

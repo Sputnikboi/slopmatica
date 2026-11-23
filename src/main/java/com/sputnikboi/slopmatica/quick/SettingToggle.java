@@ -44,6 +44,11 @@ public record SettingToggle(String setting, List<String> values) {
         SETTINGS.put("pasteReplace", "slopmatica.options.paste_replace");
         SETTINGS.put("copyFormat", "slopmatica.options.copy_format");
         SETTINGS.put("cornerMode", "slopmatica.options.corner_mode");
+        SETTINGS.put("selectionTool", "slopmatica.seltools.tool");
+        SETTINGS.put("selectionMode", "slopmatica.seltools.mode");
+        SETTINGS.put("brushRadius", "slopmatica.seltools.brush_radius");
+        SETTINGS.put("brushShape", "slopmatica.seltools.brush_shape");
+        SETTINGS.put("magicExact", "slopmatica.seltools.magic_exact");
         SETTINGS.put("planScope", "slopmatica.plan.scope");
         SETTINGS.put("planShowInInventory", "slopmatica.plan.show");
         SETTINGS.put("planSideList", "slopmatica.plan.side");

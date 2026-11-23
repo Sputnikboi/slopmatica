@@ -164,6 +164,13 @@ public class PlacementViewScreen extends Screen {
             addRenderableWidget(Button.builder(Component.translatable("slopmatica.tool.selection.clear"), b -> Selection.INSTANCE.clear())
                 .bounds(x + half + GAP, y, half, B).build());
             y += B + GAP;
+            if (tool == Tool.SELECT) {
+                var c = com.sputnikboi.slopmatica.config.SlopmaticaConfig.get();
+                addRenderableWidget(Button.builder(Component.translatable("slopmatica.seltools.button", c.selectionTool.label(), c.selectionMode.label()),
+                        b -> minecraft.gui.setScreen(new com.sputnikboi.slopmatica.gui.SelectionToolsScreen(this)))
+                    .bounds(x, y, LEFT_W, B).tooltip(Tooltip.create(Component.translatable("slopmatica.seltools.button.tooltip"))).build());
+                y += B + GAP;
+            }
         }
 
         // Undo, for every tool.
@@ -175,7 +182,7 @@ public class PlacementViewScreen extends Screen {
             view.fitSelection(minecraft);
             rebuildWidgets();
         }).bounds(x + third + GAP, y, LEFT_W - third - GAP, B).tooltip(Tooltip.create(Component.translatable("slopmatica.view.fit.tooltip"))).build())
-            .active = Selection.INSTANCE.box() != null;
+            .active = Selection.INSTANCE.plainBox() != null;
         y += B + GAP;
 
         // Layers.
@@ -307,7 +314,7 @@ public class PlacementViewScreen extends Screen {
         }
         String hint = switch (PlacementView.INSTANCE.tool()) {
             case MOVE -> "Drag the build to move it   Scroll: up/down";
-            case SELECT -> "Click blocks to set the two corners";
+            case SELECT -> Component.translatable("slopmatica.seltool." + com.sputnikboi.slopmatica.config.SlopmaticaConfig.get().selectionTool.name().toLowerCase(Locale.ROOT) + ".hint").getString();
             case MODIFY -> "Drag a face of the selection to resize it";
             case CROP -> "Drag a face of the orange box to crop the build";
         };
@@ -374,11 +381,21 @@ public class PlacementViewScreen extends Screen {
                     return false;
                 }
                 UndoStack.INSTANCE.saveSelection();
-                Selection.INSTANCE.setCorner(block, dim);
+                if (com.sputnikboi.slopmatica.config.SlopmaticaConfig.get().selectionTool == com.sputnikboi.slopmatica.build.SelectionTool.BRUSH) {
+                    // Drag to keep painting; it ends when the button comes up.
+                    Selection.INSTANCE.startStroke(dim, event.hasShiftDown());
+                    Selection.INSTANCE.paint(block);
+                } else {
+                    Selection.INSTANCE.use(block, dim, event.hasShiftDown());
+                }
                 rebuildWidgets(); // Fit and Undo may have become available.
             }
             case MODIFY -> {
-                BoundingBox box = dim.equals(Selection.INSTANCE.dimension()) ? Selection.INSTANCE.box() : null;
+                BoundingBox box = dim.equals(Selection.INSTANCE.dimension()) ? Selection.INSTANCE.plainBox() : null;
+                if (box == null && Selection.INSTANCE.box() != null && dim.equals(Selection.INSTANCE.dimension())) {
+                    SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.modify.not_box").withColor(SlopmaticaActions.ERROR));
+                    return true;
+                }
                 if (box == null) {
                     SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.modify.none").withColor(SlopmaticaActions.ERROR));
                     return true;
@@ -409,6 +426,13 @@ public class PlacementViewScreen extends Screen {
         }
         PlacementView view = PlacementView.INSTANCE;
         Placement p = view.placement();
+        if (Selection.INSTANCE.painting() && minecraft.level != null) {
+            BlockPos block = view.pointedBlock(minecraft, view.eye(), view.rayThrough(minecraft, event.x(), event.y(), width, height));
+            if (block != null) {
+                Selection.INSTANCE.paint(block);
+            }
+            return true;
+        }
         if (minecraft.level == null || (p == null && boxDrag == null)) {
             return super.mouseDragged(event, dx, dy);
         }
@@ -456,6 +480,11 @@ public class PlacementViewScreen extends Screen {
         }
         if (event.button() != InputConstants.MOUSE_BUTTON_LEFT) {
             return super.mouseReleased(event);
+        }
+        if (Selection.INSTANCE.painting()) {
+            Selection.INSTANCE.endStroke();
+            rebuildWidgets();
+            return true;
         }
         Placement p = PlacementView.INSTANCE.placement();
         if (boxDrag != null) {

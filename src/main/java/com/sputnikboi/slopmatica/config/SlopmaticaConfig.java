@@ -126,6 +126,17 @@ public final class SlopmaticaConfig {
     /** The file format copies are saved in. */
     public SchematicFormats copyFormat = SchematicFormats.SLOPMATIC;
     public CornerMode cornerMode = CornerMode.DYNAMIC;
+    /** What the selection key does (box corners, sphere, brush...). */
+    public com.sputnikboi.slopmatica.build.SelectionTool selectionTool = com.sputnikboi.slopmatica.build.SelectionTool.BOX;
+    /** Whether a new selection shape replaces the selection, adds to it or is cut out of it. */
+    public com.sputnikboi.slopmatica.build.SelectionTool.Mode selectionMode = com.sputnikboi.slopmatica.build.SelectionTool.Mode.REPLACE;
+    /** The tools (by name) that only take surface blocks: solid ones with a side open to air. */
+    public java.util.Set<String> surfaceTools = new java.util.LinkedHashSet<>(java.util.List.of("BRUSH"));
+    /** The brush's radius in blocks (0 is one block). */
+    public int brushRadius = 2;
+    public com.sputnikboi.slopmatica.build.SelectionTool.BrushShape brushShape = com.sputnikboi.slopmatica.build.SelectionTool.BrushShape.SPHERE;
+    /** Magic select only takes blocks in exactly the same state (stairs facing the same way...), not just the same block. */
+    public boolean magicExact = false;
     /** Don't warn when a placement differs from what its schematic recommends (biome, position...). */
     public boolean ignoreRecommendations = false;
     /** What pasting into the world may overwrite. */
@@ -346,6 +357,19 @@ public final class SlopmaticaConfig {
         if (cornerMode == null) {
             cornerMode = CornerMode.DYNAMIC;
         }
+        if (selectionTool == null) {
+            selectionTool = com.sputnikboi.slopmatica.build.SelectionTool.BOX;
+        }
+        if (selectionMode == null) {
+            selectionMode = com.sputnikboi.slopmatica.build.SelectionTool.Mode.REPLACE;
+        }
+        if (surfaceTools == null) {
+            surfaceTools = new java.util.LinkedHashSet<>(java.util.List.of("BRUSH"));
+        }
+        if (brushShape == null) {
+            brushShape = com.sputnikboi.slopmatica.build.SelectionTool.BrushShape.SPHERE;
+        }
+        brushRadius = Math.clamp(brushRadius, 0, 16);
         if (pasteReplace == null) {
             pasteReplace = PlacementBuilder.Replace.NONE;
         }

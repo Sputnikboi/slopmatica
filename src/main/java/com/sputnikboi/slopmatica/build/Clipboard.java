@@ -111,10 +111,15 @@ public final class Clipboard {
         int[] indices = new int[(int) volume];
         List<BlockPos> blockEntities = new ArrayList<>();
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        // Any other shape than a box: what's around it in the box is "leave whatever is there".
+        Selection sel = Selection.INSTANCE;
+        boolean shaped = sel.plainBox() == null;
+        BlockState outside = Blocks.STRUCTURE_VOID.defaultBlockState();
         for (int y = 0; y < sy; y++) {
             for (int z = 0; z < sz; z++) {
                 for (int x = 0; x < sx; x++) {
-                    BlockState state = level.getBlockState(pos.set(box.minX() + x, box.minY() + y, box.minZ() + z));
+                    pos.set(box.minX() + x, box.minY() + y, box.minZ() + z);
+                    BlockState state = shaped && !sel.contains(pos.getX(), pos.getY(), pos.getZ()) ? outside : level.getBlockState(pos);
                     Integer id = ids.get(state);
                     if (id == null) {
                         id = palette.size();

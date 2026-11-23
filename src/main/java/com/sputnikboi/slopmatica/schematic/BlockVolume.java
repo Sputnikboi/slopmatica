@@ -20,7 +20,7 @@ public record BlockVolume(String name, String author, int sizeX, int sizeY, int 
     public long nonAirBlocks() {
         long n = 0;
         for (int id : indices) {
-            if (!palette.get(id).isAir()) {
+            if (!palette.get(id).isAir() && !palette.get(id).is(net.minecraft.world.level.block.Blocks.STRUCTURE_VOID)) {
                 n++;
             }
         }

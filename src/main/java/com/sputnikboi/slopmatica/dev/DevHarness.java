@@ -98,6 +98,7 @@ public final class DevHarness {
                     case "slopkeys" -> new SlopmaticaKeyBindsScreen(null);
                     case "color" -> new com.sputnikboi.slopmatica.gui.ColorPickerScreen(null, com.sputnikboi.slopmatica.verify.BlockStatus.MISSING);
                     case "action-keys" -> new com.sputnikboi.slopmatica.gui.ActionKeysScreen(null);
+                    case "seltools" -> new com.sputnikboi.slopmatica.gui.SelectionToolsScreen(null);
                     case "controls-keys" -> new com.sputnikboi.slopmatica.gui.ControlsKeysScreen(null);
                     case "welcome" -> new com.sputnikboi.slopmatica.gui.WelcomeScreen(null);
                     case "import" -> new com.sputnikboi.slopmatica.gui.LitematicaImportScreen(null);
@@ -205,9 +206,30 @@ public final class DevHarness {
                 String[] parts = step.split(" ");
                 try {
                     var field = com.sputnikboi.slopmatica.config.SlopmaticaConfig.class.getField(parts[1]);
-                    field.setBoolean(com.sputnikboi.slopmatica.config.SlopmaticaConfig.get(), Boolean.parseBoolean(parts[2]));
-                } catch (ReflectiveOperationException e) {
-                    LOGGER.warn("No boolean option {}", parts[1]);
+                    var config = com.sputnikboi.slopmatica.config.SlopmaticaConfig.get();
+                    if (field.getType() == boolean.class) {
+                        field.setBoolean(config, Boolean.parseBoolean(parts[2]));
+                    } else if (field.getType() == int.class) {
+                        field.setInt(config, Integer.parseInt(parts[2]));
+                    } else if (field.getType().isEnum()) {
+                        field.set(config, enumValue(field.getType(), parts[2]));
+                    }
+                } catch (ReflectiveOperationException | IllegalArgumentException e) {
+                    LOGGER.warn("Can't set option {}", parts[1], e);
+                }
+            } else if (step.startsWith("use ") && mc.level != null) {
+                // use <x> <y> <z> [shift]: the selection tool on that block, as a click would.
+                String[] parts = step.split(" ");
+                com.sputnikboi.slopmatica.build.Selection.INSTANCE.use(new BlockPos(Integer.parseInt(parts[1]), Integer.parseInt(parts[2]), Integer.parseInt(parts[3])),
+                    mc.level.dimension().identifier().toString(), parts.length > 4 && parts[4].equals("shift"));
+            } else if (step.equals("selinfo")) {
+                var sel = com.sputnikboi.slopmatica.build.Selection.INSTANCE;
+                LOGGER.info("dev selection: box {} parts {}", sel.box(), sel.parts());
+            } else if (step.startsWith("run ")) {
+                // run <quick action id>
+                var action = com.sputnikboi.slopmatica.quick.QuickAction.get(step.substring(4).trim());
+                if (action != null) {
+                    action.run().accept(mc);
                 }
             } else if (step.startsWith("block ") && mc.level != null) {
                 // block <x> <y> <z>: log the real block there and the layer view.
@@ -273,5 +295,10 @@ public final class DevHarness {
             LOGGER.warn("thumbs failed", e);
         }
         LOGGER.info("thumbs done: {} rendered, {} failed", done, failed);
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static Object enumValue(Class<?> type, String name) {
+        return Enum.valueOf((Class) type, name.toUpperCase(java.util.Locale.ROOT));
     }
 }

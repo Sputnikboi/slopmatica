@@ -208,6 +208,9 @@ public final class StructureNbtFormat {
         ListTag blockList = new ListTag();
         int[] indices = v.indices();
         for (int i = 0; i < indices.length; i++) {
+            if (v.palette().get(indices[i]).is(net.minecraft.world.level.block.Blocks.STRUCTURE_VOID)) {
+                continue; // Vanilla's way: a position not listed is left as it is.
+            }
             BlockPos pos = v.pos(i);
             CompoundTag block = new CompoundTag();
             block.put("pos", ints(pos.getX(), pos.getY(), pos.getZ()));

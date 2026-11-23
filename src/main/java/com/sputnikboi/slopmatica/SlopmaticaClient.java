@@ -55,6 +55,13 @@ public final class SlopmaticaClient implements ClientModInitializer {
         SlopmaticaKeys.register();
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "placement_view"), (graphics, delta) -> PlacementView.INSTANCE.extractHud(graphics));
         LevelRenderEvents.COLLECT_SUBMITS.register(Selection.INSTANCE::submit);
+        com.sputnikboi.slopmatica.build.RemovalMarks.register();
+        LevelRenderEvents.COLLECT_SUBMITS.register(com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE::submit);
+        ClientTickEvents.END_CLIENT_TICK.register(com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE::tick);
+        HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "removal_marks"),
+            (graphics, delta) -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.extractHud(graphics));
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, mc) -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.onJoin(mc));
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.onLeave());
         LevelRenderEvents.COLLECT_SUBMITS.register(PlacementView.INSTANCE::submitToolBoxes);
         LevelRenderEvents.COLLECT_SUBMITS.register(SpawnCheck.INSTANCE::submit);
         LevelRenderEvents.COLLECT_SUBMITS.register(com.sputnikboi.slopmatica.render.IncompleteBoxes::submit);
