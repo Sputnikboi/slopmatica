@@ -79,6 +79,11 @@ public final class Layers {
         set(mode, y);
     }
 
+    /** The layer to this height; from "all layers", that one layer alone (else nothing would change). */
+    public void layerHere(int y) {
+        set(mode == Mode.ALL ? Mode.SINGLE : mode, y);
+    }
+
     private void set(Mode mode, int layer) {
         this.mode = mode;
         this.layer = layer;

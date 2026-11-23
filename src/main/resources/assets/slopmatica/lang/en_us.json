@@ -812,5 +812,6 @@
   "slopmatica.quick.cat.set_building": "Settings: building",
   "slopmatica.quick.cat.set_selection": "Settings: selection",
   "slopmatica.quick.cat.set_plan": "Settings: inventory plan",
-  "slopmatica.quick.cat.custom": "Your toggles"
+  "slopmatica.quick.cat.custom": "Your toggles",
+  "slopmatica.quick.layer_here": "Layer to My Height"
 }

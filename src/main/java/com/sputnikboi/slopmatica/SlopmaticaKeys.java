@@ -240,7 +240,7 @@ public final class SlopmaticaKeys {
             feedback.accept(layersMessage());
         }
         while (pressed(LAYER_HERE)) {
-            layers.setLayer(here);
+            layers.layerHere(here);
             feedback.accept(layersMessage());
         }
         boolean brush = com.sputnikboi.slopmatica.config.SlopmaticaConfig.get().selectionTool == com.sputnikboi.slopmatica.build.SelectionTool.BRUSH

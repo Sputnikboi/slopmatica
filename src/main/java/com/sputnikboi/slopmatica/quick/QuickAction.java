@@ -81,6 +81,10 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
             Layers.INSTANCE.move(-1);
             SlopmaticaActions.actionBar(com.sputnikboi.slopmatica.SlopmaticaKeys.layersMessage());
         }, false, mc -> Layers.INSTANCE.mode() != Layers.Mode.ALL, null);
+        add("layer_here", Items.COMPASS, mc -> {
+            Layers.INSTANCE.layerHere(Layers.startHeight(mc.player != null ? mc.player.getBlockY() : 0));
+            SlopmaticaActions.actionBar(com.sputnikboi.slopmatica.SlopmaticaKeys.layersMessage());
+        }, false, null, null);
         add("corner", Items.STONE_BUTTON, Selection.INSTANCE::setCorner, false, null, null);
         add("clear_selection", Items.BARRIER, mc -> Selection.INSTANCE.clear(), false, mc -> Selection.INSTANCE.box() != null, null);
         add("fit_selection", Items.SHEARS, mc -> PlacementView.INSTANCE.fitSelection(mc), false, mc -> Selection.INSTANCE.box() != null, null);
@@ -115,7 +119,7 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
             "mark_removal", "unmark_removal", "clear_removal")) {
             CATEGORY.put(id, "selection");
         }
-        for (String id : List.of("layer_mode", "layer_up", "layer_down", "spawn_check")) {
+        for (String id : List.of("layer_mode", "layer_up", "layer_down", "layer_here", "spawn_check")) {
             CATEGORY.put(id, "view");
         }
         for (String id : List.of("menu", "options", "keybinds")) {
