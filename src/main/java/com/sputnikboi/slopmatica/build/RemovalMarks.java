@@ -81,39 +81,15 @@ public final class RemovalMarks implements BlockChanges.Listener {
     }
 
     /**
-     * Mark for Removal as a toggle: when any block of the selection is on the list, all of them
-     * come off it; only a selection with none marked yet is put on.
+     * Mark for Removal as a toggle: while anything is on the break list (here), it all comes off,
+     * wherever it is and with or without a selection; with nothing marked, the selection is put on.
      */
     public void toggleSelection(Minecraft mc) {
-        if (selectionMarked(mc)) {
-            unmarkSelection(mc);
+        if (count() > 0) {
+            clear();
         } else {
             markSelection(mc);
         }
-    }
-
-    /** Whether any block of the selection here is on the list (false if it's too big to check). */
-    public boolean selectionMarked(Minecraft mc) {
-        Selection sel = Selection.INSTANCE;
-        String dim = dimension();
-        LongOpenHashSet set = dim == null ? null : marks.get(dim);
-        if (mc.level == null || set == null || set.isEmpty() || sel.box() == null || !dim.equals(sel.dimension())) {
-            return false;
-        }
-        // Whichever is smaller to walk: the list, or the selection.
-        var b = sel.box();
-        if ((long) b.getXSpan() * b.getYSpan() * b.getZSpan() > set.size()) {
-            for (LongIterator it = set.iterator(); it.hasNext(); ) {
-                long k = it.nextLong();
-                if (sel.contains(BlockPos.getX(k), BlockPos.getY(k), BlockPos.getZ(k))) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        boolean[] any = {false};
-        sel.forEach(MAX_MARK * 4, p -> any[0] |= set.contains(p.asLong()));
-        return any[0];
     }
 
     /** Marks the selection's real blocks (air and liquids aren't anything to break). */

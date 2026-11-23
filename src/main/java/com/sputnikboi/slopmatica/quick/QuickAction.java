@@ -98,7 +98,8 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
         add("lock_selection", Items.IRON_BARS, mc -> com.sputnikboi.slopmatica.build.SelectionLock.toggle(), false, null,
             com.sputnikboi.slopmatica.build.SelectionLock::enabled);
         add("mark_removal", Items.IRON_PICKAXE, mc -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.toggleSelection(mc), false,
-            mc -> Selection.INSTANCE.box() != null, null);
+            mc -> Selection.INSTANCE.box() != null || com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.count() > 0,
+            () -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.count() > 0);
         add("clear_removal", Items.MILK_BUCKET, mc -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.clear(), false,
             mc -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.count() > 0, null);
         if (Online.available()) {
