@@ -33,8 +33,22 @@ public final class SeeThroughLines {
     public static final RenderType HIDDEN = RenderType.create("slopmatica_lines_see_through",
         RenderSetup.builder(PIPELINE).setOitPipelines(OIT).setLayeringTransform(LayeringTransform.VIEW_OFFSET_Z_LAYERING).createRenderSetup());
 
-    /** Where nothing is in front: blended, depth-tested. */
-    public static final RenderType VISIBLE = RenderTypes.LINES_TRANSLUCENT_NO_DEPTH_WRITE;
+    /**
+     * Where nothing is in front: blended, depth-tested, and pulled a little towards the camera (as
+     * vanilla's block outline is) so lines lying on block faces don't flicker against them.
+     */
+    public static final RenderPipeline VISIBLE_PIPELINE = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.LINES_SNIPPET)
+        .withLocation(Identifier.fromNamespaceAndPath("slopmatica", "pipeline/lines_translucent_depth_bias"))
+        .withColorTargetState(new ColorTargetState(BlendFunction.TRANSLUCENT))
+        .withDepthStencilState(new DepthStencilState(CompareOp.GREATER_THAN_OR_EQUAL, false, 1.0F, 1.0F))
+        .build());
+
+    public static final RenderType VISIBLE = RenderType.create("slopmatica_lines_translucent_depth_bias",
+        RenderSetup.builder(VISIBLE_PIPELINE).setOitPipelines(RenderPipelines.OIT_LINES_TRANSLUCENT)
+            .setLayeringTransform(LayeringTransform.VIEW_OFFSET_Z_LAYERING).createRenderSetup());
+
+    /** Solid lines (out playing), with the same pull towards the camera. */
+    public static final RenderType SOLID = RenderTypes.LINES_DEPTH_BIAS;
 
     /** How strong each pass is drawn, as a share of the colour's own alpha. */
     public static final float HIDDEN_ALPHA = 0.35F, VISIBLE_ALPHA = 0.8F;

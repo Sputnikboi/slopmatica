@@ -584,7 +584,7 @@ public final class PlacementView {
         Placement.Transform t = p.transform();
         BoundingBox shown = t.worldBounds();
         BoundingBox all = fullWorldBounds(p);
-        context.submitNodeCollector().submitCustomGeometry(context.poseStack(), RenderTypes.lines(), (pose, buffer) -> {
+        context.submitNodeCollector().submitCustomGeometry(context.poseStack(), com.sputnikboi.slopmatica.render.SeeThroughLines.SOLID, (pose, buffer) -> {
             if (!all.equals(shown)) {
                 Selection.box(buffer, pose, cam, all.minX(), all.minY(), all.minZ(), all.maxX() + 1, all.maxY() + 1, all.maxZ() + 1, 0.004, 0xFF808080, width / 2);
             }

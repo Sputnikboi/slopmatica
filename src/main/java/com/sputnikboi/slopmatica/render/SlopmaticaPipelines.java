@@ -2,6 +2,8 @@ package com.sputnikboi.slopmatica.render;
 
 import com.mojang.renderpearl.api.pipeline.BlendFunction;
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.CompareOp;
+import com.mojang.renderpearl.api.pipeline.DepthStencilState;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
@@ -20,6 +22,9 @@ final class SlopmaticaPipelines {
         .withVertexShader(id("core/fading_lines"))
         .withFragmentShader(id("core/fading_lines"))
         .withColorTargetState(new ColorTargetState(BlendFunction.TRANSLUCENT))
+        // Pulled a little towards the camera (as vanilla's block outline is), so outlines lying on
+        // real blocks' edges don't flicker against them.
+        .withDepthStencilState(new DepthStencilState(CompareOp.GREATER_THAN_OR_EQUAL, true, 1.0F, 1.0F))
         .build();
 
     private SlopmaticaPipelines() {

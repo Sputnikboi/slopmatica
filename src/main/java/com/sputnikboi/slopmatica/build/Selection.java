@@ -765,7 +765,7 @@ public final class Selection {
                 (pose, buffer) -> drawAll(buffer, pose, cam, width, plain, shape, all, frame, editing, com.sputnikboi.slopmatica.render.SeeThroughLines.VISIBLE_ALPHA));
         } else {
             // Out playing: solid lines, only where you can see them.
-            context.submitNodeCollector().submitCustomGeometry(poseStack, RenderTypes.lines(),
+            context.submitNodeCollector().submitCustomGeometry(poseStack, com.sputnikboi.slopmatica.render.SeeThroughLines.SOLID,
                 (pose, buffer) -> drawAll(buffer, pose, cam, width, plain, shape, all, frame, editing, 1));
         }
     }

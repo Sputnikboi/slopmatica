@@ -30,7 +30,7 @@ public final class IncompleteBoxes {
                 continue;
             }
             BoundingBox b = p.transform().worldBounds();
-            context.submitNodeCollector().submitCustomGeometry(context.poseStack(), RenderTypes.lines(), (pose, buffer) ->
+            context.submitNodeCollector().submitCustomGeometry(context.poseStack(), com.sputnikboi.slopmatica.render.SeeThroughLines.SOLID, (pose, buffer) ->
                 Selection.box(buffer, pose, cam, b.minX(), b.minY(), b.minZ(), b.maxX() + 1, b.maxY() + 1, b.maxZ() + 1, 0.006, SlopmaticaActions.WARNING, width));
         }
     }

@@ -165,7 +165,7 @@ public final class SpawnCheck {
         Vec3 cam = context.levelState().cameraRenderState.pos;
         float width = mc.getWindow().getAppropriateLineWidth() * 2;
         LongArrayList a = always, n = night;
-        context.submitNodeCollector().submitCustomGeometry(context.poseStack(), RenderTypes.lines(), (pose, buffer) -> {
+        context.submitNodeCollector().submitCustomGeometry(context.poseStack(), com.sputnikboi.slopmatica.render.SeeThroughLines.SOLID, (pose, buffer) -> {
             int[] drawn = {0};
             for (LongArrayList list : List.of(a, n)) {
                 int color = list == a ? ALWAYS_COLOR : NIGHT_COLOR;
