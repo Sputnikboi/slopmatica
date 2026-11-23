@@ -135,6 +135,8 @@ public final class SlopmaticaConfig {
     /** The brush's radius in blocks (0 is one block). */
     /** Lock to Selection: only break, place and use blocks inside the selection. */
     public boolean lockToSelection = false;
+    /** Lock to Selection also stops levers, buttons, repeaters and the like outside the selection. */
+    public boolean lockRedstone = false;
     public int brushRadius = 2;
     public com.sputnikboi.slopmatica.build.SelectionTool.BrushShape brushShape = com.sputnikboi.slopmatica.build.SelectionTool.BrushShape.SPHERE;
     /** Magic select only takes blocks in exactly the same state (stairs facing the same way...), not just the same block. */
