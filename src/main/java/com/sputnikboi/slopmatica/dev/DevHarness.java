@@ -251,6 +251,8 @@ public final class DevHarness {
                 String[] parts = step.split(" ");
                 com.sputnikboi.slopmatica.build.Selection.INSTANCE.use(new BlockPos(Integer.parseInt(parts[1]), Integer.parseInt(parts[2]), Integer.parseInt(parts[3])),
                     mc.level.dimension().identifier().toString(), parts.length > 4 && parts[4].equals("shift"));
+            } else if (step.equals("marks")) {
+                LOGGER.info("dev marks: {}", com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.count());
             } else if (step.equals("selinfo")) {
                 var sel = com.sputnikboi.slopmatica.build.Selection.INSTANCE;
                 LOGGER.info("dev selection: box {} parts {}", sel.box(), sel.parts());

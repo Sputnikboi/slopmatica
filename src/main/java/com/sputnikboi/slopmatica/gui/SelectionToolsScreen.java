@@ -102,23 +102,19 @@ public class SelectionToolsScreen extends OptionsSubScreen {
             OptionInstance.cachedConstantTooltip(Component.translatable("slopmatica.lock.tooltip")), c.lockToSelection, v -> c.lockToSelection = v), null);
 
         list.addHeader(Component.translatable("slopmatica.seltools.marks", String.format("%,d", RemovalMarks.INSTANCE.count())));
-        Button mark = button("slopmatica.seltools.mark", b -> {
-            RemovalMarks.INSTANCE.markSelection(minecraft);
-            rebuildWidgets();
-        });
-        Button unmark = button("slopmatica.seltools.unmark", b -> {
-            RemovalMarks.INSTANCE.unmarkSelection(minecraft);
+        // One toggle: on the list already (every block of it), it takes them off.
+        boolean marked = any && RemovalMarks.INSTANCE.selectionMarked(minecraft);
+        Button mark = button(marked ? "slopmatica.seltools.unmark" : "slopmatica.seltools.mark", b -> {
+            RemovalMarks.INSTANCE.toggleSelection(minecraft);
             rebuildWidgets();
         });
         mark.active = any && minecraft.level != null;
-        unmark.active = any && RemovalMarks.INSTANCE.count() > 0;
-        list.addSmall(mark, unmark);
         Button clearMarks = button("slopmatica.seltools.clear_marks", b -> {
             RemovalMarks.INSTANCE.clear();
             rebuildWidgets();
         });
         clearMarks.active = RemovalMarks.INSTANCE.count() > 0;
-        list.addSmall(clearMarks, null);
+        list.addSmall(mark, clearMarks);
     }
 
     private static Button button(String key, Button.OnPress press) {

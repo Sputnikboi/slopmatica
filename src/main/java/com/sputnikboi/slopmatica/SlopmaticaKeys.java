@@ -263,7 +263,7 @@ public final class SlopmaticaKeys {
             com.sputnikboi.slopmatica.gui.SelectionToolsScreen.nextMode();
         }
         while (pressed(MARK_REMOVAL)) {
-            com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.markSelection(mc);
+            com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.toggleSelection(mc);
         }
         while (pressed(LOCK_SELECTION)) {
             com.sputnikboi.slopmatica.build.SelectionLock.toggle();

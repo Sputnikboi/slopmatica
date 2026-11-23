@@ -96,10 +96,8 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
         add("selection_mode", Items.SHEARS, mc -> com.sputnikboi.slopmatica.gui.SelectionToolsScreen.nextMode(), false, null, null);
         add("lock_selection", Items.IRON_BARS, mc -> com.sputnikboi.slopmatica.build.SelectionLock.toggle(), false, null,
             com.sputnikboi.slopmatica.build.SelectionLock::enabled);
-        add("mark_removal", Items.IRON_PICKAXE, mc -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.markSelection(mc), false,
+        add("mark_removal", Items.IRON_PICKAXE, mc -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.toggleSelection(mc), false,
             mc -> Selection.INSTANCE.box() != null, null);
-        add("unmark_removal", Items.WOODEN_PICKAXE, mc -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.unmarkSelection(mc), false,
-            mc -> Selection.INSTANCE.box() != null && com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.count() > 0, null);
         add("clear_removal", Items.MILK_BUCKET, mc -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.clear(), false,
             mc -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.count() > 0, null);
         if (Online.available()) {
@@ -118,7 +116,7 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
             CATEGORY.put(id, "build");
         }
         for (String id : List.of("corner", "selection_tools", "next_selection_tool", "selection_mode", "copy", "save_selection", "fit_selection", "clear_selection",
-            "mark_removal", "unmark_removal", "clear_removal", "lock_selection")) {
+            "mark_removal", "clear_removal", "lock_selection")) {
             CATEGORY.put(id, "selection");
         }
         for (String id : List.of("layer_mode", "layer_up", "layer_down", "layer_here", "spawn_check")) {

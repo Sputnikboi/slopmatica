@@ -75,6 +75,37 @@ public final class RemovalMarks implements BlockChanges.Listener {
         return state.isAir() || state.getBlock() instanceof LiquidBlock;
     }
 
+    /**
+     * Mark for Removal as a toggle: when every real block of the selection is on the list already,
+     * they come off it; otherwise the selection's blocks are put on.
+     */
+    public void toggleSelection(Minecraft mc) {
+        if (selectionMarked(mc)) {
+            unmarkSelection(mc);
+        } else {
+            markSelection(mc);
+        }
+    }
+
+    /** Whether the selection has real blocks here and all of them are marked (false if it's too big to check). */
+    public boolean selectionMarked(Minecraft mc) {
+        ClientLevel level = mc.level;
+        Selection sel = Selection.INSTANCE;
+        String dim = dimension();
+        LongOpenHashSet set = dim == null ? null : marks.get(dim);
+        if (level == null || set == null || set.isEmpty() || sel.box() == null || !dim.equals(sel.dimension())) {
+            return false;
+        }
+        boolean[] any = {false}, all = {true};
+        boolean ok = sel.forEach(MAX_MARK * 4, p -> {
+            if (all[0] && level.hasChunk(SectionPos.blockToSectionCoord(p.getX()), SectionPos.blockToSectionCoord(p.getZ())) && !gone(level.getBlockState(p))) {
+                any[0] = true;
+                all[0] = set.contains(p.asLong());
+            }
+        });
+        return ok && any[0] && all[0];
+    }
+
     /** Marks the selection's real blocks (air and liquids aren't anything to break). */
     public void markSelection(Minecraft mc) {
         ClientLevel level = mc.level;
