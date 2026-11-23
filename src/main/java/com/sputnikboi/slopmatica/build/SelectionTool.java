@@ -5,6 +5,11 @@ import net.minecraft.network.chat.Component;
 
 /** What the selection key (the corner key) does with the block it points at. */
 public enum SelectionTool {
+    /**
+     * Change the selection instead of making one (build view): drag a face handle to stretch it,
+     * the origin to move it. The selection key out in the world sets box corners with it.
+     */
+    CURSOR,
     /** Two corners (the original selection). */
     BOX,
     /** A centre, then a block on the edge. */

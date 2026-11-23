@@ -97,7 +97,8 @@ public final class Selection {
             return pos;
         }
         boolean looking = mc.hitResult instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK;
-        if (SlopmaticaConfig.get().selectionTool != SelectionTool.BOX) {
+        SelectionTool chosen = SlopmaticaConfig.get().selectionTool;
+        if (chosen != SelectionTool.BOX && chosen != SelectionTool.CURSOR) {
             // The other tools reach further than an arm: anything you can see (ghosts too).
             BlockPos far = view.pointedBlock(mc, mc.player.getEyePosition(), mc.player.getLookAngle());
             if (far == null) {
@@ -138,7 +139,7 @@ public final class Selection {
         SelectionTool tool = c.selectionTool;
         SelectionTool.Mode mode = c.selectionMode;
         switch (tool) {
-            case BOX -> boxClick(pos, mode);
+            case BOX, CURSOR -> boxClick(pos, mode);
             case SPHERE, CYLINDER -> {
                 if (center == null) {
                     center = pos;
@@ -189,9 +190,13 @@ public final class Selection {
 
     private void boxClick(BlockPos pos, SelectionTool.Mode mode) {
         if (mode == SelectionTool.Mode.REPLACE) {
-            // The original selection: two corners, either one moved again later.
-            if (nextIsFirst) {
+            // Two corners. A click after a finished box starts a new one (the Cursor tool changes boxes).
+            if (nextIsFirst || first == null) {
                 first = pos;
+                second = null;
+                parts = List.of();
+                center = null;
+                points = List.of();
             } else {
                 second = pos;
             }
@@ -745,42 +750,57 @@ public final class Selection {
         VoxelOutline shape = plain == null ? outline.get() : null;
         BoundingBox all = box();
         BoundingBox frame = frame();
-        boolean editing = PlacementView.INSTANCE.active() && PlacementView.INSTANCE.tool() == com.sputnikboi.slopmatica.view.Tool.MODIFY;
-        context.submitNodeCollector().submitCustomGeometry(poseStack, RenderTypes.lines(), (pose, buffer) -> {
-            if (plain != null) {
-                box(buffer, pose, cam, plain.minX(), plain.minY(), plain.minZ(), plain.maxX() + 1, plain.maxY() + 1, plain.maxZ() + 1, 0.002, BOX_COLOR, width);
-            } else if (shape != null) {
-                shape.draw(buffer, pose, cam, BOX_COLOR, width, 0.003);
-            } else if (all != null) {
-                // Too big to outline block by block (or not outlined yet): its box, dimmed.
-                box(buffer, pose, cam, all.minX(), all.minY(), all.minZ(), all.maxX() + 1, all.maxY() + 1, all.maxZ() + 1, 0.002, 0x80FFFFFF, width);
+        boolean editing = PlacementView.INSTANCE.editingSelection();
+        // Twice: faint through blocks, stronger where nothing is in front.
+        context.submitNodeCollector().submitCustomGeometry(poseStack, com.sputnikboi.slopmatica.render.SeeThroughLines.HIDDEN,
+            (pose, buffer) -> drawAll(buffer, pose, cam, width, plain, shape, all, frame, editing, com.sputnikboi.slopmatica.render.SeeThroughLines.HIDDEN_ALPHA));
+        context.submitNodeCollector().submitCustomGeometry(poseStack, com.sputnikboi.slopmatica.render.SeeThroughLines.VISIBLE,
+            (pose, buffer) -> drawAll(buffer, pose, cam, width, plain, shape, all, frame, editing, com.sputnikboi.slopmatica.render.SeeThroughLines.VISIBLE_ALPHA));
+    }
+
+    /** How strongly the pass being built draws (a share of each colour's alpha). Render thread. */
+    private static float alpha = 1;
+
+    private static int c(int color) {
+        return com.sputnikboi.slopmatica.render.SeeThroughLines.fade(color, alpha);
+    }
+
+    private void drawAll(VertexConsumer buffer, PoseStack.Pose pose, Vec3 cam, float width, @Nullable BoundingBox plain, @Nullable VoxelOutline shape,
+                         @Nullable BoundingBox all, @Nullable BoundingBox frame, boolean editing, float strength) {
+        alpha = strength;
+        if (plain != null) {
+            box(buffer, pose, cam, plain.minX(), plain.minY(), plain.minZ(), plain.maxX() + 1, plain.maxY() + 1, plain.maxZ() + 1, 0.002, c(BOX_COLOR), width);
+        } else if (shape != null) {
+            shape.draw(buffer, pose, cam, c(BOX_COLOR), width, 0.003);
+        } else if (all != null) {
+            // Too big to outline block by block (or not outlined yet): its box, dimmed.
+            box(buffer, pose, cam, all.minX(), all.minY(), all.minZ(), all.maxX() + 1, all.maxY() + 1, all.maxZ() + 1, 0.002, c(0x80FFFFFF), width);
+        }
+        if (first != null) {
+            cube(buffer, pose, cam, first, c(CORNER1_COLOR), width);
+        }
+        if (second != null) {
+            cube(buffer, pose, cam, second, c(CORNER2_COLOR), width);
+        }
+        if (center != null) {
+            cube(buffer, pose, cam, center, c(CORNER1_COLOR), width);
+        }
+        if (frame != null) {
+            if (editing) {
+                // The frame you stretch, with a handle on each face, and its middle.
+                box(buffer, pose, cam, frame.minX(), frame.minY(), frame.minZ(), frame.maxX() + 1, frame.maxY() + 1, frame.maxZ() + 1, 0.02, c(FRAME_COLOR), width);
+                handles(buffer, pose, cam, frame, width);
             }
-            if (first != null) {
-                cube(buffer, pose, cam, first, CORNER1_COLOR, width);
+            originMarker(buffer, pose, cam, originOf(frame), editing, width);
+        }
+        BlockPos prev = null;
+        for (BlockPos p : points) {
+            cube(buffer, pose, cam, p, c(POINT_COLOR), width);
+            if (prev != null) {
+                line(buffer, pose, cam, prev, p, c(POINT_COLOR), width);
             }
-            if (second != null) {
-                cube(buffer, pose, cam, second, CORNER2_COLOR, width);
-            }
-            if (center != null) {
-                cube(buffer, pose, cam, center, CORNER1_COLOR, width);
-            }
-            if (frame != null) {
-                if (editing) {
-                    // The frame you stretch, with a handle on each face, and its middle.
-                    box(buffer, pose, cam, frame.minX(), frame.minY(), frame.minZ(), frame.maxX() + 1, frame.maxY() + 1, frame.maxZ() + 1, 0.02, FRAME_COLOR, width);
-                    handles(buffer, pose, cam, frame, width);
-                }
-                originMarker(buffer, pose, cam, originOf(frame), editing, width);
-            }
-            BlockPos prev = null;
-            for (BlockPos p : points) {
-                cube(buffer, pose, cam, p, POINT_COLOR, width);
-                if (prev != null) {
-                    line(buffer, pose, cam, prev, p, POINT_COLOR, width);
-                }
-                prev = p;
-            }
-        });
+            prev = p;
+        }
     }
 
     /** A small square on the middle of each face of the frame: what to drag to stretch it. */
@@ -788,22 +808,22 @@ public final class Selection {
         double cx = (f.minX() + f.maxX() + 1) / 2.0, cy = (f.minY() + f.maxY() + 1) / 2.0, cz = (f.minZ() + f.maxZ() + 1) / 2.0;
         double h = HANDLE / 2, g = 0.03;
         double x0 = f.minX() - g, x1 = f.maxX() + 1 + g, y0 = f.minY() - g, y1 = f.maxY() + 1 + g, z0 = f.minZ() - g, z1 = f.maxZ() + 1 + g;
-        box(b, pose, cam, x0, cy - h, cz - h, x0, cy + h, cz + h, 0, HANDLE_COLOR, width * 2);
-        box(b, pose, cam, x1, cy - h, cz - h, x1, cy + h, cz + h, 0, HANDLE_COLOR, width * 2);
-        box(b, pose, cam, cx - h, y0, cz - h, cx + h, y0, cz + h, 0, HANDLE_COLOR, width * 2);
-        box(b, pose, cam, cx - h, y1, cz - h, cx + h, y1, cz + h, 0, HANDLE_COLOR, width * 2);
-        box(b, pose, cam, cx - h, cy - h, z0, cx + h, cy + h, z0, 0, HANDLE_COLOR, width * 2);
-        box(b, pose, cam, cx - h, cy - h, z1, cx + h, cy + h, z1, 0, HANDLE_COLOR, width * 2);
+        box(b, pose, cam, x0, cy - h, cz - h, x0, cy + h, cz + h, 0, c(HANDLE_COLOR), width * 2);
+        box(b, pose, cam, x1, cy - h, cz - h, x1, cy + h, cz + h, 0, c(HANDLE_COLOR), width * 2);
+        box(b, pose, cam, cx - h, y0, cz - h, cx + h, y0, cz + h, 0, c(HANDLE_COLOR), width * 2);
+        box(b, pose, cam, cx - h, y1, cz - h, cx + h, y1, cz + h, 0, c(HANDLE_COLOR), width * 2);
+        box(b, pose, cam, cx - h, cy - h, z0, cx + h, cy + h, z0, 0, c(HANDLE_COLOR), width * 2);
+        box(b, pose, cam, cx - h, cy - h, z1, cx + h, cy + h, z1, 0, c(HANDLE_COLOR), width * 2);
     }
 
     /** The origin: a yellow block with an axis cross through it (thicker while it can be dragged). */
     private static void originMarker(VertexConsumer b, PoseStack.Pose pose, Vec3 cam, BlockPos o, boolean grabbable, float width) {
         float w = grabbable ? width * 2.5F : width * 1.5F;
-        box(b, pose, cam, o.getX() + 0.2, o.getY() + 0.2, o.getZ() + 0.2, o.getX() + 0.8, o.getY() + 0.8, o.getZ() + 0.8, 0, ORIGIN_COLOR, w);
+        box(b, pose, cam, o.getX() + 0.2, o.getY() + 0.2, o.getZ() + 0.2, o.getX() + 0.8, o.getY() + 0.8, o.getZ() + 0.8, 0, c(ORIGIN_COLOR), w);
         double cx = o.getX() + 0.5, cy = o.getY() + 0.5, cz = o.getZ() + 0.5, r = 0.9;
-        segment(b, pose, cam, cx - r, cy, cz, cx + r, cy, cz, 0xFFFF5050, w);
-        segment(b, pose, cam, cx, cy - r, cz, cx, cy + r, cz, 0xFF50FF50, w);
-        segment(b, pose, cam, cx, cy, cz - r, cx, cy, cz + r, 0xFF5090FF, w);
+        segment(b, pose, cam, cx - r, cy, cz, cx + r, cy, cz, c(0xFFFF5050), w);
+        segment(b, pose, cam, cx, cy - r, cz, cx, cy + r, cz, c(0xFF50FF50), w);
+        segment(b, pose, cam, cx, cy, cz - r, cx, cy, cz + r, c(0xFF5090FF), w);
     }
 
     /** Whether a ray from {@code from} along {@code dir} passes through the origin's grab box. */

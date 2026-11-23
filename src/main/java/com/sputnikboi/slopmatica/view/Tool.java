@@ -9,8 +9,6 @@ public enum Tool {
     MOVE,
     /** Click two blocks to set the selection's corners. */
     SELECT,
-    /** Drag a face of the selection box to grow or shrink it. */
-    MODIFY,
     /** Drag a face of the build's box so only part of it shows. */
     CROP;
 

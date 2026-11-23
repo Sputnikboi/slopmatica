@@ -3,14 +3,11 @@ package com.sputnikboi.slopmatica.quick;
 import com.sputnikboi.slopmatica.SlopmaticaActions;
 import com.sputnikboi.slopmatica.config.SlopmaticaConfig;
 import com.sputnikboi.slopmatica.gui.QuickMenuEditScreen;
+import com.sputnikboi.slopmatica.render.GuiShapes;
 import java.util.List;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
-import com.mojang.blaze3d.platform.NativeImage;
-import net.minecraft.client.renderer.RenderPipelines;
-import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
 
 /**
  * The action wheel, the Quick Menu's other style: the same actions in a ring around the
@@ -29,19 +26,6 @@ public final class ActionWheel {
     private static final int OUTER = 80, HOLE = 17, ICONS = (OUTER + HOLE) / 2 + 2;
     /** Mouse units inside which the pointer is in the empty middle. */
     private static final double DEADZONE = REACH * HOLE / ICONS;
-    /** The wheel's textures are drawn this big and scaled down, so edges stay smooth at any GUI scale. */
-    private static final int TEXTURE = 512;
-
-    /**
-     * Textures painted so far: the ring and the lit wedge for each action count (the wedge is
-     * turned into place when drawn), and the lit middle (-1). Painting takes a while, so it runs in
-     * the background, once per count, and the counts your pages use are painted ahead of time.
-     * Render thread only.
-     */
-    private final java.util.Set<Integer> painted = new java.util.HashSet<>();
-    private final java.util.Set<Integer> painting = new java.util.HashSet<>();
-    private int warmTicks;
-
     private boolean open;
     private int page;
     private double px, py;
@@ -191,32 +175,49 @@ public final class ActionWheel {
         List<Integer> active = active();
         int wedge = hoveredWedge(active.size());
         int hovered = wedge < 0 ? -1 : active.get(wedge);
-        // The ring (one wedge per action), then the hovered wedge, or the middle lit when no action is picked.
-        // Until a new action count's textures are painted (a moment, once), only the icons show.
-        int outer = (int) Math.round(OUTER * scale);
-        if (paint(mc, active.size()) && paint(mc, -1)) {
-            blitWheel(g, cx, cy, outer, "ring_" + active.size());
-            if (wedge < 0) {
-                blitWheel(g, cx, cy, outer, "middle");
-            } else {
-                g.pose().pushMatrix();
-                g.pose().rotateAbout((float) (2 * Math.PI * wedge / active.size()), cx, cy);
-                blitWheel(g, cx, cy, outer, "wedge_" + active.size());
-                g.pose().popMatrix();
+        // Drawn as shapes, not a texture: sharp at any size and GUI scale.
+        float outer = (float) (OUTER * scale), hole = (float) (HOLE * scale);
+        GuiShapes shapes = new GuiShapes();
+        float t = (float) Math.max(1.2 * scale, 2 * shapes.pixel());
+        int n = active.size();
+        double sector = 2 * Math.PI / Math.max(1, n);
+        shapes.ring(cx, cy, hole + t, outer - t, 0xB0141414);
+        if (wedge < 0) {
+            shapes.ring(cx, cy, 0, hole - t, 0x50FFFFFF); // The middle lit: no action (a click goes back a page).
+        } else {
+            // The hovered wedge, kept a pixel off the dividers.
+            double inset = n > 1 ? 1.5 * scale / ((hole + outer) / 2) : 0;
+            double mid = sector * wedge;
+            shapes.sector(cx, cy, hole + t + 0.5F, outer - t - 0.5F, n > 1 ? mid - sector / 2 + inset : 0, n > 1 ? mid + sector / 2 - inset : 2 * Math.PI, 0xA03A6FD0);
+        }
+        shapes.ring(cx, cy, outer - t, outer, 0xB0FFFFFF);
+        shapes.ring(cx, cy, hole - t, hole + t, 0xB8FFFFFF);
+        if (n > 1) {
+            for (int i = 0; i < n; i++) {
+                double a = sector * i - sector / 2;
+                float sx = (float) Math.sin(a), sy = (float) -Math.cos(a);
+                shapes.line(cx + sx * (hole + t), cy + sy * (hole + t), cx + sx * (outer - t), cy + sy * (outer - t), t * 0.8F, 0x90FFFFFF);
             }
         }
-        for (int i = 0; i < active.size(); i++) {
-            double angle = 2 * Math.PI * i / active.size();
-            int x = cx + (int) Math.round(Math.sin(angle) * ICONS * scale) - 8;
-            int y = cy - (int) Math.round(Math.cos(angle) * ICONS * scale) - 8;
+        shapes.submit(g);
+        // The icons, as big as the wheel is.
+        float iconScale = (float) scale;
+        for (int i = 0; i < n; i++) {
+            double angle = sector * i;
+            float x = cx + (float) (Math.sin(angle) * ICONS * scale) - 8 * iconScale;
+            float y = cy - (float) (Math.cos(angle) * ICONS * scale) - 8 * iconScale;
             QuickAction action = QuickAction.get(slots.get(active.get(i)));
-            action.drawIcon(g, x, y);
+            g.pose().pushMatrix();
+            g.pose().translate(x, y);
+            g.pose().scale(iconScale, iconScale);
+            action.drawIcon(g, 0, 0);
             if (!action.availableNow(mc)) {
-                g.fill(x, y, x + 16, y + 16, 0xB0303030);
+                g.fill(0, 0, 16, 16, 0xB0303030);
             }
             if (action.state() != null) {
-                g.fill(x + 13, y - 1, x + 17, y + 3, action.state().get() ? 0xFF50E050 : 0xFFE05050);
+                g.fill(13, -1, 17, 3, action.state().get() ? 0xFF50E050 : 0xFFE05050);
             }
+            g.pose().popMatrix();
         }
         // The pointer, then the hovered action's name and the page under the wheel.
         int dx = cx + (int) Math.round(px / REACH * ICONS * scale), dy = cy + (int) Math.round(py / REACH * ICONS * scale);
@@ -228,7 +229,7 @@ public final class ActionWheel {
             ? Component.translatable("slopmatica.wheel.hint.release", com.sputnikboi.slopmatica.SlopmaticaKeys.QUICK_MENU.getTranslatedKeyMessage(), page() + 1, pages().size(),
                 mc.options.keyInventory.getTranslatedKeyMessage())
             : Component.translatable("slopmatica.wheel.hint", page() + 1, pages().size(), mc.options.keyInventory.getTranslatedKeyMessage());
-        int ly = cy + outer + 6;
+        int ly = cy + (int) Math.ceil(outer) + 6;
         for (Component line : List.of(name, hint.copy().withColor(0xFFA0A0A0))) {
             int w = mc.font.width(line);
             g.fill(cx - w / 2 - 3, ly - 2, cx + w / 2 + 3, ly + 10, 0x90000000);
@@ -237,120 +238,10 @@ public final class ActionWheel {
         }
     }
 
-    private static Identifier texture(String name) {
-        return Identifier.fromNamespaceAndPath("slopmatica", "wheel/" + name);
-    }
-
     /** The wheel size option as a factor. */
     private static double scale() {
         return Math.clamp(SlopmaticaConfig.get().wheelSize, 50, 200) / 100.0;
     }
 
-    private static void blitWheel(GuiGraphicsExtractor g, int cx, int cy, int outer, String name) {
-        g.blit(RenderPipelines.GUI_TEXTURED, texture(name), cx - outer, cy - outer, 0, 0, outer * 2, outer * 2, TEXTURE, TEXTURE, TEXTURE, TEXTURE);
-    }
 
-    /** Client tick: paints the textures for the action counts the pages use, before the wheel opens. */
-    public void warmUp(Minecraft mc) {
-        if (++warmTicks % 20 != 0 || mc.gui.overlay() != null) {
-            return; // Not while the game is still loading its resources.
-        }
-        paint(mc, -1);
-        for (List<String> slots : pages()) {
-            paint(mc, (int) slots.stream().filter(id -> QuickAction.get(id) != null).count());
-        }
-    }
-
-    /**
-     * Whether the textures for this many actions (-1: the lit middle) are ready; if not, starts
-     * painting them in the background. Render thread.
-     */
-    private boolean paint(Minecraft mc, int slots) {
-        if (painted.contains(slots)) {
-            return true;
-        }
-        if (painting.add(slots)) {
-            java.util.concurrent.CompletableFuture.supplyAsync(() -> slots < 0 ? List.of(paint(1, -1)) : List.of(paint(slots, -2), paint(slots, 0)),
-                    net.minecraft.util.Util.backgroundExecutor())
-                .whenCompleteAsync((images, error) -> {
-                    if (error != null) {
-                        com.mojang.logging.LogUtils.getLogger().warn("Couldn't paint the action wheel", error);
-                        return; // Stays in painting: not retried every frame.
-                    }
-                    if (slots < 0) {
-                        register(mc, "middle", images.get(0));
-                    } else {
-                        register(mc, "ring_" + slots, images.get(0));
-                        register(mc, "wedge_" + slots, images.get(1));
-                    }
-                    painted.add(slots);
-                }, mc);
-        }
-        return false;
-    }
-
-    private static void register(Minecraft mc, String name, NativeImage image) {
-        mc.getTextureManager().register(texture(name), new DynamicTexture(() -> "Slopmatica wheel " + name, image));
-    }
-
-    /**
-     * One layer of the wheel, 3x3 supersampled for smooth edges, in GUI pixels at 100% size (it is
-     * scaled when drawn). {@code which}: -2 the ring with its
-     * dividers and the outline of the empty middle; -1 the middle lit; otherwise that slot's wedge lit.
-     * Slow (millions of samples): off the render thread only.
-     */
-    private static NativeImage paint(int slots, int which) {
-        NativeImage image = new NativeImage(TEXTURE, TEXTURE, true);
-        double scale = (double) TEXTURE / (OUTER * 2); // texture pixels per GUI pixel
-        double sector = 2 * Math.PI / Math.max(1, slots);
-        for (int y = 0; y < TEXTURE; y++) {
-            for (int x = 0; x < TEXTURE; x++) {
-                float a = 0, r = 0, gr = 0, b = 0;
-                for (int sy = 0; sy < 3; sy++) {
-                    for (int sx = 0; sx < 3; sx++) {
-                        // In GUI pixels from the centre.
-                        double gx = (x + (sx + 0.5) / 3) / scale - OUTER, gy = (y + (sy + 0.5) / 3) / scale - OUTER;
-                        int c = sample(gx, gy, sector, which);
-                        float ca = (c >>> 24) / 255F;
-                        a += ca;
-                        r += ca * ((c >> 16) & 0xFF);
-                        gr += ca * ((c >> 8) & 0xFF);
-                        b += ca * (c & 0xFF);
-                    }
-                }
-                if (a > 0) {
-                    image.setPixel(x, y, (Math.round(a / 9 * 255) << 24) | (Math.round(r / a) << 16) | (Math.round(gr / a) << 8) | Math.round(b / a));
-                }
-            }
-        }
-        return image;
-    }
-
-    /** One layer's colour at a point (GUI pixels from the centre); 0 for nothing. */
-    private static int sample(double gx, double gy, double sector, int which) {
-        double d = Math.sqrt(gx * gx + gy * gy);
-        if (d > OUTER) {
-            return 0;
-        }
-        if (which == -1) {
-            return d < HOLE - 1.5 ? 0x50FFFFFF : 0; // the middle lit: no action (a click goes back a page)
-        }
-        if (d < HOLE) {
-            return which == -2 && d > HOLE - 1.2 ? 0xC0FFFFFF : 0; // the empty middle's outline
-        }
-        // Angle clockwise from the top, shifted so each slot's wedge is centred on its icon.
-        double angle = Math.atan2(gx, -gy) + sector / 2;
-        angle = (angle % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
-        int slot = (int) (angle / sector);
-        // Distance to the nearest divider, in GUI pixels along the arc.
-        // With one action (or none) the ring is a single wedge: no dividers.
-        double edge = sector >= 2 * Math.PI ? OUTER : Math.min(angle - slot * sector, (slot + 1) * sector - angle) * d;
-        if (which == -2) {
-            if (d > OUTER - 1.2 || d < HOLE + 1.2) {
-                return 0xB0FFFFFF; // outer rim and inner edge
-            }
-            return edge < 0.6 ? 0x90FFFFFF : 0xB0141414; // dividers, then the wedge
-        }
-        return slot == which && edge > 1 && d > HOLE + 1.5 && d < OUTER - 1.5 ? 0xA03A6FD0 : 0;
-    }
 }

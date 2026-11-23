@@ -29,6 +29,7 @@ import net.minecraft.resources.Identifier;
 public final class SlopmaticaClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
+        com.sputnikboi.slopmatica.render.SeeThroughLines.init(); // Its pipeline joins the game's before they are compiled.
         HologramRenderer renderer = HologramRenderer.INSTANCE;
         renderer.restoreHidden();
         PlacementManager.INSTANCE.addListener(renderer::onPlacementsChanged);
@@ -76,7 +77,6 @@ public final class SlopmaticaClient implements ClientModInitializer {
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("slopmatica", "replace_block"),
             (graphics, delta) -> com.sputnikboi.slopmatica.build.ReplaceBlock.INSTANCE.extractHud(graphics));
         ClientTickEvents.END_CLIENT_TICK.register(com.sputnikboi.slopmatica.verify.AutoLayer.INSTANCE::tick);
-        ClientTickEvents.END_CLIENT_TICK.register(com.sputnikboi.slopmatica.quick.ActionWheel.INSTANCE::warmUp);
         ClientTickEvents.END_CLIENT_TICK.register(SchematicThumbnails.INSTANCE::tick);
         ClientLevelEvents.AFTER_CLIENT_LEVEL_CHANGE.register((mc, level) -> PlacementView.INSTANCE.exit(mc));
         // First run: the welcome screen, once, over the title screen.

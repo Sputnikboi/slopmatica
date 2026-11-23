@@ -101,6 +101,11 @@ public final class PlacementView {
         return placement;
     }
 
+    /** The Select tab with the Cursor tool: the selection's frame and origin can be dragged. */
+    public boolean editingSelection() {
+        return open && tool == Tool.SELECT && SlopmaticaConfig.get().selectionTool == com.sputnikboi.slopmatica.build.SelectionTool.CURSOR;
+    }
+
     public Tool tool() {
         return tool;
     }
@@ -391,6 +396,36 @@ public final class PlacementView {
      * camera looks), 4 up, 5 down. Five blocks with Shift held.
      */
     public void nudge(Minecraft mc, int direction) {
+        if (nudgesSelection(mc)) {
+            int amount = mc.hasShiftDown() ? 5 : 1;
+            Direction d = nudgeDirection(direction);
+            UndoStack.INSTANCE.saveSelection();
+            Selection.INSTANCE.move(d.getStepX() * amount, d.getStepY() * amount, d.getStepZ() * amount);
+            BlockPos o = Selection.INSTANCE.origin();
+            SlopmaticaActions.actionBar(Component.translatable("slopmatica.view.nudged_selection", amount, d.getName(), o == null ? "" : o.toShortString())
+                .withColor(SlopmaticaActions.ACCENT));
+            return;
+        }
+        nudgeBuild(mc, direction);
+    }
+
+    /** Whether the nudge buttons and keys move the selection (the default while there is one here) rather than the build. */
+    public boolean nudgesSelection(Minecraft mc) {
+        return !nudgeBuild && mc.level != null && Selection.INSTANCE.frame() != null
+            && mc.level.dimension().identifier().toString().equals(Selection.INSTANCE.dimension());
+    }
+
+    /** Nudging moves the build even while there is a selection. */
+    public boolean nudgeBuild;
+
+    private Direction nudgeDirection(int direction) {
+        Direction facing = Direction.fromYRot(yRot());
+        Direction[] directions = {facing, facing.getOpposite(), facing.getCounterClockWise(), facing.getClockWise(), Direction.UP, Direction.DOWN};
+        return directions[direction];
+    }
+
+    /** Nudges the build itself (the Move tool's scroll wheel always does). */
+    public void nudgeBuild(Minecraft mc, int direction) {
         Placement p = placement;
         if (p == null) {
             return;
@@ -400,8 +435,7 @@ public final class PlacementView {
             amount = 5;
             lastShiftNudge = Util.getMillis();
         }
-        Direction facing = Direction.fromYRot(yRot());
-        Direction[] directions = {facing, facing.getOpposite(), facing.getCounterClockWise(), facing.getClockWise(), Direction.UP, Direction.DOWN};
+        Direction[] directions = {nudgeDirection(0), nudgeDirection(1), nudgeDirection(2), nudgeDirection(3), Direction.UP, Direction.DOWN};
         UndoStack.INSTANCE.saveBuild(p);
         SlopmaticaActions.nudge(p, directions[direction], amount, SlopmaticaActions::actionBar);
         rebaseCarry(p);
@@ -410,9 +444,9 @@ public final class PlacementView {
     /** Mouse wheel: up or down. */
     public void scroll(Minecraft mc, double amount) {
         if (amount > 0) {
-            nudge(mc, 4);
+            nudgeBuild(mc, 4);
         } else if (amount < 0) {
-            nudge(mc, 5);
+            nudgeBuild(mc, 5);
         }
     }
 

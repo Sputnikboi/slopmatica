@@ -28,7 +28,7 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * The placement view with a free cursor (right click while flying). The world stays in view, no
- * blur. Along the top: a tab per tool (move, select, modify selection, crop; keys 1-4). On the
+ * blur. Along the top: a tab per tool (move, select, crop; keys 1-3). On the
  * left: the tool's own buttons (one per selection tool), layer view and the list of builds (click a name to show or hide it, ☰ for its material panel, → to
  * work on it). Bottom right: rotate, mirror, nudge (Shift-click: 5 blocks), reset and paste.
  * Right click or Esc goes back to flying.
@@ -37,7 +37,7 @@ public class PlacementViewScreen extends Screen {
     private static final int B = 20;
     private static final int GAP = 2;
     private static final int LEFT_W = 124;
-    /** The tabs along the top (Blender-style): one per tool, keys 1-4. */
+    /** The tabs along the top (Blender-style): one per tool, keys 1-3. */
     private static final int TABS_Y = 4;
     private static final int PANEL_Y = TABS_Y + B + 4;
 
@@ -97,6 +97,15 @@ public class PlacementViewScreen extends Screen {
         int upDownW = 36;
         int crossX = right - (3 * B + 2 * GAP) - upDownW - 8;
         int upDownX = right - upDownW;
+        // What they move: the selection while there is one (unless switched to the build), else the build.
+        boolean sel = view.nudgesSelection(minecraft);
+        Component targetLabel = Component.translatable(sel ? "slopmatica.view.nudge_target.selection" : "slopmatica.view.nudge_target.build");
+        int targetW = Math.max(font.width(Component.translatable("slopmatica.view.nudge_target.selection")), font.width(Component.translatable("slopmatica.view.nudge_target.build"))) + 12;
+        Button target = addRenderableWidget(Button.builder(targetLabel, b -> {
+                view.nudgeBuild = !view.nudgeBuild;
+                rebuildWidgets();
+            }).bounds(crossX - targetW - 4, row2, targetW, B).tooltip(Tooltip.create(Component.translatable("slopmatica.view.nudge_target.tooltip"))).build());
+        target.active = Selection.INSTANCE.frame() != null && view.placement() != null;
         addRenderableWidget(button("▲", crossX + B + GAP, row1, B, b -> view.nudge(minecraft, 0), "slopmatica.view.forward"));
         addRenderableWidget(button("◀", crossX, row2, B, b -> view.nudge(minecraft, 2), "slopmatica.view.left"));
         addRenderableWidget(button("▼", crossX + B + GAP, row2, B, b -> view.nudge(minecraft, 1), "slopmatica.view.back"));
@@ -136,7 +145,6 @@ public class PlacementViewScreen extends Screen {
         lines.add(switch (PlacementView.INSTANCE.tool()) {
             case MOVE -> "Drag the build to move it   Scroll: up/down";
             case SELECT -> Component.translatable("slopmatica.seltool." + com.sputnikboi.slopmatica.config.SlopmaticaConfig.get().selectionTool.name().toLowerCase(Locale.ROOT) + ".hint").getString();
-            case MODIFY -> Component.translatable("slopmatica.tool.modify.hint").getString();
             case CROP -> "Drag a face of the orange box to crop the build";
         });
         lines.add("Right click/Esc: fly   Shift: 5 blocks   " + PlacementView.key(SlopmaticaKeys.PLACEMENT_VIEW) + ": done");
@@ -184,10 +192,8 @@ public class PlacementViewScreen extends Screen {
             }).bounds(x, y, LEFT_W, B).build());
             reset.active = p != null && p.crop() != null;
             y += B + GAP;
-        } else if (tool == Tool.SELECT || tool == Tool.MODIFY) {
-            if (tool == Tool.SELECT) {
-                y = initSelectTools(x, y);
-            }
+        } else if (tool == Tool.SELECT) {
+            y = initSelectTools(x, y);
             boolean any = Selection.INSTANCE.box() != null;
             int third = (LEFT_W - 2 * GAP) / 3;
             Button copy = addRenderableWidget(Button.builder(Component.translatable("slopmatica.tool.selection.copy"), b -> Clipboard.INSTANCE.copy(minecraft))
@@ -210,7 +216,7 @@ public class PlacementViewScreen extends Screen {
             rebuildWidgets();
         }).bounds(x, y, half, B).tooltip(Tooltip.create(Component.translatable("slopmatica.view.undo.tooltip"))).build());
         undo.active = !UndoStack.INSTANCE.isEmpty();
-        if (tool == Tool.SELECT || tool == Tool.MODIFY) {
+        if (tool == Tool.SELECT) {
             addRenderableWidget(Button.builder(Component.translatable("slopmatica.view.fit"), b -> {
                 view.fitSelection(minecraft);
                 rebuildWidgets();
@@ -291,6 +297,7 @@ public class PlacementViewScreen extends Screen {
 
     /** 11x11 icons on the tool buttons, in {@link com.sputnikboi.slopmatica.build.SelectionTool} order ('#' is a pixel). */
     private static final String[][] TOOL_ICONS = {
+        {"#..........", "##.........", "#.#........", "#..#.......", "#...#......", "#....#.....", "#.....#....", "#..####....", "#.#.#......", "##...#.....", ".....#....."},
         {"...#######.", "..#.....##.", ".#.....#.#.", "#######..#.", "#.....#..#.", "#.....#..#.", "#.....#..#.", "#.....#.#..", "#.....##...", "#######....", "..........."},
         {"...#####...", ".##.....##.", ".#.......#.", "#.........#", "#.........#", "#.........#", "#.........#", "#.........#", ".#.......#.", ".##.....##.", "...#####..."},
         {".#########.", "#.........#", ".#########.", "#.........#", "#.........#", "#.........#", "#.........#", "#.........#", "#.........#", "#.........#", ".#########."},
@@ -356,6 +363,9 @@ public class PlacementViewScreen extends Screen {
         // The tool's options: surface only (every tool), brush size and shape, magic's exact match.
         var tool = c.selectionTool;
         boolean surface = c.surfaceTools.contains(tool.name());
+        if (tool == com.sputnikboi.slopmatica.build.SelectionTool.CURSOR) {
+            return y; // Nothing to set: it changes the selection there is.
+        }
         boolean brush = tool == com.sputnikboi.slopmatica.build.SelectionTool.BRUSH, magic = tool == com.sputnikboi.slopmatica.build.SelectionTool.MAGIC;
         int sw = brush || magic ? 56 : LEFT_W;
         addRenderableWidget(Button.builder(Component.translatable(surface ? "slopmatica.seltools.surface.on" : "slopmatica.seltools.surface.off"), b -> {
@@ -410,7 +420,7 @@ public class PlacementViewScreen extends Screen {
             boxDrag = null;
             originDrag = false;
             reshapeParts = null;
-            if (PlacementView.INSTANCE.tool() == Tool.MODIFY && dragSelection != null) {
+            if (PlacementView.INSTANCE.tool() == Tool.SELECT && dragSelection != null) {
                 Selection.INSTANCE.restore(dragSelection);
             } else if (p != null) {
                 p.setCrop(dragCrop);
@@ -532,6 +542,9 @@ public class PlacementViewScreen extends Screen {
                 dragOffset = p.transform().origin().subtract(BlockPos.containing(hit.x, dragPlaneY, hit.z));
             }
             case SELECT -> {
+                if (view.editingSelection()) {
+                    return grabSelection(from, dir, event.x(), event.y(), dim);
+                }
                 BlockPos block = view.pointedBlock(minecraft, from, dir);
                 if (block == null) {
                     return false;
@@ -545,32 +558,6 @@ public class PlacementViewScreen extends Screen {
                     Selection.INSTANCE.use(block, dim, event.hasShiftDown());
                 }
                 rebuildWidgets(); // Fit and Undo may have become available.
-            }
-            case MODIFY -> {
-                BoundingBox frame = dim.equals(Selection.INSTANCE.dimension()) ? Selection.INSTANCE.frame() : null;
-                if (frame == null) {
-                    SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.modify.none").withColor(SlopmaticaActions.ERROR));
-                    return true;
-                }
-                BlockPos origin = Selection.originOf(frame);
-                double[] onScreen = originOnScreen();
-                if (onScreen != null && Math.hypot(event.x() - onScreen[0], event.y() - onScreen[1]) <= ORIGIN_GRAB || Selection.hitsOrigin(origin, from, dir)) {
-                    // The origin: drag it to move the whole selection along its floor.
-                    originDrag = true;
-                    dragPlaneY = origin.getY() + 0.5;
-                    Vec3 hit = planeHit(from, dir, dragPlaneY);
-                    dragOffset = hit == null ? BlockPos.ZERO : origin.subtract(BlockPos.containing(hit.x, dragPlaneY, hit.z));
-                } else {
-                    boxDrag = BoxDrag.grab(frame, from, dir);
-                    if (boxDrag == null) {
-                        return true;
-                    }
-                }
-                lastBox = frame;
-                reshapeFrame = frame;
-                reshapeParts = Selection.INSTANCE.parts();
-                UndoStack.INSTANCE.saveSelection();
-                dragSelection = Selection.INSTANCE.state();
             }
             case CROP -> {
                 boxDrag = BoxDrag.grab(p.transform().worldBounds(), from, dir);
@@ -620,7 +607,7 @@ public class PlacementViewScreen extends Screen {
             BoundingBox box = boxDrag.follow(from, dir);
             if (!box.equals(lastBox)) {
                 lastBox = box;
-                if (view.tool() == Tool.MODIFY && reshapeParts != null && reshapeFrame != null) {
+                if (view.tool() == Tool.SELECT && reshapeParts != null && reshapeFrame != null) {
                     Selection.INSTANCE.reshape(reshapeParts, reshapeFrame, box);
                 } else if (p != null) {
                     Placement.Transform t = p.transform();
@@ -647,12 +634,42 @@ public class PlacementViewScreen extends Screen {
         return true;
     }
 
+    /** The Cursor tool's click: the origin (to move the selection) or a face of its frame (to stretch it). */
+    private boolean grabSelection(Vec3 from, Vec3 dir, double mx, double my, String dim) {
+        BoundingBox frame = dim.equals(Selection.INSTANCE.dimension()) ? Selection.INSTANCE.frame() : null;
+        if (frame == null) {
+            SlopmaticaActions.actionBar(Component.translatable("slopmatica.tool.modify.none").withColor(SlopmaticaActions.ERROR));
+            return true;
+        }
+        BlockPos origin = Selection.originOf(frame);
+        double[] onScreen = originOnScreen();
+        // Only its on-screen diamond grabs the origin: it sits inside the frame, so a ray test would beat every face.
+        if (onScreen != null && Math.hypot(mx - onScreen[0], my - onScreen[1]) <= ORIGIN_GRAB) {
+            // The origin: drag it to move the whole selection along its floor.
+            originDrag = true;
+            dragPlaneY = origin.getY() + 0.5;
+            Vec3 hit = planeHit(from, dir, dragPlaneY);
+            dragOffset = hit == null ? BlockPos.ZERO : origin.subtract(BlockPos.containing(hit.x, dragPlaneY, hit.z));
+        } else {
+            boxDrag = BoxDrag.grab(frame, from, dir);
+            if (boxDrag == null) {
+                return true;
+            }
+        }
+        lastBox = frame;
+        reshapeFrame = frame;
+        reshapeParts = Selection.INSTANCE.parts();
+        UndoStack.INSTANCE.saveSelection();
+        dragSelection = Selection.INSTANCE.state();
+        return true;
+    }
+
     /** How near (GUI pixels) a click must be to the origin's handle to grab it. */
     private static final int ORIGIN_GRAB = 7;
 
-    /** The selection's origin on screen while the Modify tab is open; null otherwise or off screen. */
+    /** The selection's origin on screen while the Cursor tool is chosen; null otherwise or off screen. */
     private double @Nullable [] originOnScreen() {
-        if (PlacementView.INSTANCE.tool() != Tool.MODIFY || minecraft.level == null
+        if (!PlacementView.INSTANCE.editingSelection() || minecraft.level == null
             || !minecraft.level.dimension().identifier().toString().equals(Selection.INSTANCE.dimension())) {
             return null;
         }
@@ -728,7 +745,7 @@ public class PlacementViewScreen extends Screen {
         if (MaterialPanels.INSTANCE.mouseScrolled(minecraft, x, y, scrollY, width, height)) {
             return true;
         }
-        if (PlacementView.INSTANCE.tool() == Tool.MODIFY && Selection.INSTANCE.frame() != null) {
+        if (PlacementView.INSTANCE.editingSelection() && Selection.INSTANCE.frame() != null) {
             int by = (int) Math.signum(scrollY) * (minecraft.hasShiftDown() ? 5 : 1);
             if (originDrag) {
                 originDy += by; // Up and down while sliding it about.

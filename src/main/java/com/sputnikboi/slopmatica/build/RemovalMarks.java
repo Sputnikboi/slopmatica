@@ -269,8 +269,11 @@ public final class RemovalMarks implements BlockChanges.Listener {
         Minecraft mc = Minecraft.getInstance();
         Vec3 cam = context.levelState().cameraRenderState.pos;
         float width = mc.getWindow().getAppropriateLineWidth() * 1.5F;
-        context.submitNodeCollector().submitCustomGeometry(context.poseStack(), RenderTypes.lines(),
-            (pose, buffer) -> shape.draw(buffer, pose, cam, COLOR, width, 0.006));
+        // Faint through blocks (so you can find them), stronger where you can see them.
+        context.submitNodeCollector().submitCustomGeometry(context.poseStack(), com.sputnikboi.slopmatica.render.SeeThroughLines.HIDDEN,
+            (pose, buffer) -> shape.draw(buffer, pose, cam, com.sputnikboi.slopmatica.render.SeeThroughLines.fade(COLOR, com.sputnikboi.slopmatica.render.SeeThroughLines.HIDDEN_ALPHA), width, 0.006));
+        context.submitNodeCollector().submitCustomGeometry(context.poseStack(), com.sputnikboi.slopmatica.render.SeeThroughLines.VISIBLE,
+            (pose, buffer) -> shape.draw(buffer, pose, cam, com.sputnikboi.slopmatica.render.SeeThroughLines.fade(COLOR, com.sputnikboi.slopmatica.render.SeeThroughLines.VISIBLE_ALPHA), width, 0.006));
     }
 
     /** HUD, bottom left (above Replace Block's box): how many marked blocks are left. */
