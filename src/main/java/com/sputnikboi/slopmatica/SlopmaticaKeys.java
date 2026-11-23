@@ -227,7 +227,7 @@ public final class SlopmaticaKeys {
             PlacementView.INSTANCE.toggle(mc);
         }
         PlacementView.INSTANCE.handleKeys(mc);
-        int here = Layers.startHeight(mc.player != null ? mc.player.getBlockY() : 0);
+        int here = Layers.here(mc);
         Layers layers = Layers.INSTANCE;
         while (pressed(LAYER_MODE)) {
             layers.cycleMode(here);

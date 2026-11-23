@@ -54,6 +54,16 @@ public final class Layers {
             .orElse(playerY);
     }
 
+    /**
+     * "Here", for the layer buttons and keys: the height you're looking from (the free camera's in
+     * the build view, your own otherwise), pulled into the selected build like {@link #startHeight}.
+     */
+    public static int here(net.minecraft.client.Minecraft mc) {
+        com.sputnikboi.slopmatica.view.PlacementView view = com.sputnikboi.slopmatica.view.PlacementView.INSTANCE;
+        int y = view.freecam() ? net.minecraft.util.Mth.floor(view.eye().y) : mc.player != null ? mc.player.getBlockY() : 0;
+        return startHeight(y);
+    }
+
     /** Next mode; {@code here} is the layer to start from when leaving "all". */
     public void cycleMode(int here) {
         if (mode == Mode.ALL) {

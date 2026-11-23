@@ -236,17 +236,17 @@ public class PlacementViewScreen extends Screen {
         // Layers.
         y += 4;
         Layers layers = Layers.INSTANCE;
-        int here = Layers.startHeight(minecraft.player != null ? minecraft.player.getBlockY() : 0);
+
         addRenderableWidget(Button.builder(Component.translatable("slopmatica.layers.button",
                 Component.translatable("slopmatica.layers." + layers.mode().name().toLowerCase(Locale.ROOT))), b -> {
-                layers.cycleMode(here);
+                layers.cycleMode(Layers.here(minecraft)); // Where the camera is now, not when the panel was drawn.
                 rebuildWidgets();
             }).bounds(x, y, LEFT_W, B).tooltip(Tooltip.create(Component.translatable("slopmatica.layers.tooltip"))).build());
         y += B + GAP;
         if (layers.mode() != Layers.Mode.ALL) {
             addRenderableWidget(button("▲", x, y, B, b -> layers.move(1), "slopmatica.layers.up"));
             addRenderableWidget(button("▼", x + B + GAP, y, B, b -> layers.move(-1), "slopmatica.layers.down"));
-            addRenderableWidget(Button.builder(Component.translatable("slopmatica.layers.here"), b -> layers.setLayer(here))
+            addRenderableWidget(Button.builder(Component.translatable("slopmatica.layers.here"), b -> layers.setLayer(Layers.here(minecraft)))
                 .bounds(x + 2 * (B + GAP), y, LEFT_W - 2 * (B + GAP), B).tooltip(Tooltip.create(Component.translatable("slopmatica.layers.here.tooltip"))).build());
             y += B + GAP;
         }

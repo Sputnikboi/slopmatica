@@ -71,7 +71,7 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
         add("hologram", Items.GLASS, mc -> HologramRenderer.INSTANCE.setHidden(!HologramRenderer.INSTANCE.hidden()), false, null,
             () -> !HologramRenderer.INSTANCE.hidden());
         add("layer_mode", Items.SANDSTONE_SLAB, mc -> {
-            Layers.INSTANCE.cycleMode(Layers.startHeight(mc.player != null ? mc.player.getBlockY() : 0));
+            Layers.INSTANCE.cycleMode(Layers.here(mc));
             SlopmaticaActions.actionBar(com.sputnikboi.slopmatica.SlopmaticaKeys.layersMessage());
         }, false, null, () -> Layers.INSTANCE.mode() != Layers.Mode.ALL);
         add("layer_up", Items.LADDER, mc -> {
@@ -83,7 +83,7 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
             SlopmaticaActions.actionBar(com.sputnikboi.slopmatica.SlopmaticaKeys.layersMessage());
         }, false, mc -> Layers.INSTANCE.mode() != Layers.Mode.ALL, null);
         add("layer_here", Items.COMPASS, mc -> {
-            Layers.INSTANCE.layerHere(Layers.startHeight(mc.player != null ? mc.player.getBlockY() : 0));
+            Layers.INSTANCE.layerHere(Layers.here(mc));
             SlopmaticaActions.actionBar(com.sputnikboi.slopmatica.SlopmaticaKeys.layersMessage());
         }, false, null, null);
         add("corner", Items.STONE_BUTTON, Selection.INSTANCE::setCorner, false, null, null);
