@@ -828,7 +828,7 @@
   "slopmatica.view.selection_let_go": "Selection let go: %s for the cursor to make a new one",
   "slopmatica.view.select_needs_cursor": "Click the selection to pick it out; %s for the cursor to make one",
   "slopmatica.lock.option": "Lock to Selection",
-  "slopmatica.lock.tooltip": "While on, you can only break, place and use blocks inside the selection: nothing outside it can be dug out by accident. Does nothing while there is no selection.",
+  "slopmatica.lock.tooltip": "While on, you can only break, place and use blocks inside the selection: nothing outside it can be dug out by accident. Containers and tool stations (chests, furnaces, crafting tables...) still open anywhere. Does nothing while there is no selection.",
   "slopmatica.lock.on": "Locked to the selection: blocks outside it can't be broken, placed or used",
   "slopmatica.lock.on_no_selection": "Lock to Selection is on: it starts working once there is a selection",
   "slopmatica.lock.off": "Lock to Selection off",

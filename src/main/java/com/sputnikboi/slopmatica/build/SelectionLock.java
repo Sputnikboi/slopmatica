@@ -13,6 +13,7 @@ import net.minecraft.world.phys.BlockHitResult;
 /**
  * Lock to Selection: while it's on and there is a selection here, you can only break, place and
  * use blocks inside it, so digging out an area marked for removal never takes a block too many.
+ * Containers and tool stations (chests, furnaces, crafting tables...) still open anywhere.
  * Checked on the client before anything is sent to the server.
  */
 public final class SelectionLock {
@@ -56,10 +57,21 @@ public final class SelectionLock {
             return false;
         }
         BlockPos target = hit.getBlockPos();
+        if (!mc.player.isSecondaryUseActive() && opensMenu(mc, target)) {
+            return false; // Chests, furnaces, crafting tables...: opening them is fine anywhere.
+        }
         if (mc.player.getItemInHand(hand).getItem() instanceof BlockItem && !mc.level.getBlockState(target).canBeReplaced()) {
             target = target.relative(hit.getDirection()); // Where the new block goes.
         }
         return blocks(target);
+    }
+
+    /** A container or tool station: a block that opens a menu when used. */
+    private static boolean opensMenu(Minecraft mc, BlockPos pos) {
+        net.minecraft.world.level.block.state.BlockState state = mc.level.getBlockState(pos);
+        return state.getMenuProvider(mc.level, pos) != null
+            || mc.level.getBlockEntity(pos) instanceof net.minecraft.world.Container
+            || state.getBlock() instanceof net.minecraft.world.level.block.EnderChestBlock;
     }
 
     private static void warn() {
