@@ -78,7 +78,15 @@ public final class Updates {
 
     /** Asks the server again if the last answer is older than a few minutes (or {@code force}). */
     public void check(boolean force) {
+        check(force, null);
+    }
+
+    /** As {@link #check(boolean)}; {@code done} runs on the game thread once the answer is in (or the server didn't answer). */
+    public void check(boolean force, @Nullable Runnable done) {
         if (!force && Util.getMillis() - lastCheck < RECHECK_MS && online != Online.UNKNOWN) {
+            if (done != null) {
+                done.run();
+            }
             return;
         }
         lastCheck = Util.getMillis();
@@ -97,6 +105,9 @@ public final class Updates {
                 }
             } catch (Exception e) {
                 online = Online.OFFLINE;
+            }
+            if (done != null) {
+                Minecraft.getInstance().execute(done);
             }
         });
     }

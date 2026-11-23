@@ -66,6 +66,10 @@ public final class Online {
     public static void checkUpdates() {
     }
 
+    public static void checkUpdatesNow(Runnable done) {
+        done.run();
+    }
+
     public static @Nullable String updateVersion() {
         return null;
     }

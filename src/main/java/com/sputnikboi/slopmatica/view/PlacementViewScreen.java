@@ -460,14 +460,30 @@ public class PlacementViewScreen extends Screen {
         }
         icons.forEach((b, icon) -> {
             int color = chosen.contains(b) ? 0xFFFFFF55 : b.isHoveredOrFocused() ? 0xFFFFFFFF : 0xFFD0D0D0;
-            int ix = b.getX() + (b.getWidth() - icon[0].length()) / 2, iy = b.getY() + (b.getHeight() - icon.length) / 2 - (chosen.contains(b) ? 1 : 0);
+            // Centred on the pixels it has (some icons leave a blank row or column), to the half pixel.
+            int minC = Integer.MAX_VALUE, maxC = -1, minR = Integer.MAX_VALUE, maxR = -1;
             for (int r = 0; r < icon.length; r++) {
                 for (int col = 0; col < icon[r].length(); col++) {
                     if (icon[r].charAt(col) == '#') {
-                        graphics.fill(ix + col, iy + r, ix + col + 1, iy + r + 1, color);
+                        minC = Math.min(minC, col);
+                        maxC = Math.max(maxC, col);
+                        minR = Math.min(minR, r);
+                        maxR = Math.max(maxR, r);
                     }
                 }
             }
+            float ix = b.getX() + (b.getWidth() - (maxC - minC + 1)) / 2F - minC;
+            float iy = b.getY() + (b.getHeight() - (maxR - minR + 1)) / 2F - minR;
+            graphics.pose().pushMatrix();
+            graphics.pose().translate(ix, iy);
+            for (int r = 0; r < icon.length; r++) {
+                for (int col = 0; col < icon[r].length(); col++) {
+                    if (icon[r].charAt(col) == '#') {
+                        graphics.fill(col, r, col + 1, r + 1, color);
+                    }
+                }
+            }
+            graphics.pose().popMatrix();
         });
         double[] o = originOnScreen();
         if (o != null) {

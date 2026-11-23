@@ -39,6 +39,12 @@ public class SlopmaticaMenuScreen extends Screen {
     private static final int CREDITS_WIDTH = 90;
     private LinearLayout column;
     private @Nullable Button updateButton;
+    /** Asks the server for a newer release right away. */
+    private @Nullable Button checkButton;
+    /** What the last check found, shown under the status for a few seconds. */
+    private static @Nullable Component checkResult;
+    private static long checkResultUntil;
+    private static boolean checking;
     private Button creditsButton;
     private @Nullable Button reportButton;
 
@@ -124,6 +130,8 @@ public class SlopmaticaMenuScreen extends Screen {
             .tooltip(Tooltip.create(Component.translatable("slopmatica.menu.credits.tooltip"))).width(CREDITS_WIDTH).build());
         // Top right, beside the version: a download icon when a newer release exists.
         updateButton = Online.available() ? addRenderableWidget(Button.builder(Component.literal("⬇"), b -> Online.installUpdate()).width(20).build()) : null;
+        checkButton = Online.available() ? addRenderableWidget(Button.builder(Component.literal("⟳"), b -> checkNow()).width(20)
+            .tooltip(Tooltip.create(Component.translatable("slopmatica.menu.check_updates.tooltip"))).build()) : null;
         repositionElements();
     }
 
@@ -151,8 +159,12 @@ public class SlopmaticaMenuScreen extends Screen {
             updateButton.setTooltip(update == null ? null : Tooltip.create(Component.translatable(
                 Online.updatePending() ? "slopmatica.menu.update_pending" : "slopmatica.menu.update", update)));
         }
+        if (checkButton != null) {
+            checkButton.active = !checking;
+            checkButton.setPosition(width - (update != null ? 48 : 26), 2);
+        }
         String version = "Slopmatica " + SlopmaticaVersion.get();
-        int versionRight = update != null ? right - 24 : right;
+        int versionRight = right - (update != null ? 24 : 0) - (checkButton != null ? 24 : 0);
         graphics.text(font, version, versionRight - font.width(version), 8, 0xFFE0E0E0);
 
         Component status = switch (Online.connection()) {
@@ -167,6 +179,11 @@ public class SlopmaticaMenuScreen extends Screen {
                 ? Component.translatable("slopmatica.menu.linked", Online.accountName()).withColor(0xFF55CCFF)
                 : Component.translatable("slopmatica.menu.not_linked").withColor(0xFFA0A0A0);
             graphics.text(font, cloud, right - font.width(cloud), 32, -1);
+        }
+        Component found = checking ? Component.translatable("slopmatica.menu.check_updates.checking").withColor(0xFFA0A0A0)
+            : checkResult != null && net.minecraft.util.Util.getMillis() < checkResultUntil ? checkResult : null;
+        if (found != null) {
+            graphics.text(font, found, right - font.width(found), 44, -1);
         }
     }
 
@@ -191,6 +208,24 @@ public class SlopmaticaMenuScreen extends Screen {
             updateButton.setPosition(width - 26, 2);
             updateButton.setHeight(16);
         }
+        if (checkButton != null) {
+            checkButton.setHeight(16);
+        }
+    }
+
+    /** The ⟳ button: ask now, then say what came of it. */
+    private void checkNow() {
+        checking = true;
+        Online.checkUpdatesNow(() -> {
+            checking = false;
+            String update = Online.updateVersion();
+            checkResult = !"online".equals(Online.connection())
+                ? Component.translatable("slopmatica.menu.check_updates.offline").withColor(0xFFFF6060)
+                : update != null
+                    ? Component.translatable("slopmatica.menu.check_updates.found", update).withColor(0xFF55DD55)
+                    : Component.translatable("slopmatica.menu.check_updates.latest", SlopmaticaVersion.get()).withColor(0xFF55DD55);
+            checkResultUntil = net.minecraft.util.Util.getMillis() + 8000;
+        });
     }
 
     @Override

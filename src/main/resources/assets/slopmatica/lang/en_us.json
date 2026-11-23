@@ -817,5 +817,10 @@
   "slopmatica.view.nudge_target.selection": "Moves: Selection",
   "slopmatica.view.nudge_target.build": "Moves: Build",
   "slopmatica.view.nudge_target.tooltip": "What the arrow buttons and nudge keys move: the selection (while there is one) or the build. Rotate and Mirror always turn the build.",
-  "slopmatica.view.nudged_selection": "Selection moved %s %s (origin %s)"
+  "slopmatica.view.nudged_selection": "Selection moved %s %s (origin %s)",
+  "slopmatica.menu.check_updates.tooltip": "Check for updates now",
+  "slopmatica.menu.check_updates.checking": "Checking for updates…",
+  "slopmatica.menu.check_updates.latest": "Up to date: %s is the newest",
+  "slopmatica.menu.check_updates.found": "%s is out: click ⬇ to update",
+  "slopmatica.menu.check_updates.offline": "Couldn't reach the update server"
 }

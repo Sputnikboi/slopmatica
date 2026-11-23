@@ -104,6 +104,11 @@ public final class Online {
         Updates.INSTANCE.check(false);
     }
 
+    /** Asks the server now, whenever it was last asked; {@code done} runs on the game thread with the answer in. */
+    public static void checkUpdatesNow(Runnable done) {
+        Updates.INSTANCE.check(true, done);
+    }
+
     /** The newer version on offer, or null. */
     public static @Nullable String updateVersion() {
         Updates.Release r = Updates.INSTANCE.update();
