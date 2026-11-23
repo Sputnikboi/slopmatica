@@ -835,5 +835,10 @@
   "slopmatica.lock.blocked": "Outside the selection (Lock to Selection is on)",
   "slopmatica.quick.lock_selection": "Lock to Selection",
   "key.slopmatica.lock_selection": "Lock to Selection",
-  "slopmatica.lock.hud": "Locked to selection"
+  "slopmatica.lock.hud": "Locked to selection",
+  "slopmatica.reload_outlines": "Reload Outlines",
+  "slopmatica.reload_outlines.tooltip": "Throw away every hologram and outline and build them again from what's there now. For ghost blocks or outlines left behind after something changed.",
+  "slopmatica.reload_outlines.done": "Outlines and holograms reloaded",
+  "slopmatica.quick.reload_outlines": "Reload Outlines",
+  "key.slopmatica.reload_outlines": "Reload outlines and holograms"
 }

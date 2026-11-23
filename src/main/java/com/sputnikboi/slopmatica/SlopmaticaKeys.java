@@ -89,6 +89,7 @@ public final class SlopmaticaKeys {
     private static final KeyMapping SELECTION_MODE = register(COPY, "selection_mode");
     private static final KeyMapping MARK_REMOVAL = register(COPY, "mark_removal");
     private static final KeyMapping LOCK_SELECTION = register(COPY, "lock_selection");
+    private static final KeyMapping RELOAD_OUTLINES = register(LAYERS, "reload_outlines");
 
     private static final KeyMapping LAYER_MODE = register(LAYERS, "layer_mode");
     private static final KeyMapping LAYER_UP = register(LAYERS, "layer_up");
@@ -264,6 +265,9 @@ public final class SlopmaticaKeys {
         }
         while (pressed(MARK_REMOVAL)) {
             com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.toggleSelection(mc);
+        }
+        while (pressed(RELOAD_OUTLINES)) {
+            com.sputnikboi.slopmatica.render.ReloadOutlines.run();
         }
         while (pressed(LOCK_SELECTION)) {
             com.sputnikboi.slopmatica.build.SelectionLock.toggle();

@@ -67,6 +67,7 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
         add("options", Items.COMPARATOR, mc -> mc.gui.setScreen(new SlopmaticaOptionsScreen(null)), false, null, null);
         add("keybinds", Items.TRIPWIRE_HOOK, mc -> mc.gui.setScreen(new SlopmaticaKeyBindsScreen(null)), false, null, null);
         add("spawn_check", Items.ZOMBIE_HEAD, mc -> SpawnCheck.INSTANCE.toggle(mc), false, null, () -> SpawnCheck.INSTANCE.active());
+        add("reload_outlines", Items.RECOVERY_COMPASS, mc -> com.sputnikboi.slopmatica.render.ReloadOutlines.run(), false, null, null);
         add("hologram", Items.GLASS, mc -> HologramRenderer.INSTANCE.setHidden(!HologramRenderer.INSTANCE.hidden()), false, null,
             () -> !HologramRenderer.INSTANCE.hidden());
         add("layer_mode", Items.SANDSTONE_SLAB, mc -> {
@@ -112,7 +113,7 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
     private static final Map<String, String> CATEGORY = new java.util.HashMap<>();
 
     static {
-        for (String id : List.of("build_view", "easy_place", "replace_block", "paste", "undo", "hologram", "load", "placements", "materials", "plan", "plan_screen")) {
+        for (String id : List.of("build_view", "easy_place", "replace_block", "paste", "undo", "hologram", "reload_outlines", "load", "placements", "materials", "plan", "plan_screen")) {
             CATEGORY.put(id, "build");
         }
         for (String id : List.of("corner", "selection_tools", "next_selection_tool", "selection_mode", "copy", "save_selection", "fit_selection", "clear_selection",

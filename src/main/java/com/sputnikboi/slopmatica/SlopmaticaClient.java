@@ -63,6 +63,10 @@ public final class SlopmaticaClient implements ClientModInitializer {
             (graphics, delta) -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.extractHud(graphics));
         ClientPlayConnectionEvents.JOIN.register((handler, sender, mc) -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.onJoin(mc));
         ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.onLeave());
+        // The selection is kept per world or server too.
+        ClientTickEvents.END_CLIENT_TICK.register(com.sputnikboi.slopmatica.build.SelectionStore.INSTANCE::tick);
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, mc) -> com.sputnikboi.slopmatica.build.SelectionStore.INSTANCE.onJoin(mc));
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> com.sputnikboi.slopmatica.build.SelectionStore.INSTANCE.onLeave());
         LevelRenderEvents.COLLECT_SUBMITS.register(PlacementView.INSTANCE::submitToolBoxes);
         LevelRenderEvents.COLLECT_SUBMITS.register(SpawnCheck.INSTANCE::submit);
         LevelRenderEvents.COLLECT_SUBMITS.register(com.sputnikboi.slopmatica.render.IncompleteBoxes::submit);

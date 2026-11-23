@@ -48,6 +48,11 @@ public final class RemovalMarks implements BlockChanges.Listener {
     private int saveIn;
     private final VoxelOutline.Cache outline = new VoxelOutline.Cache(this::outlineCells);
 
+    /** Builds the outline again from scratch (Reload Outlines). */
+    public void redraw() {
+        outline.changed();
+    }
+
     private RemovalMarks() {
     }
 

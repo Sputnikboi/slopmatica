@@ -69,6 +69,11 @@ public final class Selection {
 
     private final VoxelOutline.Cache outline = new VoxelOutline.Cache(this::outlineCells);
 
+    /** Builds the outline again from scratch (Reload Outlines). */
+    public void redraw() {
+        outline.changed();
+    }
+
     private Selection() {
     }
 
@@ -454,6 +459,7 @@ public final class Selection {
 
     private void changed() {
         outline.changed();
+        SelectionStore.INSTANCE.changed();
     }
 
     public boolean contains(int x, int y, int z) {

@@ -102,8 +102,11 @@ public class SlopmaticaMenuScreen extends Screen {
             cloudRow.addChild(Button.builder(Component.translatable("slopmatica.menu.board"), b -> minecraft.gui.setScreen(Online.boardBrowser(this)))
                 .width((BUTTON_WIDTH - 4) / 2).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.board.tooltip"))).build());
         }
-        column.addChild(Button.builder(Component.translatable("slopmatica.menu.options"), b -> minecraft.gui.setScreen(new SlopmaticaOptionsScreen(this)))
-            .width(BUTTON_WIDTH).build());
+        LinearLayout optionsRow = column.addChild(LinearLayout.horizontal().spacing(4));
+        optionsRow.addChild(Button.builder(Component.translatable("slopmatica.menu.options"), b -> minecraft.gui.setScreen(new SlopmaticaOptionsScreen(this)))
+            .width((BUTTON_WIDTH - 4) / 2).build());
+        optionsRow.addChild(Button.builder(Component.translatable("slopmatica.reload_outlines"), b -> com.sputnikboi.slopmatica.render.ReloadOutlines.run())
+            .width((BUTTON_WIDTH - 4) / 2).tooltip(Tooltip.create(Component.translatable("slopmatica.reload_outlines.tooltip"))).build()).active = inWorld;
         LinearLayout toggleRow = column.addChild(LinearLayout.horizontal().spacing(4));
         toggleRow.addChild(Button.builder(hologramLabel(), b -> {
             HologramRenderer.INSTANCE.setHidden(!HologramRenderer.INSTANCE.hidden());
