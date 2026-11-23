@@ -13,7 +13,7 @@ import net.minecraft.network.chat.contents.TranslatableContents;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
 
-/** The title screen gets a button with the mod's icon, left of Singleplayer, that opens the Slopmatica menu. */
+/** The title screen (left of Singleplayer) and the pause menu (left of Back to Game) get a button with the mod's icon that opens the Slopmatica menu. */
 public final class TitleScreenButton {
     private static final Identifier ICON = Identifier.fromNamespaceAndPath("slopmatica", "icon.png");
 
@@ -22,6 +22,17 @@ public final class TitleScreenButton {
 
     public static void register() {
         ScreenEvents.AFTER_INIT.register((mc, screen, w, h) -> {
+            if (screen instanceof net.minecraft.client.gui.screens.PauseScreen) {
+                // The pause menu: the same button, left of Back to Game (none when the menu has no buttons, F3+Esc).
+                Screens.getWidgets(screen).stream()
+                    .filter(b -> b.getMessage().getContents() instanceof TranslatableContents t && t.getKey().equals("menu.returnToGame"))
+                    .findFirst().ifPresent(back -> {
+                        Button button = new IconButton(back.getX() - 24, back.getY(), b -> mc.gui.setScreen(new SlopmaticaMenuScreen(screen)));
+                        button.setTooltip(Tooltip.create(Component.translatable("slopmatica.menu.title")));
+                        Screens.getWidgets(screen).add(button);
+                    });
+                return;
+            }
             if (!(screen instanceof TitleScreen)) {
                 return;
             }
