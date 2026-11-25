@@ -143,6 +143,20 @@ public final class InventoryPlanner {
 
     public void clear() {
         plan = null;
+        off = true;
+    }
+
+    /** Turned off by hand: opening the plan screen won't plan again until Recalculate is pressed. */
+    private boolean off;
+
+    public boolean off() {
+        return off;
+    }
+
+    /** Turns the plan off: ghosts, highlights and side list gone, until it's recalculated. */
+    public void turnOff() {
+        clear();
+        SlopmaticaActions.actionBar(Component.translatable("slopmatica.plan.turned_off"));
     }
 
     /** Recalculates from the world as it is now, and reports a one-line summary. */
@@ -155,6 +169,7 @@ public final class InventoryPlanner {
         if (mc.player == null || mc.level == null) {
             return;
         }
+        off = false;
         SlopmaticaConfig config = SlopmaticaConfig.get();
         ClientLevel level = mc.level;
         List<Placement> placements = PlacementManager.INSTANCE.placements().stream().filter(p -> p.visible() && p.inDimension(level)).toList();

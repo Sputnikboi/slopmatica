@@ -92,6 +92,12 @@ public final class InventoryOverlay {
                     if (slot.container == inventory && slot.getItem().is(s.item()) && slot.getItem().getCount() < slot.getItem().getMaxStackSize()) {
                         String text = "+" + s.count();
                         g.text(font, text, left + slot.x + 17 - font.width(text), top + slot.y, 0xFF60E060);
+                        if (hovered(slot, left, top, mouseX, mouseY)) {
+                            // Shown without Shift: on its own, "+N" isn't self-explanatory.
+                            g.setTooltipForNextFrame(font, List.of(
+                                Component.translatable("slopmatica.plan.top_up", s.count(), new ItemStack(s.item()).getHoverName()),
+                                Component.translatable("slopmatica.plan.top_up.hint").withStyle(ChatFormatting.GRAY)), Optional.empty(), mouseX, mouseY);
+                        }
                         break;
                     }
                 }

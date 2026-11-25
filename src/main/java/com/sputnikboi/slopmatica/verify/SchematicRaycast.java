@@ -91,10 +91,10 @@ public final class SchematicRaycast {
             if (want != null && (actualHit || touches(want, level, pos, from, to, false))) {
                 BlockStatus status = BlockMatcher.compare(want, actual);
                 out.add(new Hit(pos.immutable(), want, actual, status, t));
-                if (actualHit && status != BlockStatus.MISSING) {
+                if (actualHit && status != BlockStatus.MISSING && !passable(actual)) {
                     return; // A real block, right or wrong: it hides what is behind.
                 }
-            } else if (actualHit && actual.getFluidState().isEmpty()) {
+            } else if (actualHit && actual.getFluidState().isEmpty() && !passable(actual)) {
                 return;
             }
             if (tMaxX < tMaxY && tMaxX < tMaxZ) {
@@ -111,6 +111,11 @@ public final class SchematicRaycast {
                 tMaxZ += tDeltaZ;
             }
         }
+    }
+
+    /** Grass, snow layers, flowers...: placing a block simply replaces them, so they hide nothing. */
+    private static boolean passable(BlockState actual) {
+        return actual.canBeReplaced() && actual.getFluidState().isEmpty();
     }
 
     /**

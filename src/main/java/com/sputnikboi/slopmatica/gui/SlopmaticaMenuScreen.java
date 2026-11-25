@@ -73,15 +73,24 @@ public class SlopmaticaMenuScreen extends Screen {
         column.addChild(Button.builder(Component.translatable("slopmatica.menu.placements", loaded), b -> minecraft.gui.setScreen(new PlacementsScreen(this)))
             .width(BUTTON_WIDTH).build());
         Placement active = PlacementManager.INSTANCE.selected().orElse(null);
+        boolean planOn = com.sputnikboi.slopmatica.plan.InventoryPlanner.INSTANCE.plan() != null;
+        int half = (BUTTON_WIDTH - 4 - (planOn ? 24 : 0)) / 2; // Room for the plan's ✖ when it's on.
         LinearLayout materialRow = column.addChild(LinearLayout.horizontal().spacing(4));
         Button materials = materialRow.addChild(Button.builder(
             active == null ? Component.translatable("slopmatica.menu.materials.none") : Component.translatable("slopmatica.menu.materials"),
             b -> minecraft.gui.setScreen(new MaterialListScreen(this, active))
-        ).width((BUTTON_WIDTH - 4) / 2).build());
+        ).width(half).build());
         materials.active = active != null;
-        Button plan = materialRow.addChild(Button.builder(Component.translatable("slopmatica.menu.plan"), b -> minecraft.gui.setScreen(new InventoryPlanScreen(this)))
-            .width((BUTTON_WIDTH - 4) / 2).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.plan.tooltip"))).build());
+        Button plan = materialRow.addChild(Button.builder(Component.translatable(planOn ? "slopmatica.menu.plan.short" : "slopmatica.menu.plan"), b -> minecraft.gui.setScreen(new InventoryPlanScreen(this)))
+            .width(BUTTON_WIDTH - 4 - (planOn ? 24 : 0) - half).tooltip(Tooltip.create(Component.translatable("slopmatica.menu.plan.tooltip"))).build());
         plan.active = loaded > 0; // The planner uses every shown build, not just the selected one.
+        if (planOn) {
+            // One click: the plan off, ghost items and all.
+            materialRow.addChild(Button.builder(Component.literal("✖"), b -> {
+                com.sputnikboi.slopmatica.plan.InventoryPlanner.INSTANCE.turnOff();
+                rebuildWidgets();
+            }).width(20).tooltip(Tooltip.create(Component.translatable("slopmatica.plan.turn_off.tooltip"))).build());
+        }
         // Opened from the title screen there's no world: what works on one is greyed out.
         boolean inWorld = minecraft.level != null;
         LinearLayout copyRow = column.addChild(LinearLayout.horizontal().spacing(4));

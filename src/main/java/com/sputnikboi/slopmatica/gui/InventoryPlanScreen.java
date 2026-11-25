@@ -119,8 +119,14 @@ public class InventoryPlanScreen extends Screen {
             .bounds(x, y, LEFT_W, 20).tooltip(Tooltip.create(Component.translatable("slopmatica.plan.ignored.tooltip"))).build());
         reset.active = !c.planIgnored.isEmpty();
         y += step + 4;
+        int half = (LEFT_W - 4) / 2;
         addRenderableWidget(Button.builder(Component.translatable("slopmatica.plan.calculate").withStyle(ChatFormatting.BOLD), b -> recalculate())
-            .bounds(x, y, LEFT_W, 20).build());
+            .bounds(x, y, LEFT_W - half - 4, 20).build());
+        addRenderableWidget(Button.builder(Component.translatable("slopmatica.plan.turn_off"), b -> {
+            InventoryPlanner.INSTANCE.turnOff();
+            buildRows();
+        }).bounds(x + LEFT_W - half, y, half, 20).tooltip(Tooltip.create(Component.translatable("slopmatica.plan.turn_off.tooltip"))).build())
+            .active = InventoryPlanner.INSTANCE.plan() != null || !InventoryPlanner.INSTANCE.off();
         if (com.sputnikboi.slopmatica.plan.SupplyChests.allowed(minecraft)) {
             // Creative with cheats: skip the gathering, get it all in chests at your feet.
             y += step;
@@ -131,7 +137,7 @@ public class InventoryPlanScreen extends Screen {
         }
 
         addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> onClose()).bounds(width / 2 - 75, height - 26, 150, 20).build());
-        if (InventoryPlanner.INSTANCE.plan() == null) {
+        if (InventoryPlanner.INSTANCE.plan() == null && !InventoryPlanner.INSTANCE.off()) {
             InventoryPlanner.INSTANCE.calculate(minecraft);
         }
         buildRows();
@@ -152,8 +158,13 @@ public class InventoryPlanScreen extends Screen {
     }
 
     private void recalculate() {
+        boolean wasOff = InventoryPlanner.INSTANCE.plan() == null;
         InventoryPlanner.INSTANCE.calculate(minecraft);
-        buildRows();
+        if (wasOff) {
+            rebuildWidgets(); // Turn Off becomes clickable again.
+        } else {
+            buildRows();
+        }
     }
 
     private void buildRows() {
@@ -186,7 +197,7 @@ public class InventoryPlanScreen extends Screen {
         InventoryPlanner.Plan plan = InventoryPlanner.INSTANCE.plan();
         int x = LEFT_W + 24, y = 28, w = width - x - 10;
         if (plan == null) {
-            g.text(font, Component.translatable("slopmatica.plan.none"), x, y, 0xFFA0A0A0);
+            g.text(font, Component.translatable(InventoryPlanner.INSTANCE.off() ? "slopmatica.plan.is_off" : "slopmatica.plan.none"), x, y, 0xFFA0A0A0);
             return;
         }
         InventoryPlan.Result<Item> r = plan.result();

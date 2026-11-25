@@ -111,7 +111,7 @@ public final class EasyPlace {
         }
         List<SchematicRaycast.Hit> line = new java.util.ArrayList<>();
         for (SchematicRaycast.Hit hit : SchematicRaycast.traceAll(level, transforms, player.getEyePosition(), player.getViewVector(1.0F), player.blockInteractionRange())) {
-            if (hit.status() == BlockStatus.MISSING && hit.actual().canBeReplaced() || buildsUpTo(hit.actual(), hit.want())
+            if (hit.status() != BlockStatus.MATCH && hit.actual().canBeReplaced() || buildsUpTo(hit.actual(), hit.want())
                 || toolUse(player, level, hit.pos(), hit.actual(), hit.want()) != null) {
                 line.add(hit);
             }
