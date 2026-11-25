@@ -18,6 +18,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import org.jspecify.annotations.Nullable;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -227,18 +228,69 @@ public final class HologramRenderer {
         }
     }
 
-    /** Hooked to the end of vanilla's main level pass. */
-    public void render(LevelRenderContext context) {
+    /**
+     * Called just before vanilla opens its main level pass: uploads finished meshes, schedules
+     * rebuilds and prepares this frame's draw (uniforms and index buffers can't be written once
+     * the pass is open). The draw itself happens in {@link #drawInMainPass}, right after the solid
+     * terrain, so water and other translucent terrain blend over the ghosts as over real blocks
+     * (with {@link #endMain} as a fallback).
+     */
+    public void prepare(Vec3 camera) {
+        pending = null;
         try {
-            renderUnchecked(context);
+            renderUnchecked(camera);
         } catch (RuntimeException e) {
-            // A hologram bug must not take the game down with it; log it once and keep playing.
-            if (!renderFailureLogged) {
-                renderFailureLogged = true;
-                LOGGER.error("Hologram rendering failed; further failures are not logged", e);
+            failed(e);
+        }
+    }
+
+    /** Draws the prepared ghosts and outlines into vanilla's main pass, right after the solid terrain and features. */
+    public void drawInMainPass(RenderPass pass) {
+        Frame frame = pending;
+        pending = null;
+        if (frame != null) {
+            try {
+                drawFrame(pass, frame);
+            } catch (RuntimeException e) {
+                failed(e);
             }
         }
     }
+
+    /** End of the main level pass: if the main pass didn't take the prepared draw (another mod replacing it), draw it now in a pass of its own. */
+    public void endMain(LevelRenderContext context) {
+        Frame frame = pending;
+        pending = null;
+        if (frame == null) {
+            return;
+        }
+        try {
+            RenderTarget target = Minecraft.getInstance().gameRenderer.mainRenderTarget();
+            try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                () -> "Slopmatica hologram", target.getColorTextureView(), Optional.empty(), target.getDepthTextureView(), OptionalDouble.empty()
+            )) {
+                RenderSystem.bindDefaultUniforms(pass);
+                drawFrame(pass, frame);
+            }
+        } catch (RuntimeException e) {
+            failed(e);
+        }
+    }
+
+    private void failed(RuntimeException e) {
+        // A hologram bug must not take the game down with it; log it once and keep playing.
+        if (!renderFailureLogged) {
+            renderFailureLogged = true;
+            LOGGER.error("Hologram rendering failed; further failures are not logged", e);
+        }
+    }
+
+    /** A frame's draw, prepared before the pass it goes into opens. */
+    private record Frame(List<Section> visible, GpuBufferSlice[] uniforms, @Nullable GpuBuffer quadIndexBuffer, RenderSystem.AutoStorageIndexBuffer quadIndices,
+                         @Nullable GpuBuffer lineIndexBuffer, RenderSystem.AutoStorageIndexBuffer lineIndices, boolean outlines, boolean ghosts) {
+    }
+
+    private @Nullable Frame pending;
 
     /** Hooked to Fabric's submit collection: block-entity ghosts go through vanilla's feature renderers. */
     public void collectSubmits(LevelRenderContext context) {
@@ -266,7 +318,7 @@ public final class HologramRenderer {
         }
     }
 
-    private void renderUnchecked(LevelRenderContext context) {
+    private void renderUnchecked(Vec3 camera) {
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;
         if (level == null) {
@@ -290,7 +342,6 @@ public final class HologramRenderer {
             sections.values().forEach(Section::markDirty);
         }
 
-        Vec3 camera = context.levelState().cameraRenderState.pos;
         int maxDistance = mc.options.getEffectiveRenderDistance() + 1;
         uploadFinished();
         scheduleBuilds(mc, level, camera, maxDistance);
@@ -300,7 +351,7 @@ public final class HologramRenderer {
             rebuildStartedNanos = 0;
         }
         if (!hidden) {
-            draw(mc, level, camera, maxDistance);
+            pending = prepareFrame(mc, level, camera, maxDistance);
         }
     }
 
@@ -430,7 +481,7 @@ public final class HologramRenderer {
         return dx * dx + dy * dy + dz * dz;
     }
 
-    private void draw(Minecraft mc, ClientLevel level, Vec3 camera, int maxDistance) {
+    private @Nullable Frame prepareFrame(Minecraft mc, ClientLevel level, Vec3 camera, int maxDistance) {
         int camX = SectionPos.posToSectionCoord(camera.x), camZ = SectionPos.posToSectionCoord(camera.z);
         Frustum frustum = mc.gameRenderer.mainCamera().getCullFrustum();
         List<Section> visible = new ArrayList<>();
@@ -449,7 +500,7 @@ public final class HologramRenderer {
             maxLineIndices = Math.max(maxLineIndices, Math.max(indexCount(mesh.carried), Math.max(indexCount(mesh.lines), indexCount(mesh.alerts))));
         }
         if (visible.isEmpty()) {
-            return;
+            return null;
         }
         // Back to front, so overlapping translucent ghosts in different sections blend in order.
         int camY = SectionPos.posToSectionCoord(camera.y);
@@ -489,40 +540,39 @@ public final class HologramRenderer {
         GpuBuffer quadIndexBuffer = maxQuadIndices > 0 ? quadIndices.getBuffer(maxQuadIndices) : null;
         GpuBuffer lineIndexBuffer = maxLineIndices > 0 ? lineIndices.getBuffer(maxLineIndices) : null;
 
-        RenderTarget target = mc.gameRenderer.mainRenderTarget();
-        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-            () -> "Slopmatica hologram", target.getColorTextureView(), Optional.empty(), target.getDepthTextureView(), OptionalDouble.empty()
-        )) {
-            RenderSystem.bindDefaultUniforms(pass);
+        return new Frame(visible, uniforms, quadIndexBuffer, quadIndices, lineIndexBuffer, lineIndices, config.showOutlines, config.showGhosts);
+    }
 
-            if (lineIndexBuffer != null && config.showOutlines) {
-                pass.setIndexBuffer(lineIndexBuffer, lineIndices.type());
-                pass.setPipeline(RenderSystem.getCompiledPipeline(SlopmaticaPipelines.FADING_LINES));
-                for (int i = 0; i < visible.size(); i++) {
-                    drawPart(pass, visible.get(i).mesh.lines, uniforms[i * 4 + 1]);
-                }
-                for (int i = 0; i < visible.size(); i++) {
-                    drawPart(pass, visible.get(i).mesh.carried, uniforms[i * 4 + 3]);
-                }
-                // Wrong and variant blocks stay visible from any distance: those are the ones to find.
-                // Drawn last so they win the edges they share with a neighbour's blue or green box.
-                for (int i = 0; i < visible.size(); i++) {
-                    drawPart(pass, visible.get(i).mesh.alerts, uniforms[i * 4 + 2]);
-                }
+    private static void drawFrame(RenderPass pass, Frame frame) {
+        Minecraft mc = Minecraft.getInstance();
+        List<Section> visible = frame.visible();
+        GpuBufferSlice[] uniforms = frame.uniforms();
+        if (frame.lineIndexBuffer() != null && frame.outlines()) {
+            pass.setIndexBuffer(frame.lineIndexBuffer(), frame.lineIndices().type());
+            pass.setPipeline(RenderSystem.getCompiledPipeline(SlopmaticaPipelines.FADING_LINES));
+            for (int i = 0; i < visible.size(); i++) {
+                drawPart(pass, visible.get(i).mesh.lines, uniforms[i * 4 + 1]);
             }
-
-            if (quadIndexBuffer != null && config.showGhosts) {
-                pass.setPipeline(RenderSystem.getCompiledPipeline(RenderPipelines.TRANSLUCENT_BLOCK));
-                pass.setUniform(
-                    "Sampler0",
-                    mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView(),
-                    RenderSystem.getSamplerCache().getSampler(AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE, FilterMode.LINEAR, FilterMode.NEAREST, true)
-                );
-                pass.setUniform("Sampler2", mc.gameRenderer.lightmap(), RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
-                pass.setIndexBuffer(quadIndexBuffer, quadIndices.type());
-                for (int i = 0; i < visible.size(); i++) {
-                    drawPart(pass, visible.get(i).mesh.ghosts, uniforms[i * 4]);
-                }
+            for (int i = 0; i < visible.size(); i++) {
+                drawPart(pass, visible.get(i).mesh.carried, uniforms[i * 4 + 3]);
+            }
+            // Wrong and variant blocks stay visible from any distance: those are the ones to find.
+            // Drawn last so they win the edges they share with a neighbour's blue or green box.
+            for (int i = 0; i < visible.size(); i++) {
+                drawPart(pass, visible.get(i).mesh.alerts, uniforms[i * 4 + 2]);
+            }
+        }
+        if (frame.quadIndexBuffer() != null && frame.ghosts()) {
+            pass.setPipeline(RenderSystem.getCompiledPipeline(RenderPipelines.TRANSLUCENT_BLOCK));
+            pass.setUniform(
+                "Sampler0",
+                mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView(),
+                RenderSystem.getSamplerCache().getSampler(AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE, FilterMode.LINEAR, FilterMode.NEAREST, true)
+            );
+            pass.setUniform("Sampler2", mc.gameRenderer.lightmap(), RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
+            pass.setIndexBuffer(frame.quadIndexBuffer(), frame.quadIndices().type());
+            for (int i = 0; i < visible.size(); i++) {
+                drawPart(pass, visible.get(i).mesh.ghosts, uniforms[i * 4]);
             }
         }
     }

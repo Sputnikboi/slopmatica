@@ -6,6 +6,14 @@ import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.BushBlock;
+import net.minecraft.world.level.block.DoublePlantBlock;
+import net.minecraft.world.level.block.DryVegetationBlock;
+import net.minecraft.world.level.block.FireflyBushBlock;
+import net.minecraft.world.level.block.FlowerBedBlock;
+import net.minecraft.world.level.block.FlowerBlock;
+import net.minecraft.world.level.block.LeafLitterBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import org.jspecify.annotations.Nullable;
@@ -113,9 +121,21 @@ public final class SchematicRaycast {
         }
     }
 
-    /** Grass, snow layers, flowers...: placing a block simply replaces them, so they hide nothing. */
+    /** Grass, snow layers, flowers...: building replaces them (or knocks them off first), so they hide nothing. */
     private static boolean passable(BlockState actual) {
-        return actual.canBeReplaced() && actual.getFluidState().isEmpty();
+        return actual.getFluidState().isEmpty() && (actual.canBeReplaced() || clearable(actual));
+    }
+
+    /**
+     * Flowers and other small plants that break in one hit but that the game won't build straight
+     * over (only grass-like ones are "replaceable"): Easy Place knocks them off, then places.
+     * Crops, saplings, mushrooms and the like are left alone: those were planted on purpose.
+     */
+    public static boolean clearable(BlockState state) {
+        Block block = state.getBlock();
+        return !state.canBeReplaced() && state.getBlock().defaultDestroyTime() == 0
+            && (block instanceof FlowerBlock || block instanceof FlowerBedBlock || block instanceof DoublePlantBlock || block instanceof BushBlock
+                || block instanceof DryVegetationBlock || block instanceof LeafLitterBlock || block instanceof FireflyBushBlock);
     }
 
     /**

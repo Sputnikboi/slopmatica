@@ -111,7 +111,7 @@ public final class EasyPlace {
         }
         List<SchematicRaycast.Hit> line = new java.util.ArrayList<>();
         for (SchematicRaycast.Hit hit : SchematicRaycast.traceAll(level, transforms, player.getEyePosition(), player.getViewVector(1.0F), player.blockInteractionRange())) {
-            if (hit.status() != BlockStatus.MATCH && hit.actual().canBeReplaced() || buildsUpTo(hit.actual(), hit.want())
+            if (hit.status() != BlockStatus.MATCH && (hit.actual().canBeReplaced() || SchematicRaycast.clearable(hit.actual())) || buildsUpTo(hit.actual(), hit.want())
                 || toolUse(player, level, hit.pos(), hit.actual(), hit.want()) != null) {
                 line.add(hit);
             }
@@ -172,7 +172,7 @@ public final class EasyPlace {
 
     /** A tool use that turns the block at pos towards want (Use Tools), or null; doors and the like are left alone, a click opens them. */
     private static ToolUses.@Nullable Use toolUse(LocalPlayer player, ClientLevel level, BlockPos pos, BlockState have, BlockState want) {
-        if (!SlopmaticaConfig.get().easyPlaceTools || have.canBeReplaced() || buildsUpTo(have, want) || interactable(have)) {
+        if (!SlopmaticaConfig.get().easyPlaceTools || have.canBeReplaced() || SchematicRaycast.clearable(have) || buildsUpTo(have, want) || interactable(have)) {
             return null;
         }
         return ToolUses.find(player, level, pos, have, want);
@@ -212,7 +212,8 @@ public final class EasyPlace {
         }
         BlockState here = level.getBlockState(pos);
         boolean addTo = buildsUpTo(here, want);
-        if (!addTo && !here.canBeReplaced()) {
+        boolean clear = !addTo && SchematicRaycast.clearable(here);
+        if (!addTo && !here.canBeReplaced() && !clear) {
             return Component.translatable("slopmatica.easy_place.occupied", want.getBlock().getName(), here.getBlock().getName());
         }
         if (!(want.getBlock().asItem() instanceof BlockItem item)) {
@@ -220,6 +221,14 @@ public final class EasyPlace {
         }
         if (!player.hasInfiniteMaterials() && !has(player, item)) {
             return Component.translatable("slopmatica.easy_place.no_item", item.getName(new ItemStack(item)));
+        }
+        if (clear) {
+            // A flower in the way: knock it off (one hit), then place where it stood. (The
+            // placement search asks the game whether the spot takes a block, and a flower says no.)
+            mc.gameMode.startDestroyBlock(pos, Direction.UP);
+            if (!level.getBlockState(pos).canBeReplaced()) {
+                return Component.translatable("slopmatica.easy_place.occupied", want.getBlock().getName(), here.getBlock().getName());
+            }
         }
         ItemStack stack = new ItemStack(item);
         boolean mayTurn = SlopmaticaConfig.get().easyPlaceRotate;

@@ -8,6 +8,7 @@
     "ClientLevelMixin",
     "KeyBindsListMixin",
     "KeyBindsScreenAccessor",
+    "LevelRendererHologramMixin",
     "MinecraftEasyPlaceMixin",
     "MultiPlayerGameModeLockMixin",
     "MultiPlayerGameModeReplaceMixin",

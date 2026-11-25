@@ -41,7 +41,9 @@ public final class SlopmaticaClient implements ClientModInitializer {
         });
         ClientTickEvents.END_CLIENT_TICK.register(mc -> PlacementStore.INSTANCE.tick());
 
-        LevelRenderEvents.END_MAIN.register(renderer::render);
+        // Drawn in vanilla's main pass before water (LevelRendererHologramMixin); this is the
+        // fallback for when that hook didn't run.
+        LevelRenderEvents.END_MAIN.register(renderer::endMain);
         LevelRenderEvents.COLLECT_SUBMITS.register(renderer::collectSubmits);
         ClientChunkEvents.CHUNK_LOAD.register((level, chunk) -> {
             renderer.onChunkLoaded(chunk.getPos().x(), chunk.getPos().z());
