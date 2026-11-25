@@ -264,6 +264,8 @@ public final class DevHarness {
                 LOGGER.info("dev placements: {}", PlacementManager.INSTANCE.placements().stream().map(p -> p.name()).toList());
             } else if (step.equals("layerhere")) {
                 LOGGER.info("dev layerhere: player y {}, here {}", mc.player == null ? null : mc.player.getBlockY(), com.sputnikboi.slopmatica.placement.Layers.here(mc));
+            } else if (step.equals("hands") && mc.player != null) {
+                LOGGER.info("dev hands: main {} off {}", mc.player.getMainHandItem(), mc.player.getOffhandItem());
             } else if (step.equals("marks")) {
                 LOGGER.info("dev marks: {}", com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.count());
             } else if (step.equals("selinfo")) {

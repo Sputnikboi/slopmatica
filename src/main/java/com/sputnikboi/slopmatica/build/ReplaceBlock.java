@@ -91,6 +91,10 @@ public final class ReplaceBlock {
     private boolean ranOut;
     /** The tick the player was warned they have none of the block left (the HUD box flashes a while), or -1. */
     private long outAt = -1;
+    /** The last tick it placed a block or refilled the offhand (see {@link #usedUp}). */
+    private long lastAuto = Long.MIN_VALUE / 2;
+    /** How long after its own placing or refilling an emptied offhand still counts as used up: server corrections take a few ticks. */
+    private static final int AUTO_TICKS = 40;
 
     private ReplaceBlock() {
     }
@@ -183,6 +187,11 @@ public final class ReplaceBlock {
             item = offhand.getItem();
             ranOut = false;
             outAt = -1;
+        } else if (offhand.isEmpty() && item != null && !ranOut && usedUp(mc, player)) {
+            // Emptied a moment after placing or refilling, without a screen open: the server
+            // correcting the count (a placement or refill it turned down or saw late), not the
+            // player. Still ran out, so refilled; before, this forgot the block.
+            ranOut = true;
         } else if (!offhand.isEmpty() || !ranOut) {
             // Something else there now, or the block taken out by hand: the player chose to stop.
             item = null;
@@ -229,11 +238,21 @@ public final class ReplaceBlock {
             // The new block, turned the way the old one was where they share properties.
             BlockState want = held.getBlock().withPropertiesOf(b.state());
             if (EasyPlace.INSTANCE.placeFromOffhand(mc, player, level, b.pos(), want)) {
+                lastAuto = ticks;
                 placed.put(b.pos(), new Placed(b.state(), ticks, b.tries() + 1));
                 ranOut |= player.getOffhandItem().isEmpty();
             }
             refill(mc, player);
         }
+    }
+
+    /**
+     * Whether an offhand that just went empty was emptied by Replace Block's own work rather than
+     * the player: shortly after a placement or refill, with no screen open (where blocks are
+     * moved by hand), and not swapped into the main hand (the swap-hands key).
+     */
+    private boolean usedUp(Minecraft mc, LocalPlayer player) {
+        return ticks - lastAuto <= AUTO_TICKS && mc.gui.screen() == null && !player.getMainHandItem().is(item);
     }
 
     /** Shulker boxes (unless that option is off): one broken is being picked up, not replaced, and one in the offhand isn't placed. */
@@ -252,6 +271,7 @@ public final class ReplaceBlock {
                 // Hotbar slots are 36-44 in the inventory menu, the rest keep their index; button 40 is the offhand.
                 int menuSlot = slot < Inventory.getSelectionSize() ? 36 + slot : slot;
                 mc.gameMode.handleContainerInput(player.inventoryMenu.containerId, menuSlot, Inventory.SLOT_OFFHAND, ContainerInput.SWAP, player);
+                lastAuto = ticks;
                 return;
             }
         }
