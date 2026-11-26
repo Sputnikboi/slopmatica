@@ -107,6 +107,7 @@ public final class DevHarness {
                     case "welcome" -> new com.sputnikboi.slopmatica.gui.WelcomeScreen(null);
                     case "import" -> new com.sputnikboi.slopmatica.gui.LitematicaImportScreen(null);
                     case "plan" -> new com.sputnikboi.slopmatica.gui.InventoryPlanScreen(null);
+                    case "split" -> new com.sputnikboi.slopmatica.gui.SplitScreen(null, PlacementManager.INSTANCE.selected().orElseThrow());
                     case "profiles" -> com.sputnikboi.slopmatica.online.Online.profiles(null);
                     case "board" -> com.sputnikboi.slopmatica.online.Online.boardBrowser(null);
                     case "report" -> com.sputnikboi.slopmatica.online.Online.bugReport(null);
@@ -266,6 +267,17 @@ public final class DevHarness {
                 LOGGER.info("dev layerhere: player y {}, here {}", mc.player == null ? null : mc.player.getBlockY(), com.sputnikboi.slopmatica.placement.Layers.here(mc));
             } else if (step.equals("hands") && mc.player != null) {
                 LOGGER.info("dev hands: main {} off {}", mc.player.getMainHandItem(), mc.player.getOffhandItem());
+            } else if (step.startsWith("savesel ")) {
+                // savesel <name>: the selection saved to schematics/<name>.litematic
+                com.sputnikboi.slopmatica.build.Clipboard.INSTANCE.save(mc, step.substring(8).trim(),
+                    com.sputnikboi.slopmatica.schematic.SchematicFormats.LITEMATIC, SlopmaticaActions.schematicsDir());
+            } else if (step.startsWith("stateat ") && mc.level != null) {
+                // stateat <x> <y> <z>: what each placement wants there (and whether it's shown)
+                String[] parts = step.split(" ");
+                int x = Integer.parseInt(parts[1]), y = Integer.parseInt(parts[2]), z = Integer.parseInt(parts[3]);
+                for (var p : PlacementManager.INSTANCE.placements()) {
+                    LOGGER.info("dev stateat {} {} {} {} (visible {}): want {} shown {}", x, y, z, p.name(), p.visible(), p.transform().stateAt(x, y, z), p.transform().shownStateAt(x, y, z));
+                }
             } else if (step.equals("marks")) {
                 LOGGER.info("dev marks: {}", com.sputnikboi.slopmatica.build.RemovalMarks.INSTANCE.count());
             } else if (step.equals("selinfo")) {

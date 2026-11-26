@@ -64,6 +64,8 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
         add("load", Items.MAP, mc -> mc.gui.setScreen(new SchematicBrowserScreen(null, false)), false, null, null);
         add("placements", Items.ITEM_FRAME, mc -> mc.gui.setScreen(new PlacementsScreen(null)), false, null, null);
         add("plan_off", Items.STRUCTURE_VOID, mc -> InventoryPlanner.INSTANCE.turnOff(), false, mc -> InventoryPlanner.INSTANCE.plan() != null, null);
+        add("split", Items.SHEARS, mc -> PlacementManager.INSTANCE.selected().ifPresent(p -> mc.gui.setScreen(new com.sputnikboi.slopmatica.gui.SplitScreen(null, p))), false,
+            mc -> PlacementManager.INSTANCE.selected().isPresent(), null);
         add("plan_screen", Items.ENDER_CHEST, mc -> mc.gui.setScreen(new InventoryPlanScreen(null)), false, null, null);
         add("options", Items.COMPARATOR, mc -> mc.gui.setScreen(new SlopmaticaOptionsScreen(null)), false, null, null);
         add("keybinds", Items.TRIPWIRE_HOOK, mc -> mc.gui.setScreen(new SlopmaticaKeyBindsScreen(null)), false, null, null);
@@ -115,7 +117,7 @@ public record QuickAction(String id, Supplier<Component> label, Supplier<ItemSta
     private static final Map<String, String> CATEGORY = new java.util.HashMap<>();
 
     static {
-        for (String id : List.of("build_view", "easy_place", "replace_block", "paste", "undo", "hologram", "reload_outlines", "load", "placements", "materials", "plan", "plan_off", "plan_screen")) {
+        for (String id : List.of("build_view", "easy_place", "replace_block", "paste", "undo", "hologram", "reload_outlines", "load", "placements", "materials", "plan", "plan_off", "plan_screen", "split")) {
             CATEGORY.put(id, "build");
         }
         for (String id : List.of("corner", "selection_tools", "next_selection_tool", "selection_mode", "copy", "save_selection", "fit_selection", "clear_selection",

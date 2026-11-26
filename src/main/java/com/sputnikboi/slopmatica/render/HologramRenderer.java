@@ -286,8 +286,13 @@ public final class HologramRenderer {
     }
 
     /** A frame's draw, prepared before the pass it goes into opens. */
-    private record Frame(List<Section> visible, GpuBufferSlice[] uniforms, @Nullable GpuBuffer quadIndexBuffer, RenderSystem.AutoStorageIndexBuffer quadIndices,
-                         @Nullable GpuBuffer lineIndexBuffer, RenderSystem.AutoStorageIndexBuffer lineIndices, boolean outlines, boolean ghosts) {
+    /**
+     * The index buffers are vanilla's shared ones: what's held here is how many indices are
+     * needed, and the buffer itself is fetched at draw time, because vanilla grows them (closing
+     * the old one) once everything has asked, after this is prepared and before its pass opens.
+     */
+    private record Frame(List<Section> visible, GpuBufferSlice[] uniforms, int quadCount, RenderSystem.AutoStorageIndexBuffer quadIndices,
+                         int lineCount, RenderSystem.AutoStorageIndexBuffer lineIndices, boolean outlines, boolean ghosts) {
     }
 
     private @Nullable Frame pending;
@@ -537,18 +542,23 @@ public final class HologramRenderer {
 
         RenderSystem.AutoStorageIndexBuffer quadIndices = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS);
         RenderSystem.AutoStorageIndexBuffer lineIndices = RenderSystem.getSequentialBuffer(PrimitiveTopology.LINES);
-        GpuBuffer quadIndexBuffer = maxQuadIndices > 0 ? quadIndices.getBuffer(maxQuadIndices) : null;
-        GpuBuffer lineIndexBuffer = maxLineIndices > 0 ? lineIndices.getBuffer(maxLineIndices) : null;
+        // Asked for now (and made big enough now, in case nothing else grows them this frame).
+        if (maxQuadIndices > 0) {
+            quadIndices.getBuffer(maxQuadIndices);
+        }
+        if (maxLineIndices > 0) {
+            lineIndices.getBuffer(maxLineIndices);
+        }
 
-        return new Frame(visible, uniforms, quadIndexBuffer, quadIndices, lineIndexBuffer, lineIndices, config.showOutlines, config.showGhosts);
+        return new Frame(visible, uniforms, maxQuadIndices, quadIndices, maxLineIndices, lineIndices, config.showOutlines, config.showGhosts);
     }
 
     private static void drawFrame(RenderPass pass, Frame frame) {
         Minecraft mc = Minecraft.getInstance();
         List<Section> visible = frame.visible();
         GpuBufferSlice[] uniforms = frame.uniforms();
-        if (frame.lineIndexBuffer() != null && frame.outlines()) {
-            pass.setIndexBuffer(frame.lineIndexBuffer(), frame.lineIndices().type());
+        if (frame.lineCount() > 0 && frame.outlines()) {
+            pass.setIndexBuffer(frame.lineIndices().getBuffer(), frame.lineIndices().type());
             pass.setPipeline(RenderSystem.getCompiledPipeline(SlopmaticaPipelines.FADING_LINES));
             for (int i = 0; i < visible.size(); i++) {
                 drawPart(pass, visible.get(i).mesh.lines, uniforms[i * 4 + 1]);
@@ -562,7 +572,7 @@ public final class HologramRenderer {
                 drawPart(pass, visible.get(i).mesh.alerts, uniforms[i * 4 + 2]);
             }
         }
-        if (frame.quadIndexBuffer() != null && frame.ghosts()) {
+        if (frame.quadCount() > 0 && frame.ghosts()) {
             pass.setPipeline(RenderSystem.getCompiledPipeline(RenderPipelines.TRANSLUCENT_BLOCK));
             pass.setUniform(
                 "Sampler0",
@@ -570,7 +580,7 @@ public final class HologramRenderer {
                 RenderSystem.getSamplerCache().getSampler(AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE, FilterMode.LINEAR, FilterMode.NEAREST, true)
             );
             pass.setUniform("Sampler2", mc.gameRenderer.lightmap(), RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
-            pass.setIndexBuffer(frame.quadIndexBuffer(), frame.quadIndices().type());
+            pass.setIndexBuffer(frame.quadIndices().getBuffer(), frame.quadIndices().type());
             for (int i = 0; i < visible.size(); i++) {
                 drawPart(pass, visible.get(i).mesh.ghosts, uniforms[i * 4]);
             }

@@ -183,6 +183,10 @@ public class PlacementViewScreen extends Screen {
             addRenderableWidget(Button.builder(Component.translatable("slopmatica.info.button"),
                 b -> minecraft.gui.setScreen(new com.sputnikboi.slopmatica.gui.SchematicInfoScreen(this, current.schematic().source(), current)))
                 .bounds(x, y, LEFT_W, B).build());
+            y += B + GAP;
+            addRenderableWidget(Button.builder(Component.translatable("slopmatica.split.button"),
+                b -> minecraft.gui.setScreen(new com.sputnikboi.slopmatica.gui.SplitScreen(this, current)))
+                .bounds(x, y, LEFT_W, B).tooltip(Tooltip.create(Component.translatable("slopmatica.split.button.tooltip"))).build());
             y += B + GAP + 4;
         }
         Tool tool = view.tool();

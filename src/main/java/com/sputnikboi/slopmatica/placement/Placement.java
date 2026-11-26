@@ -32,6 +32,8 @@ public final class Placement {
     private @Nullable BoundingBox crop;
     /** Materials to show; empty shows everything. Affects only what is drawn and aimed at. */
     private Set<Item> selectedMaterials = Set.of();
+    /** Split preview: only these blocks are shown (schematic coordinates), or null for all. Not saved. */
+    private com.sputnikboi.slopmatica.split.@Nullable SplitMask mask;
     /** Materials left out of the material panel's counts. */
     private Set<Item> ignoredMaterials = Set.of();
     /** The floating material panel: open in the placement view, pinned to stay on screen outside it, and where. */
@@ -46,7 +48,7 @@ public final class Placement {
         this.schematic = schematic;
         this.name = name;
         this.dimension = dimension;
-        this.transform = new Transform(schematic, origin, Rotation.NONE, Mirror.NONE, null, Layers.INSTANCE.minY(), Layers.INSTANCE.maxY(), Set.of());
+        this.transform = new Transform(schematic, origin, Rotation.NONE, Mirror.NONE, null, Layers.INSTANCE.minY(), Layers.INSTANCE.maxY(), Set.of(), null);
     }
 
     public Schematic schematic() {
@@ -133,6 +135,16 @@ public final class Placement {
         refresh();
     }
 
+    public com.sputnikboi.slopmatica.split.@Nullable SplitMask mask() {
+        return mask;
+    }
+
+    /** Shows only part of the schematic (the split screen's preview), or all of it with null. */
+    public void setMask(com.sputnikboi.slopmatica.split.@Nullable SplitMask mask) {
+        this.mask = mask;
+        refresh();
+    }
+
     public Set<Item> ignoredMaterials() {
         return ignoredMaterials;
     }
@@ -148,7 +160,7 @@ public final class Placement {
     }
 
     private void rebuild(BlockPos origin, Rotation rotation, Mirror mirror) {
-        transform = new Transform(schematic, origin, rotation, mirror, crop, Layers.INSTANCE.minY(), Layers.INSTANCE.maxY(), selectedMaterials);
+        transform = new Transform(schematic, origin, rotation, mirror, crop, Layers.INSTANCE.minY(), Layers.INSTANCE.maxY(), selectedMaterials, mask);
     }
 
     /** Toggles one material in a set, keeping insertion order. */
@@ -172,9 +184,11 @@ public final class Placement {
         /** What is drawn: the layer range (world Y) and the selected materials (empty: all). */
         private final int shownMinY, shownMaxY;
         private final Set<Item> shownItems;
+        private final com.sputnikboi.slopmatica.split.@Nullable SplitMask mask;
 
         Transform(Schematic schematic, BlockPos origin, Rotation rotation, Mirror mirror, @Nullable BoundingBox crop,
-                  int shownMinY, int shownMaxY, Set<Item> shownItems) {
+                  int shownMinY, int shownMaxY, Set<Item> shownItems, com.sputnikboi.slopmatica.split.@Nullable SplitMask mask) {
+            this.mask = mask;
             this.origin = origin;
             this.rotation = rotation;
             this.mirror = mirror;
@@ -261,8 +275,8 @@ public final class Placement {
         }
 
         /**
-         * What is drawn and can be aimed at: {@link #stateAt}, minus blocks outside the layer range
-         * and materials not selected (those have no opinion, so rays pass through them). Material
+         * What is drawn and can be aimed at: {@link #stateAt}, minus blocks outside the layer range,
+         * the split preview's mask and materials not selected (those have no opinion, so rays pass through them). Material
          * lists, pasting and Easy Place's inventory checks use the whole schematic instead.
          */
         public @Nullable BlockState shownStateAt(int wx, int wy, int wz) {
@@ -270,6 +284,12 @@ public final class Placement {
                 return null;
             }
             BlockState state = stateAt(wx, wy, wz);
+            if (state != null && mask != null) {
+                BlockPos local = toLocal(wx, wy, wz);
+                if (!mask.contains(local.getX(), local.getY(), local.getZ())) {
+                    return null;
+                }
+            }
             if (state != null && !shownItems.isEmpty() && !state.isAir() && !shownItems.contains(state.getBlock().asItem())
                 && !shownItems.contains(Objects.requireNonNullElse(com.sputnikboi.slopmatica.verify.MaterialList.bucketFor(state), Items.AIR))) {
                 return null;
